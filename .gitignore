@@ -1,0 +1,22 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# IntelliJ / JetBrains
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Workon local state
+.workon/

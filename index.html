@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workon Scenario Sketch</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 24px;
+      background: #111310;
+      color: #d9e0d7;
+      font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      border: 1px solid #3a4239;
+      border-radius: 8px;
+      background: #171a16;
+      overflow: hidden;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid #3a4239;
+      background: #20241f;
+      color: #9da89a;
+    }
+    .screen { padding: 18px; }
+    .scenario-group {
+      margin: 18px 0 28px;
+    }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0 0;
+    }
+    button {
+      font: inherit;
+      color: #d9e0d7;
+      background: #111310;
+      border: 1px solid #3a4239;
+      border-radius: 6px;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    button:hover, button.active {
+      border-color: #9edc9a;
+      color: #9edc9a;
+    }
+    .terminal {
+      min-height: 360px;
+      border-top: 1px solid #3a4239;
+      padding-top: 16px;
+    }
+    .line {
+      margin: 0 0 8px;
+      white-space: pre-wrap;
+    }
+    .dim { color: #7d897a; }
+    .ok { color: #9edc9a; }
+    .warn { color: #e2c878; }
+    @media (max-width: 760px) {
+      body { padding: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span>workon scenario sketch</span>
+    </header>
+
+    <section class="screen">
+      <p class="line ok">$ workon</p>
+
+      <section class="scenario-group">
+        <p class="line warn">Creation Section Scenarios</p>
+        <nav class="tabs" id="tabs"></nav>
+      </section>
+
+      <h2 id="title" class="line"></h2>
+      <p id="description" class="line dim"></p>
+
+      <div class="terminal" id="terminal"></div>
+    </section>
+  </main>
+
+  <script>
+    const scenarios = [
+      {
+        title: "Scenario 1: Answer manager question",
+        description: "Create an agent-ready investigation workspace for a technical question.",
+        input: "As SE, I want to answer a technical question for my manager that needs investigation across one or more repositories.",
+        lines: ({ input }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: investigate",
+          "",
+          "template: investigate.template",
+          "  agents: AGENTS.md orchestration instructions",
+          "  skill weight: evidence-skill",
+          "  MCP weight: slack, notion, jira",
+          "",
+          "work created: manager-technical-question-investigation",
+          "folder created: .workon/work/manager-technical-question-investigation/",
+          "cwd changed: .workon/work/manager-technical-question-investigation/",
+          "",
+          "created: AGENTS.md",
+          "created: CLAUDE.md",
+          "goal written: original workon input",
+          "instructions written: investigate, collect evidence, cite sources, keep caveats visible",
+          "agent context ready: launch claude, codex, or cursor from this folder",
+          "",
+          "workon finished",
+          "",
+          "$ wo ctx",
+          "context editor opened: intent, skills, MCPs, repos",
+          "status: TBD",
+          "repo picker opened: select one or more repositories",
+          "repos selected: billing-api, platform-worker",
+          "folder created: repos/",
+          "cloned: repos/billing-api",
+          "cloned: repos/platform-worker",
+          "updated: AGENTS.md with repo context and current weights",
+          "updated: CLAUDE.md with repo context and current weights",
+          "note: intent, skills, MCPs, and repos can change as the work changes"
+        ]
+      },
+      {
+        title: "Scenario 2: Slack to Jira to PR",
+        description: "Turn a discussion into tracked implementation work.",
+        input: "As SE, I want to quickly create a Jira task from a Slack discussion, move it to in progress, create a git worktree, launch Claude, and open a PR.",
+        lines: ({ input, motor }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: start implementation work",
+          "context sources: Slack thread, repo, Jira project, branch state",
+          "mock action: create Jira task",
+          "mock action: move task to in progress",
+          "mock action: create git worktree",
+          `mock action: launch ${motor}`,
+          "next action: open draft PR when code exists",
+          "remembered: task, branch, worktree, PR path"
+        ]
+      },
+      {
+        title: "Scenario 3: Technical presentation",
+        description: "Prepare a technical presentation from engineering context.",
+        input: "As SE, I want to prepare a technical presentation.",
+        lines: ({ input, motor }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: prepare presentation",
+          "context sources: repos, docs, decisions, notes",
+          `motor selected: ${motor}`,
+          "mock action: collect source material",
+          "mock action: draft narrative",
+          "next action: produce outline, slides, and speaker notes",
+          "remembered: sources, story, gaps, final deck"
+        ]
+      },
+      {
+        title: "Scenario 4: Design doc to PRs",
+        description: "Write a design in Notion, then implement through small reviewable PRs.",
+        input: "As SE, I want to prepare a design document in Notion and later implement using Claude or Codex, opening multiple PRs for easier review on GitHub.",
+        lines: ({ input, motor }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: design then implement",
+          "context sources: Notion, repo, GitHub, prior decisions",
+          `motor selected: ${motor}`,
+          "mock action: draft design doc",
+          "mock action: split implementation into PR-sized work",
+          "next action: open PR sequence with linked context",
+          "remembered: design intent, slices, PR map"
+        ]
+      },
+      {
+        title: "Scenario 5: Brainstorm with Claude",
+        description: "Explore an idea without forcing a delivery workflow.",
+        input: "As SE, I want to just brainstorm some idea using Claude.",
+        lines: ({ input, motor }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: brainstorm",
+          "context sources: existing notes, repo context, open questions",
+          `motor selected: ${motor}`,
+          "mock action: explore options and trade-offs",
+          "next action: keep useful ideas, discard the rest",
+          "remembered: idea, options, decisions, follow-ups"
+        ]
+      },
+      {
+        title: "Scenario 6: Review peer PR",
+        description: "Review a peer PR locally and publish useful comments.",
+        input: "As SE, I want to review a peer PR from my local machine and add comments using Codex or Claude.",
+        lines: ({ input, motor }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: review peer PR",
+          "context sources: GitHub PR, local checkout, project rules",
+          `motor selected: ${motor}`,
+          "mock action: inspect diff with local context",
+          "mock action: draft inline comments",
+          "next action: publish or edit review",
+          "remembered: review notes and posted comments"
+        ]
+      },
+      {
+        title: "Scenario 7: Address PR comments",
+        description: "Discuss and resolve comments in the engineer's own PRs.",
+        input: "As SE, I want to address and discuss comments in my PRs using Codex and Claude.",
+        lines: ({ input, motor }) => [
+          `$ wo "${input}"`,
+          "intent picker opened",
+          "intent selected: address PR comments",
+          "context sources: review threads, branch, CI, prior decisions",
+          `motor selected: ${motor}`,
+          "mock action: group comments by required response",
+          "mock action: propose fixes and replies",
+          "next action: apply patch, reply, or keep discussing",
+          "remembered: resolved threads, pending questions, final rationale"
+        ]
+      }
+    ];
+
+    const state = {
+      index: 0,
+      motor: "Claude Code"
+    };
+
+    const el = (id) => document.getElementById(id);
+
+    function renderTabs() {
+      el("tabs").innerHTML = scenarios.map((scenario, index) => `
+        <button class="${index === state.index ? "active" : ""}" data-index="${index}">
+          Tab ${scenario.title}
+        </button>
+      `).join("");
+
+      document.querySelectorAll("[data-index]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.index = Number(button.dataset.index);
+          render();
+        });
+      });
+    }
+
+    function renderMock() {
+      const scenario = scenarios[state.index];
+
+      const lines = scenario.lines({
+        input: scenario.input,
+        motor: state.motor
+      });
+
+      el("terminal").innerHTML = lines.map((line, index) => {
+        const cls = index === 0 ? "ok" : line.startsWith("next action") ? "warn" : "";
+        return `<p class="line ${cls}">${escapeHtml(line)}</p>`;
+      }).join("");
+    }
+
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function render() {
+      const scenario = scenarios[state.index];
+      el("title").textContent = scenario.title;
+      el("description").textContent = scenario.description;
+      renderTabs();
+      renderMock();
+    }
+
+    render();
+  </script>
+</body>
+</html>
