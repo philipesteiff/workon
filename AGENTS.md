@@ -18,6 +18,19 @@ This file defines how AI agents should work in this repo.
 - Treat lifecycle steps as optional moments.
 - Prefer portability before integration depth.
 
+## Interface Architecture
+
+Non-negotiable constraint:
+
+- There is one execution path per feature.
+- All interfaces must use it: CLI, TUI, and future adapters.
+- Duplicating logic across interfaces is a design violation.
+- The command layer is the source of truth for behavior.
+- CLI and TUI can differ only in input/output presentation.
+- Business logic must live below every interface.
+- Tests should target the shared command layer first.
+- Do not add TUI-only or CLI-only product behavior.
+
 ## Writing Rules
 
 - Use simple language.
