@@ -126,9 +126,23 @@ fn offer_shell_install(stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result
         return Ok(1);
     }
 
-    let outcome = install_shell_integration(ShellInstallKind::Production)?;
-    render_install_outcome(stdout, "shell integration installed", &outcome)?;
+    let (kind, label) =
+        shell_install_kind_for_prompt(std::env::var_os("WORKON_DEV_MANIFEST").map(PathBuf::from));
+    let outcome = install_shell_integration(kind)?;
+    render_install_outcome(stdout, label, &outcome)?;
     Ok(0)
+}
+
+fn shell_install_kind_for_prompt(
+    dev_manifest: Option<PathBuf>,
+) -> (ShellInstallKind, &'static str) {
+    match dev_manifest {
+        Some(manifest_path) => (
+            ShellInstallKind::Development { manifest_path },
+            "dev shell integration installed",
+        ),
+        None => (ShellInstallKind::Production, "shell integration installed"),
+    }
 }
 
 fn render_install_outcome(
@@ -181,4 +195,34 @@ fn prompt_for_intent(app: &App, stdout: &mut dyn Write, stderr: &mut dyn Write) 
         intent_id: selected.to_string(),
         available: intents.into_iter().map(|(id, _)| id).collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_install_kind_for_prompt;
+    use crate::shell_integration::ShellInstallKind;
+    use std::path::PathBuf;
+
+    #[test]
+    fn prompt_install_uses_development_hook_when_dev_manifest_is_present() {
+        let manifest = PathBuf::from("/repo/Cargo.toml");
+
+        let (kind, label) = shell_install_kind_for_prompt(Some(manifest.clone()));
+
+        assert_eq!(
+            kind,
+            ShellInstallKind::Development {
+                manifest_path: manifest
+            }
+        );
+        assert_eq!(label, "dev shell integration installed");
+    }
+
+    #[test]
+    fn prompt_install_uses_production_hook_without_dev_manifest() {
+        let (kind, label) = shell_install_kind_for_prompt(None);
+
+        assert_eq!(kind, ShellInstallKind::Production);
+        assert_eq!(label, "shell integration installed");
+    }
 }
