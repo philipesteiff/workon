@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use workon::{App, Command, CommandOutput, WorkonError};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn create_work_writes_agent_files_and_metadata() {
@@ -131,6 +134,73 @@ fn unknown_intent_returns_typed_error() {
     assert!(matches!(error, WorkonError::UnknownIntent { .. }));
 }
 
+#[test]
+fn install_shell_is_a_command_layer_feature() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let home = temp_root("install_shell_is_a_command_layer_feature_home");
+    let root = temp_root("install_shell_is_a_command_layer_feature_root");
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", home.path());
+
+    let app = App::new(root.path().to_path_buf());
+    let output = app
+        .execute(Command::InstallShell)
+        .expect("install shell should succeed");
+
+    restore_env("HOME", previous_home);
+
+    let CommandOutput::ShellInstalled {
+        label,
+        script_path,
+        zshrc_path,
+    } = output
+    else {
+        panic!("expected ShellInstalled output");
+    };
+
+    assert_eq!(label, "shell integration installed");
+    assert!(script_path.ends_with(".workon/shell/zsh/wo.zsh"));
+    assert!(zshrc_path.ends_with(".zshrc"));
+    assert!(script_path.is_file());
+    assert!(zshrc_path.is_file());
+}
+
+#[test]
+fn install_dev_shell_is_a_command_layer_feature() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let home = temp_root("install_dev_shell_is_a_command_layer_feature_home");
+    let root = temp_root("install_dev_shell_is_a_command_layer_feature_root");
+    let manifest_path = root.path().join("Cargo.toml");
+    let previous_home = std::env::var_os("HOME");
+    std::env::set_var("HOME", home.path());
+
+    let app = App::new(root.path().to_path_buf());
+    let output = app
+        .execute(Command::InstallDevShell {
+            manifest_path: manifest_path.clone(),
+        })
+        .expect("install dev shell should succeed");
+
+    restore_env("HOME", previous_home);
+
+    let CommandOutput::ShellInstalled {
+        label,
+        script_path,
+        zshrc_path,
+    } = output
+    else {
+        panic!("expected ShellInstalled output");
+    };
+
+    let script = fs::read_to_string(&script_path).expect("script should be readable");
+
+    assert_eq!(label, "dev shell integration installed");
+    assert!(script_path.ends_with(".workon/shell/zsh/wo-dev.zsh"));
+    assert!(zshrc_path.ends_with(".zshrc"));
+    assert!(script.contains(&manifest_path.display().to_string()));
+    assert!(script.contains("just()"));
+}
+
 fn create_investigate(app: &App, goal: &str) -> workon::CreatedWork {
     let CommandOutput::WorkCreated(work) = app
         .execute(Command::CreateWork {
@@ -166,4 +236,11 @@ fn temp_root(name: &str) -> TempRoot {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp root should be created");
     TempRoot { path }
+}
+
+fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
+    match value {
+        Some(value) => std::env::set_var(key, value),
+        None => std::env::remove_var(key),
+    }
 }

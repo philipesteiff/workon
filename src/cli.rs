@@ -5,10 +5,7 @@ use crate::app::{App, Command, CommandOutput};
 use crate::cli_args::{parse_args, CliRequest};
 use crate::cli_output::{render_output, write_help};
 use crate::error::{Result, WorkonError};
-use crate::shell_integration::{
-    development_manifest_from_env, install_shell_integration, is_shell_hook_active, workon_root,
-    ShellInstallKind, ShellInstallOutcome,
-};
+use crate::shell_integration::{is_shell_hook_active, workon_root};
 
 pub fn run_cli(args: impl IntoIterator<Item = String>) -> i32 {
     let root = match workon_root() {
@@ -45,25 +42,12 @@ fn run(
         return Ok(0);
     }
 
-    if let CliRequest::InstallShell = request {
-        let outcome = install_shell_integration(ShellInstallKind::Production)?;
-        render_install_outcome(stdout, "shell integration installed", &outcome)?;
-        return Ok(0);
-    }
-
-    if let CliRequest::InstallDevShell = request {
-        let manifest_path = development_manifest_from_env()?;
-        let outcome = install_shell_integration(ShellInstallKind::Development { manifest_path })?;
-        render_install_outcome(stdout, "dev shell integration installed", &outcome)?;
-        return Ok(0);
-    }
-
     let CliRequest::Command { command, machine } = request else {
-        unreachable!("non-command requests returned earlier");
+        unreachable!("help request returned earlier");
     };
 
     if should_offer_shell_install(&command, machine) {
-        return offer_shell_install(stdout, stderr);
+        return offer_shell_install(&app, &root, stdout, stderr);
     }
 
     let output = execute_command(&app, command, stdout, stderr)?;
@@ -109,7 +93,12 @@ fn should_offer_shell_install(command: &Command, machine: bool) -> bool {
         )
 }
 
-fn offer_shell_install(stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<i32> {
+fn offer_shell_install(
+    app: &App,
+    root: &std::path::Path,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<i32> {
     writeln!(
         stdout,
         "Workon needs a shell function to switch folders in your current shell."
@@ -126,35 +115,19 @@ fn offer_shell_install(stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result
         return Ok(1);
     }
 
-    let (kind, label) =
-        shell_install_kind_for_prompt(std::env::var_os("WORKON_DEV_MANIFEST").map(PathBuf::from));
-    let outcome = install_shell_integration(kind)?;
-    render_install_outcome(stdout, label, &outcome)?;
+    let command = shell_install_command_for_prompt(
+        std::env::var_os("WORKON_DEV_MANIFEST").map(PathBuf::from),
+    );
+    let output = app.execute(command)?;
+    render_output(&output, stdout, false, root)?;
     Ok(0)
 }
 
-fn shell_install_kind_for_prompt(
-    dev_manifest: Option<PathBuf>,
-) -> (ShellInstallKind, &'static str) {
+fn shell_install_command_for_prompt(dev_manifest: Option<PathBuf>) -> Command {
     match dev_manifest {
-        Some(manifest_path) => (
-            ShellInstallKind::Development { manifest_path },
-            "dev shell integration installed",
-        ),
-        None => (ShellInstallKind::Production, "shell integration installed"),
+        Some(manifest_path) => Command::InstallDevShell { manifest_path },
+        None => Command::InstallShell,
     }
-}
-
-fn render_install_outcome(
-    stdout: &mut dyn Write,
-    label: &str,
-    outcome: &ShellInstallOutcome,
-) -> Result<()> {
-    writeln!(stdout, "{label}: {}", outcome.script_path.display())?;
-    writeln!(stdout, "zshrc updated: {}", outcome.zshrc_path.display())?;
-    writeln!(stdout, "restart your shell or run:")?;
-    writeln!(stdout, "  source {}", outcome.script_path.display())?;
-    Ok(())
 }
 
 fn prompt_for_intent(app: &App, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<String> {
@@ -199,30 +172,27 @@ fn prompt_for_intent(app: &App, stdout: &mut dyn Write, stderr: &mut dyn Write) 
 
 #[cfg(test)]
 mod tests {
-    use super::shell_install_kind_for_prompt;
-    use crate::shell_integration::ShellInstallKind;
+    use super::shell_install_command_for_prompt;
+    use crate::app::Command;
     use std::path::PathBuf;
 
     #[test]
     fn prompt_install_uses_development_hook_when_dev_manifest_is_present() {
         let manifest = PathBuf::from("/repo/Cargo.toml");
 
-        let (kind, label) = shell_install_kind_for_prompt(Some(manifest.clone()));
-
         assert_eq!(
-            kind,
-            ShellInstallKind::Development {
+            shell_install_command_for_prompt(Some(manifest.clone())),
+            Command::InstallDevShell {
                 manifest_path: manifest
             }
         );
-        assert_eq!(label, "dev shell integration installed");
     }
 
     #[test]
     fn prompt_install_uses_production_hook_without_dev_manifest() {
-        let (kind, label) = shell_install_kind_for_prompt(None);
-
-        assert_eq!(kind, ShellInstallKind::Production);
-        assert_eq!(label, "shell integration installed");
+        assert_eq!(
+            shell_install_command_for_prompt(None),
+            Command::InstallShell
+        );
     }
 }

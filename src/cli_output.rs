@@ -15,6 +15,16 @@ pub(crate) fn render_output(
             writeln!(writer, "context: {}", context.status)?;
             writeln!(writer, "{}", context.message)?;
         }
+        CommandOutput::ShellInstalled {
+            label,
+            script_path,
+            zshrc_path,
+        } => {
+            writeln!(writer, "{label}: {}", script_path.display())?;
+            writeln!(writer, "zshrc updated: {}", zshrc_path.display())?;
+            writeln!(writer, "restart your shell or run:")?;
+            writeln!(writer, "  source {}", script_path.display())?;
+        }
         CommandOutput::WorkCreated(work) => {
             writeln!(writer, "intent selected: {}", work.intent_id)?;
             writeln!(writer, "work created: {}", work.title)?;

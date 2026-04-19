@@ -1,12 +1,11 @@
 use crate::app::Command;
 use crate::error::{Result, WorkonError};
+use crate::shell_integration::development_manifest_from_env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CliRequest {
     Command { command: Command, machine: bool },
     Help,
-    InstallDevShell,
-    InstallShell,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
@@ -25,11 +24,16 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
         .collect::<Vec<_>>();
 
     if command_args == ["install-shell"] {
-        return Ok(CliRequest::InstallShell);
+        return Ok(command_request(Command::InstallShell, false));
     }
 
     if command_args == ["install-dev-shell"] {
-        return Ok(CliRequest::InstallDevShell);
+        return Ok(command_request(
+            Command::InstallDevShell {
+                manifest_path: development_manifest_from_env()?,
+            },
+            false,
+        ));
     }
 
     let mut machine = false;
@@ -130,16 +134,39 @@ mod tests {
     fn parses_shell_install_commands() {
         assert_eq!(
             parse_args(vec!["install-shell".to_string()]).expect("args should parse"),
-            CliRequest::InstallShell
+            CliRequest::Command {
+                command: Command::InstallShell,
+                machine: false,
+            }
         );
+
+        let previous = std::env::var_os("WORKON_DEV_MANIFEST");
+        std::env::set_var("WORKON_DEV_MANIFEST", "/repo/Cargo.toml");
         assert_eq!(
             parse_args(vec!["install-dev-shell".to_string()]).expect("args should parse"),
-            CliRequest::InstallDevShell
+            CliRequest::Command {
+                command: Command::InstallDevShell {
+                    manifest_path: "/repo/Cargo.toml".into(),
+                },
+                machine: false,
+            }
         );
+        restore_env("WORKON_DEV_MANIFEST", previous);
+
         assert_eq!(
             parse_args(vec!["--machine".to_string(), "install-shell".to_string()])
                 .expect("args should parse"),
-            CliRequest::InstallShell
+            CliRequest::Command {
+                command: Command::InstallShell,
+                machine: false,
+            }
         );
+    }
+
+    fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
     }
 }

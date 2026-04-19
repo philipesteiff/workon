@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::agent_files::write_agent_files;
 use crate::domain::{ContextStatus, CreatedWork, OpenedWork, WorkList};
-use crate::error::{Result, WorkonError};
+use crate::error::Result;
+use crate::feature;
 use crate::intents::IntentCatalog;
 use crate::storage::WorkStore;
 
@@ -19,6 +19,10 @@ pub enum Command {
         goal: String,
         intent_id: String,
     },
+    InstallDevShell {
+        manifest_path: PathBuf,
+    },
+    InstallShell,
     ListWorks,
     OpenOrCreate {
         input: String,
@@ -32,6 +36,11 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutput {
     Context(ContextStatus),
+    ShellInstalled {
+        label: String,
+        script_path: PathBuf,
+        zshrc_path: PathBuf,
+    },
     WorkCreated(CreatedWork),
     WorkList(WorkList),
     WorkOpened(OpenedWork),
@@ -47,13 +56,22 @@ impl App {
 
     pub fn execute(&self, command: Command) -> Result<CommandOutput> {
         match command {
-            Command::Context => Ok(CommandOutput::Context(context_status())),
-            Command::CreateWork { goal, intent_id } => self.create_work(&goal, &intent_id),
-            Command::ListWorks => Ok(CommandOutput::WorkList(self.store.list()?)),
-            Command::OpenOrCreate { input, intent_id } => {
-                self.open_or_create(&input, intent_id.as_deref())
+            Command::Context => feature::context::execute(),
+            Command::CreateWork { goal, intent_id } => {
+                feature::create_work::execute(&self.store, &self.intents, &goal, &intent_id)
             }
-            Command::OpenWork { query } => Ok(CommandOutput::WorkOpened(self.store.open(&query)?)),
+            Command::InstallDevShell { manifest_path } => {
+                feature::install_shell::install_dev_shell(manifest_path)
+            }
+            Command::InstallShell => feature::install_shell::install_shell(),
+            Command::ListWorks => feature::list_works::execute(&self.store),
+            Command::OpenOrCreate { input, intent_id } => feature::open_or_create::execute(
+                &self.store,
+                &self.intents,
+                &input,
+                intent_id.as_deref(),
+            ),
+            Command::OpenWork { query } => feature::open_work::execute(&self.store, &query),
         }
     }
 
@@ -63,48 +81,5 @@ impl App {
             .iter()
             .map(|intent| (intent.id.clone(), intent.summary.clone()))
             .collect()
-    }
-
-    fn open_or_create(&self, input: &str, intent_id: Option<&str>) -> Result<CommandOutput> {
-        match self.store.open(input) {
-            Ok(work) => Ok(CommandOutput::WorkOpened(work)),
-            Err(WorkonError::WorkNotFound { .. }) => {
-                let Some(intent_id) = intent_id else {
-                    return Err(WorkonError::IntentRequired {
-                        available: self.intents.available_ids(),
-                    });
-                };
-                self.create_work(input, intent_id)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    fn create_work(&self, goal: &str, intent_id: &str) -> Result<CommandOutput> {
-        let goal = goal.trim();
-        if goal.is_empty() {
-            return Err(WorkonError::EmptyGoal);
-        }
-
-        let Some(intent) = self.intents.find(intent_id) else {
-            return Err(WorkonError::UnknownIntent {
-                intent_id: intent_id.to_string(),
-                available: self.intents.available_ids(),
-            });
-        };
-
-        let work = self.store.create(goal, &intent.id)?;
-        write_agent_files(&work.path, goal, &intent)?;
-
-        Ok(CommandOutput::WorkCreated(work))
-    }
-}
-
-fn context_status() -> ContextStatus {
-    ContextStatus {
-        status: "TBD".to_string(),
-        message:
-            "Context editing will change intent, skills, MCPs, and repos for the current work."
-                .to_string(),
     }
 }

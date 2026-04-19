@@ -5,6 +5,7 @@ mod cli_args;
 mod cli_output;
 mod domain;
 mod error;
+mod feature;
 mod intents;
 mod shell_integration;
 mod slug;
