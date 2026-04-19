@@ -1,12 +1,14 @@
 use std::fmt;
 
+use crate::domain::AmbiguousWorkMatch;
+
 pub type Result<T> = std::result::Result<T, WorkonError>;
 
 #[derive(Debug)]
 pub enum WorkonError {
     AmbiguousWork {
         query: String,
-        matches: Vec<String>,
+        matches: Vec<AmbiguousWorkMatch>,
     },
     EmptyGoal,
     IntentRequired {
@@ -29,11 +31,12 @@ impl fmt::Display for WorkonError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::AmbiguousWork { query, matches } => {
-                write!(
-                    formatter,
-                    "work query `{query}` is ambiguous: {}",
-                    matches.join(", ")
-                )
+                let options = matches
+                    .iter()
+                    .map(|work| format!("{} ({})", work.slug, work.title))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(formatter, "work query `{query}` is ambiguous: {options}")
             }
             Self::EmptyGoal => write!(formatter, "work goal cannot be empty"),
             Self::IntentRequired { available } => write!(

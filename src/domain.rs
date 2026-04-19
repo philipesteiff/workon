@@ -43,6 +43,12 @@ pub struct WorkList {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AmbiguousWorkMatch {
+    pub slug: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextStatus {
     pub status: String,
     pub message: String,
@@ -68,6 +74,15 @@ impl From<CreatedWork> for WorkSummary {
             goal: work.goal,
             intent_id: work.intent_id,
             path: work.path,
+        }
+    }
+}
+
+impl From<WorkSummary> for AmbiguousWorkMatch {
+    fn from(summary: WorkSummary) -> Self {
+        Self {
+            slug: summary.slug,
+            title: summary.title,
         }
     }
 }

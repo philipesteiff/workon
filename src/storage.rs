@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::domain::{CreatedWork, OpenedWork, WorkList, WorkSummary};
@@ -8,14 +10,66 @@ use crate::slug::{slugify, title_from_goal};
 
 const META_FILE: &str = "workon.meta";
 
-#[derive(Debug, Clone)]
-pub struct WorkStore {
-    root: PathBuf,
+pub trait FileSystem: Clone {
+    fn create_dir_all(&self, path: &Path) -> io::Result<()>;
+    fn write(&self, path: &Path, content: &str) -> io::Result<()>;
+    fn read_to_string(&self, path: &Path) -> io::Result<String>;
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>>;
+    fn exists(&self, path: &Path) -> bool;
+    fn is_dir(&self, path: &Path) -> bool;
+    fn is_file(&self, path: &Path) -> bool;
 }
 
-impl WorkStore {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StdFileSystem;
+
+impl FileSystem for StdFileSystem {
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        fs::create_dir_all(path)
+    }
+
+    fn write(&self, path: &Path, content: &str) -> io::Result<()> {
+        fs::write(path, content)
+    }
+
+    fn read_to_string(&self, path: &Path) -> io::Result<String> {
+        fs::read_to_string(path)
+    }
+
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
+        fs::read_dir(path)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect()
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+
+    fn is_file(&self, path: &Path) -> bool {
+        path.is_file()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkStore<F = StdFileSystem> {
+    root: PathBuf,
+    fs: F,
+}
+
+impl WorkStore<StdFileSystem> {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self::with_filesystem(root, StdFileSystem)
+    }
+}
+
+impl<F: FileSystem> WorkStore<F> {
+    pub fn with_filesystem(root: PathBuf, fs: F) -> Self {
+        Self { root, fs }
     }
 
     pub fn create(&self, goal: &str, intent_id: &str) -> Result<CreatedWork> {
@@ -23,7 +77,7 @@ impl WorkStore {
         let slug = self.unique_slug(&slugify(&title))?;
         let path = self.work_root().join(&slug);
 
-        fs::create_dir_all(&path)?;
+        self.fs.create_dir_all(&path)?;
 
         let work = CreatedWork {
             title,
@@ -33,34 +87,38 @@ impl WorkStore {
             path,
         };
 
-        fs::write(work.path.join(META_FILE), serialize_work(&work))?;
+        self.fs
+            .write(&work.path.join(META_FILE), &serialize_work(&work))?;
 
         Ok(work)
     }
 
     pub fn list(&self) -> Result<WorkList> {
         let work_root = self.work_root();
-        if !work_root.exists() {
+        if !self.fs.exists(&work_root) {
             return Ok(WorkList { works: Vec::new() });
         }
 
         let mut works = Vec::new();
-        for entry in fs::read_dir(work_root)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
+        for path in self.fs.read_dir(&work_root)? {
+            if !self.fs.is_dir(&path) {
                 continue;
             }
 
-            let meta_path = entry.path().join(META_FILE);
-            if !meta_path.is_file() {
+            let meta_path = path.join(META_FILE);
+            if !self.fs.is_file(&meta_path) {
                 continue;
             }
 
-            let content = fs::read_to_string(meta_path)?;
-            works.push(parse_work(&content, entry.path())?);
+            let content = self.fs.read_to_string(&meta_path)?;
+            works.push(parse_work(&content, path)?);
         }
 
-        works.sort_by(|left, right| left.title.cmp(&right.title));
+        works.sort_by(|left, right| {
+            left.title
+                .cmp(&right.title)
+                .then(left.slug.cmp(&right.slug))
+        });
 
         Ok(WorkList { works })
     }
@@ -98,7 +156,7 @@ impl WorkStore {
             1 => Ok(matches[0].clone().into()),
             _ => Err(WorkonError::AmbiguousWork {
                 query: query.to_string(),
-                matches: matches.into_iter().map(|work| work.title).collect(),
+                matches: matches.into_iter().map(Into::into).collect(),
             }),
         }
     }
@@ -113,7 +171,7 @@ impl WorkStore {
         let mut candidate = base_slug.to_string();
         let mut suffix = 2;
 
-        while work_root.join(&candidate).exists() {
+        while self.fs.exists(&work_root.join(&candidate)) {
             candidate = format!("{base_slug}-{suffix}");
             suffix += 1;
         }
@@ -187,4 +245,67 @@ fn decode(value: &str) -> String {
     }
 
     decoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FileSystem, WorkStore};
+    use std::cell::RefCell;
+    use std::io;
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+
+    #[derive(Clone, Default)]
+    struct RecordingFileSystem {
+        created_dirs: Rc<RefCell<Vec<PathBuf>>>,
+    }
+
+    impl FileSystem for RecordingFileSystem {
+        fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+            self.created_dirs.borrow_mut().push(path.to_path_buf());
+            Ok(())
+        }
+
+        fn write(&self, _path: &Path, _content: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn read_to_string(&self, _path: &Path) -> io::Result<String> {
+            Ok(String::new())
+        }
+
+        fn read_dir(&self, _path: &Path) -> io::Result<Vec<PathBuf>> {
+            Ok(Vec::new())
+        }
+
+        fn exists(&self, _path: &Path) -> bool {
+            false
+        }
+
+        fn is_dir(&self, _path: &Path) -> bool {
+            false
+        }
+
+        fn is_file(&self, _path: &Path) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn store_can_use_injected_filesystem() {
+        let fs = RecordingFileSystem::default();
+        let store = WorkStore::with_filesystem(PathBuf::from("/tmp/workon"), fs.clone());
+
+        let work = store
+            .create("Answer billing question", "investigate")
+            .expect("create should use injected filesystem");
+
+        assert_eq!(work.slug, "answer-billing-question");
+        assert_eq!(
+            fs.created_dirs.borrow().as_slice(),
+            &[PathBuf::from(
+                "/tmp/workon/.workon/work/answer-billing-question"
+            )]
+        );
+    }
 }

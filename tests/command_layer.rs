@@ -74,6 +74,30 @@ fn list_and_open_work_use_existing_state() {
 }
 
 #[test]
+fn ambiguous_work_error_includes_slug_and_title() {
+    let root = temp_root("ambiguous_work_error_includes_slug_and_title");
+    let app = App::new(root.path().to_path_buf());
+    create_investigate(&app, "Answer billing question");
+    create_investigate(&app, "Answer billing question");
+
+    let error = app
+        .execute(Command::OpenWork {
+            query: "billing".to_string(),
+        })
+        .expect_err("ambiguous query should fail");
+
+    let WorkonError::AmbiguousWork { matches, .. } = error else {
+        panic!("expected ambiguous work error");
+    };
+
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].slug, "answer-billing-question");
+    assert_eq!(matches[0].title, "Answer billing question");
+    assert_eq!(matches[1].slug, "answer-billing-question-2");
+    assert_eq!(matches[1].title, "Answer billing question");
+}
+
+#[test]
 fn context_command_is_explicitly_tbd_but_uses_command_layer() {
     let root = temp_root("context_command_is_explicitly_tbd_but_uses_command_layer");
     let app = App::new(root.path().to_path_buf());
