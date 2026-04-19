@@ -6,6 +6,16 @@ Primary command: `wo`.
 
 AI agents are replaceable. Context is not.
 
+Workon opens a controlled Work shell. Use `exit` to leave it.
+
+Common development commands:
+
+```sh
+just verify
+just wo --intent investigate "Answer a technical question for my manager across repos"
+just smoke
+```
+
 ## Vision
 
 Engineers should own the context that makes AI useful: goals, decisions, code intent, sources, workflows, and project memory.
@@ -63,22 +73,20 @@ Status: TBD. The exact behavior is still being shaped.
 ## First Scenario: Investigate
 
 ```sh
-wo "As SE, I want to answer a technical question for my manager that needs investigation across one or more repositories."
+wo --intent investigate "As SE, I want to answer a technical question for my manager that needs investigation across one or more repositories."
 ```
 
 Expected flow:
 
 ```text
-intent picker opened
 intent selected: investigate
-work created: <ai-generated-title (using claude or codex cli to return structured output)>
+work created: <generated-title>
 folder created: .workon/work/<title>/
-cwd changed: .workon/work/<title>/
 created: AGENTS.md
 created: CLAUDE.md
 goal written: original input
 instructions written: investigate, collect evidence, cite sources, keep caveats visible
-workon finished
+work shell opened: .workon/work/<title>/
 ```
 
 To attach repos or change context:
@@ -119,9 +127,12 @@ Create a Work from natural language.
 
 ```sh
 wo "Answer a technical question for my manager across repos"
+wo --intent investigate "Answer a technical question for my manager across repos"
 ```
 
-Workon opens the intent picker, creates a Work folder, writes agent files, and makes the context ready for Claude, Codex, Cursor, or another motor.
+If the text does not match existing Work, Workon starts creation. In a terminal it asks for intent; in scripts use `--intent`.
+
+Workon creates a Work folder, writes agent files, and opens a Work shell ready for Claude, Codex, Cursor, or another motor.
 
 ### `wo <work>`
 

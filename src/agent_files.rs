@@ -1,0 +1,59 @@
+use std::fs;
+use std::path::Path;
+
+use crate::domain::IntentProfile;
+use crate::error::Result;
+
+pub fn write_agent_files(work_path: &Path, goal: &str, intent: &IntentProfile) -> Result<()> {
+    let portable = render_portable_instructions(goal, intent);
+    let claude = render_claude_instructions(goal, intent);
+
+    fs::write(work_path.join("AGENTS.md"), portable)?;
+    fs::write(work_path.join("CLAUDE.md"), claude)?;
+
+    Ok(())
+}
+
+fn render_portable_instructions(goal: &str, intent: &IntentProfile) -> String {
+    render_agent_file("AGENTS", goal, intent)
+}
+
+fn render_claude_instructions(goal: &str, intent: &IntentProfile) -> String {
+    render_agent_file("CLAUDE", goal, intent)
+}
+
+fn render_agent_file(agent_name: &str, goal: &str, intent: &IntentProfile) -> String {
+    format!(
+        "# Work Context for {agent_name}\n\n\
+         ## Goal\n\n\
+         {goal}\n\n\
+         ## Intent\n\n\
+         {} ({})\n\n\
+         Intent weights are preferences, not hard requirements.\n\n\
+         ## Preferred Skills\n\n\
+         {}\n\n\
+         ## Preferred MCPs\n\n\
+         {}\n\n\
+         ## Repos\n\n\
+         Repos attached to this work belong in `repos/`. When present, treat them as context for this goal.\n\n\
+         ## Instructions\n\n\
+         {}\n",
+        intent.name,
+        intent.id,
+        bullet_list(&intent.skill_weights),
+        bullet_list(&intent.mcp_weights),
+        bullet_list(&intent.instructions)
+    )
+}
+
+fn bullet_list(items: &[String]) -> String {
+    if items.is_empty() {
+        "- none".to_string()
+    } else {
+        items
+            .iter()
+            .map(|item| format!("- {item}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}

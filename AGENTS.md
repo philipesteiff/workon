@@ -31,6 +31,41 @@ Non-negotiable constraint:
 - Tests should target the shared command layer first.
 - Do not add TUI-only or CLI-only product behavior.
 
+## Work Shell
+
+- Workon uses one controlled Work shell.
+- Normal create/open starts that shell only when outside Work.
+- Inside Work, `wo` switches the current shell through machine output; it must not spawn nested Work shells.
+- Do not require permanent shell hooks, `eval`, or setup steps.
+- `exit` is the visible way to leave Work.
+- Keep shell behavior above the shared command layer; command outputs stay interface-neutral.
+
+## Code Maintainability
+
+- Organize code by responsibility, not by interface.
+- Keep CLI and TUI thin: parse input, render output, call commands.
+- Put product behavior in the shared command layer.
+- A command should read as orchestration: validate input, load state, call services, persist changes, return a result.
+- Keep domain types separate from presentation types.
+- Keep adapters behind narrow interfaces: git, GitHub, Jira, Slack, Notion, editors, motors.
+- Inject filesystem, process, and network dependencies so core logic can be tested without real tools.
+- Prefer short functions with one job and clear names.
+- Extract helpers when a block needs a comment to explain what it does.
+- Make state changes explicit: plan, apply, report.
+- Return typed errors from core code; format user-facing messages at the interface edge.
+- Test the command layer first, adapters second, interface wiring last.
+- If a module becomes hard to scan, split it before adding more behavior.
+
+## Manual Verification
+
+- Every implementation must be tested through the real `wo` binary.
+- Run automated checks first: `cargo fmt --check`, `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`.
+- Build once, then test from a disposable temp directory, not the repo root.
+- Use real terminal commands and inspect real output, files, and state.
+- Cover the user-facing path changed by the implementation.
+- Report the commands run, what was expected, what happened, and any gap.
+- Do not claim completion without this verification.
+
 ## Writing Rules
 
 - Use simple language.

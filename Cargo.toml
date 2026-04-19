@@ -1,0 +1,8 @@
+[package]
+name = "workon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "wo"
+path = "src/main.rs"
