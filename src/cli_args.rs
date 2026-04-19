@@ -23,6 +23,10 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
 
     while index < args.len() {
         match args[index].as_str() {
+            "--" => {
+                input_parts.extend(args[(index + 1)..].iter().cloned());
+                break;
+            }
             "--machine" => {
                 machine = true;
                 index += 1;
@@ -66,4 +70,43 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
 
 fn command_request(command: Command, machine: bool) -> CliRequest {
     CliRequest::Command { command, machine }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, CliRequest};
+    use crate::app::Command;
+
+    #[test]
+    fn treats_double_dash_as_option_terminator() {
+        let request = parse_args(vec![
+            "--".to_string(),
+            "answer-technical-question-manager-2".to_string(),
+        ])
+        .expect("args should parse");
+
+        assert_eq!(
+            request,
+            CliRequest::Command {
+                command: Command::OpenOrCreate {
+                    input: "answer-technical-question-manager-2".to_string(),
+                    intent_id: None,
+                },
+                machine: false,
+            }
+        );
+    }
+
+    #[test]
+    fn treats_lone_double_dash_as_empty_args() {
+        let request = parse_args(vec!["--".to_string()]).expect("args should parse");
+
+        assert_eq!(
+            request,
+            CliRequest::Command {
+                command: Command::ListWorks,
+                machine: false,
+            }
+        );
+    }
 }

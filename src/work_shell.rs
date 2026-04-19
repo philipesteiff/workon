@@ -19,6 +19,10 @@ pub(crate) fn workon_root() -> std::io::Result<PathBuf> {
     }
 }
 
+pub(crate) fn is_work_shell_active() -> bool {
+    std::env::var_os(WORKON_ACTIVE_ENV).is_some()
+}
+
 pub(crate) fn enter_work_shell(root: &Path, title: &str, work_path: &Path) -> Result<i32> {
     let rc_dir = TempDir::create("workon-zsh")?;
     let rc_path = rc_dir.path().join(".zshrc");
@@ -70,6 +74,16 @@ wo() {{
     export {title_env}=\"$workon_switch_title\"
   fi
   return \"$workon_status\"
+}}
+
+just() {{
+  if [ \"${{1:-}}\" = \"wo\" ]; then
+    shift
+    wo \"$@\"
+    return $?
+  fi
+
+  command just \"$@\"
 }}
 ",
         active = WORKON_ACTIVE_ENV,

@@ -76,6 +76,30 @@ fn injected_work_shell_function_switches_without_stacking_shells() {
     assert!(stdout.contains("switch-target-from-work-shell"));
 }
 
+#[test]
+fn work_shell_intercepts_just_wo_without_stacking_shells() {
+    let root = temp_root("work_shell_intercepts_just_wo_without_stacking_shells");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_SKIP_USER_ZSHRC", "1")
+        .env(
+            "WORKON_SHELL_COMMAND",
+            "just wo --intent investigate 'Switch target from just wrapper'; printf 'SWITCHED:%s\\n' \"$PWD\"; test \"${PWD##*/}\" = switch-target-from-just-wrapper",
+        )
+        .args(["--intent", "investigate", "Initial work shell"])
+        .output()
+        .expect("wo should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+    assert!(stdout.contains("work created: Initial work shell"));
+    assert!(stdout.contains("work created: Switch target from just wrapper"));
+    assert!(stdout.contains("SWITCHED:"));
+    assert!(stdout.contains("switch-target-from-just-wrapper"));
+}
+
 struct TempRoot {
     path: PathBuf,
 }

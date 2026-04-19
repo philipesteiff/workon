@@ -5,7 +5,7 @@ use crate::app::{App, Command, CommandOutput};
 use crate::cli_args::{parse_args, CliRequest};
 use crate::cli_output::{render_output, write_help};
 use crate::error::{Result, WorkonError};
-use crate::work_shell::{enter_work_shell, workon_root};
+use crate::work_shell::{enter_work_shell, is_work_shell_active, workon_root};
 
 pub fn run_cli(args: impl IntoIterator<Item = String>) -> i32 {
     let root = match workon_root() {
@@ -49,7 +49,7 @@ fn run(
     let output = execute_command(&app, command, stdout, stderr)?;
     render_output(&output, stdout, machine)?;
 
-    if machine {
+    if machine || is_work_shell_active() {
         return Ok(0);
     }
 
