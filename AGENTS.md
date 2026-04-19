@@ -31,13 +31,14 @@ Non-negotiable constraint:
 - Tests should target the shared command layer first.
 - Do not add TUI-only or CLI-only product behavior.
 
-## Work Shell
+## Shell Navigation
 
-- Workon uses one controlled Work shell.
-- Normal create/open starts that shell only when outside Work.
-- Inside Work, `wo` switches the current shell through machine output; it must not spawn nested Work shells.
-- Do not require permanent shell hooks, `eval`, or setup steps.
-- `exit` is the visible way to leave Work.
+- Workon must not spawn a Work subshell for navigation.
+- Folder changes happen through a thin shell function.
+- The Rust binary returns machine signals for navigation.
+- The shell function consumes those signals and runs `cd`.
+- Keep one user shell: no stacked shells, no `exit` side effect.
+- Local development uses `just install-dev-shell`.
 - Keep shell behavior above the shared command layer; command outputs stay interface-neutral.
 
 ## Code Maintainability

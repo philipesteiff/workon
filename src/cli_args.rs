@@ -5,6 +5,8 @@ use crate::error::{Result, WorkonError};
 pub(crate) enum CliRequest {
     Command { command: Command, machine: bool },
     Help,
+    InstallDevShell,
+    InstallShell,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
@@ -14,6 +16,20 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
 
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Ok(CliRequest::Help);
+    }
+
+    let command_args = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--machine")
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if command_args == ["install-shell"] {
+        return Ok(CliRequest::InstallShell);
+    }
+
+    if command_args == ["install-dev-shell"] {
+        return Ok(CliRequest::InstallDevShell);
     }
 
     let mut machine = false;
@@ -107,6 +123,23 @@ mod tests {
                 command: Command::ListWorks,
                 machine: false,
             }
+        );
+    }
+
+    #[test]
+    fn parses_shell_install_commands() {
+        assert_eq!(
+            parse_args(vec!["install-shell".to_string()]).expect("args should parse"),
+            CliRequest::InstallShell
+        );
+        assert_eq!(
+            parse_args(vec!["install-dev-shell".to_string()]).expect("args should parse"),
+            CliRequest::InstallDevShell
+        );
+        assert_eq!(
+            parse_args(vec!["--machine".to_string(), "install-shell".to_string()])
+                .expect("args should parse"),
+            CliRequest::InstallShell
         );
     }
 }

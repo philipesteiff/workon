@@ -8,6 +8,7 @@ pub(crate) fn render_output(
     output: &CommandOutput,
     writer: &mut dyn Write,
     machine: bool,
+    root: &Path,
 ) -> Result<()> {
     match output {
         CommandOutput::Context(context) => {
@@ -20,7 +21,7 @@ pub(crate) fn render_output(
             writeln!(writer, "folder created: {}", work.path.display())?;
             writeln!(writer, "created: AGENTS.md")?;
             writeln!(writer, "created: CLAUDE.md")?;
-            render_switch_signal(writer, &work.path, &work.title, machine)?;
+            render_switch_signal(writer, &work.path, &work.title, root, machine)?;
         }
         CommandOutput::WorkList(list) => {
             if list.works.is_empty() {
@@ -34,7 +35,7 @@ pub(crate) fn render_output(
         CommandOutput::WorkOpened(work) => {
             writeln!(writer, "work opened: {}", work.title)?;
             writeln!(writer, "path: {}", work.path.display())?;
-            render_switch_signal(writer, &work.path, &work.title, machine)?;
+            render_switch_signal(writer, &work.path, &work.title, root, machine)?;
         }
     }
     Ok(())
@@ -46,7 +47,8 @@ pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
         "wo\n\
          wo <work-query>\n\
          wo --intent <intent-id> \"<goal>\"\n\
-         wo ctx"
+         wo ctx\n\
+         wo install-shell"
     )?;
     Ok(())
 }
@@ -55,11 +57,13 @@ fn render_switch_signal(
     writer: &mut dyn Write,
     path: &Path,
     title: &str,
+    root: &Path,
     machine: bool,
 ) -> Result<()> {
     if machine {
-        writeln!(writer, "__WORKON_SWITCH_PATH={}", path.display())?;
-        writeln!(writer, "__WORKON_SWITCH_TITLE={title}")?;
+        writeln!(writer, "__WORKON_CD={}", path.display())?;
+        writeln!(writer, "__WORKON_ROOT={}", root.display())?;
+        writeln!(writer, "__WORKON_TITLE={title}")?;
     }
     Ok(())
 }

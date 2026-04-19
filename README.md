@@ -6,14 +6,23 @@ Primary command: `wo`.
 
 AI agents are replaceable. Context is not.
 
-Workon opens a controlled Work shell. Use `exit` to leave it.
+Workon switches folders through a small shell function. No subshell.
 
 Common development commands:
 
 ```sh
 just verify
+just install-dev-shell
+# restart the shell, or source the script printed by the command
 just wo --intent investigate "Answer a technical question for my manager across repos"
 just smoke
+```
+
+Production shell setup:
+
+```sh
+wo install-shell
+# restart the shell, or source the script printed by the command
 ```
 
 ## Vision
@@ -86,7 +95,7 @@ created: AGENTS.md
 created: CLAUDE.md
 goal written: original input
 instructions written: investigate, collect evidence, cite sources, keep caveats visible
-work shell opened: .workon/work/<title>/
+cwd changed: .workon/work/<title>/
 ```
 
 To attach repos or change context:
@@ -121,6 +130,20 @@ wo
 
 Use this to switch into existing Work without remembering exact names.
 
+### `wo install-shell`
+
+Install the shell function that lets `wo` change the current directory.
+
+```sh
+wo install-shell
+```
+
+Local development equivalent:
+
+```sh
+just install-dev-shell
+```
+
 ### `wo "<intent text>"`
 
 Create a Work from natural language.
@@ -132,7 +155,7 @@ wo --intent investigate "Answer a technical question for my manager across repos
 
 If the text does not match existing Work, Workon starts creation. In a terminal it asks for intent; in scripts use `--intent`.
 
-Workon creates a Work folder, writes agent files, and opens a Work shell ready for Claude, Codex, Cursor, or another motor.
+Workon creates a Work folder, writes agent files, and switches the current shell there.
 
 ### `wo <work>`
 

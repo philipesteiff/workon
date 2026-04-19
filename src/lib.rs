@@ -6,9 +6,9 @@ mod cli_output;
 mod domain;
 mod error;
 mod intents;
+mod shell_integration;
 mod slug;
 mod storage;
-mod work_shell;
 
 pub use app::{App, Command, CommandOutput};
 pub use cli::run_cli;
