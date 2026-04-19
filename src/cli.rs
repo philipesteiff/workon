@@ -46,6 +46,13 @@ fn run(
         unreachable!("help request returned earlier");
     };
 
+    if should_run_tui(&command) {
+        if let Some(output) = crate::tui::run(&app, root.clone())? {
+            render_output(&output, stdout, machine, &root)?;
+        }
+        return Ok(0);
+    }
+
     if should_offer_shell_install(&command, machine) {
         return offer_shell_install(&app, &root, stdout, stderr);
     }
@@ -91,6 +98,10 @@ fn should_offer_shell_install(command: &Command, machine: bool) -> bool {
             command,
             Command::CreateWork { .. } | Command::OpenOrCreate { .. } | Command::OpenWork { .. }
         )
+}
+
+fn should_run_tui(command: &Command) -> bool {
+    io::stdin().is_terminal() && io::stdout().is_terminal() && matches!(command, Command::ListWorks)
 }
 
 fn offer_shell_install(

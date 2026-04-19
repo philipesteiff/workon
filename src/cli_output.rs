@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 
 use crate::app::CommandOutput;
 use crate::error::Result;
@@ -77,9 +78,34 @@ fn render_switch_signal(
     machine: bool,
 ) -> Result<()> {
     if machine {
-        writeln!(writer, "__WORKON_CD={}", path.display())?;
-        writeln!(writer, "__WORKON_ROOT={}", root.display())?;
-        writeln!(writer, "__WORKON_TITLE={title}")?;
+        write_machine_signal(writer, path, title, root)?;
     }
+    Ok(())
+}
+
+fn write_machine_signal(
+    writer: &mut dyn Write,
+    path: &Path,
+    title: &str,
+    root: &Path,
+) -> Result<()> {
+    match std::env::var_os("WORKON_SIGNAL_FILE") {
+        Some(signal_file) => {
+            let mut signal_writer = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(PathBuf::from(signal_file))?;
+            write_switch_lines(&mut signal_writer, path, title, root)?;
+        }
+        None => write_switch_lines(writer, path, title, root)?,
+    }
+
+    Ok(())
+}
+
+fn write_switch_lines(writer: &mut dyn Write, path: &Path, title: &str, root: &Path) -> Result<()> {
+    writeln!(writer, "__WORKON_CD={}", path.display())?;
+    writeln!(writer, "__WORKON_ROOT={}", root.display())?;
+    writeln!(writer, "__WORKON_TITLE={title}")?;
     Ok(())
 }

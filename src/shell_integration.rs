@@ -5,6 +5,7 @@ use crate::error::{Result, WorkonError};
 
 const WORKON_HOOK_ACTIVE_ENV: &str = "WORKON_HOOK_ACTIVE";
 const WORKON_ROOT_ENV: &str = "WORKON_ROOT";
+const WORKON_WORK_ENV: &str = "WORKON_WORK";
 const WORKON_DEV_MANIFEST_ENV: &str = "WORKON_DEV_MANIFEST";
 
 const PROD_SCRIPT: &str = "wo.zsh";
@@ -31,6 +32,10 @@ pub(crate) fn workon_root() -> std::io::Result<PathBuf> {
 
 pub(crate) fn is_shell_hook_active() -> bool {
     std::env::var_os(WORKON_HOOK_ACTIVE_ENV).is_some()
+}
+
+pub(crate) fn current_work_path() -> Option<PathBuf> {
+    std::env::var_os(WORKON_WORK_ENV).map(PathBuf::from)
 }
 
 pub(crate) fn install_shell_integration(kind: ShellInstallKind) -> Result<ShellInstallOutcome> {
@@ -130,11 +135,21 @@ _workon_current_root() {{
 }}
 
 _workon_run() {{
-  local workon_output workon_status workon_cd workon_root workon_title workon_next_root
+  local workon_output workon_status workon_cd workon_root workon_title workon_next_root workon_signal_file
   workon_root=\"$(_workon_current_root)\"
-  workon_output=\"$({hook_active}=1 {root_env}=\"$workon_root\" {runner} 2>&1)\"
-  workon_status=$?
-  printf '%s\\n' \"$workon_output\" | sed '/^__WORKON_/d'
+
+  if [ \"$#\" -eq 0 ]; then
+    workon_signal_file=\"$(mktemp \"${{TMPDIR:-/tmp}}/workon-signals.XXXXXX\")\" || return
+    {hook_active}=1 {root_env}=\"$workon_root\" WORKON_SIGNAL_FILE=\"$workon_signal_file\" {runner}
+    workon_status=$?
+    workon_output=\"$(cat \"$workon_signal_file\" 2>/dev/null)\"
+    rm -f \"$workon_signal_file\"
+  else
+    workon_output=\"$({hook_active}=1 {root_env}=\"$workon_root\" {runner} 2>&1)\"
+    workon_status=$?
+    printf '%s\\n' \"$workon_output\" | sed '/^__WORKON_/d'
+  fi
+
   workon_cd=\"$(printf '%s\\n' \"$workon_output\" | sed -n 's/^__WORKON_CD=//p' | tail -n 1)\"
   workon_next_root=\"$(printf '%s\\n' \"$workon_output\" | sed -n 's/^__WORKON_ROOT=//p' | tail -n 1)\"
   workon_title=\"$(printf '%s\\n' \"$workon_output\" | sed -n 's/^__WORKON_TITLE=//p' | tail -n 1)\"

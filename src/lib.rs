@@ -10,6 +10,7 @@ mod intents;
 mod shell_integration;
 mod slug;
 mod storage;
+mod tui;
 
 pub use app::{App, Command, CommandOutput};
 pub use cli::run_cli;
