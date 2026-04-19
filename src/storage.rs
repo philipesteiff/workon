@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
-use crate::domain::{CreatedWork, OpenedWork, WorkList, WorkSummary};
+use crate::domain::{ArchivedWork, CreatedWork, OpenedWork, WorkList, WorkSummary};
 use crate::error::{Result, WorkonError};
 use crate::slug::{slugify, title_from_goal};
 
@@ -12,6 +12,7 @@ const META_FILE: &str = "workon.meta";
 
 pub trait FileSystem: Clone {
     fn create_dir_all(&self, path: &Path) -> io::Result<()>;
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
     fn write(&self, path: &Path, content: &str) -> io::Result<()>;
     fn read_to_string(&self, path: &Path) -> io::Result<String>;
     fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>>;
@@ -26,6 +27,10 @@ pub struct StdFileSystem;
 impl FileSystem for StdFileSystem {
     fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        fs::rename(from, to)
     }
 
     fn write(&self, path: &Path, content: &str) -> io::Result<()> {
@@ -161,6 +166,24 @@ impl<F: FileSystem> WorkStore<F> {
         }
     }
 
+    pub fn archive(&self, query: &str) -> Result<ArchivedWork> {
+        let work = self.open(query)?;
+        let archive_root = self.archive_root();
+        self.fs.create_dir_all(&archive_root)?;
+
+        let archive_path = self.unique_archive_path(&work.slug);
+        self.fs.rename(&work.path, &archive_path)?;
+
+        Ok(ArchivedWork {
+            title: work.title,
+            slug: work.slug,
+            goal: work.goal,
+            intent_id: work.intent_id,
+            path: work.path,
+            archive_path,
+        })
+    }
+
     fn unique_slug(&self, base_slug: &str) -> Result<String> {
         let base_slug = if base_slug.is_empty() {
             "work"
@@ -181,6 +204,23 @@ impl<F: FileSystem> WorkStore<F> {
 
     fn work_root(&self) -> PathBuf {
         self.root.join(".workon").join("work")
+    }
+
+    fn archive_root(&self) -> PathBuf {
+        self.root.join(".workon").join("archive")
+    }
+
+    fn unique_archive_path(&self, slug: &str) -> PathBuf {
+        let archive_root = self.archive_root();
+        let mut candidate = archive_root.join(slug);
+        let mut suffix = 2;
+
+        while self.fs.exists(&candidate) {
+            candidate = archive_root.join(format!("{slug}-{suffix}"));
+            suffix += 1;
+        }
+
+        candidate
     }
 }
 
@@ -263,6 +303,10 @@ mod tests {
     impl FileSystem for RecordingFileSystem {
         fn create_dir_all(&self, path: &Path) -> io::Result<()> {
             self.created_dirs.borrow_mut().push(path.to_path_buf());
+            Ok(())
+        }
+
+        fn rename(&self, _from: &Path, _to: &Path) -> io::Result<()> {
             Ok(())
         }
 

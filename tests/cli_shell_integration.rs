@@ -50,6 +50,37 @@ fn normal_create_without_shell_hook_does_not_start_a_subshell() {
 }
 
 #[test]
+fn machine_archive_does_not_emit_cd_target() {
+    let root = temp_root("machine_archive_does_not_emit_cd_target");
+
+    let create_output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .args(["--intent", "investigate", "Archive smoke"])
+        .output()
+        .expect("wo should run");
+    assert!(create_output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .args(["--machine", "archive", "archive-smoke"])
+        .output()
+        .expect("wo should run");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+    assert!(stdout.contains("work archived: Archive smoke"));
+    assert!(stdout.contains("from:"));
+    assert!(stdout.contains("to:"));
+    assert!(!stdout.contains("__WORKON_CD="));
+}
+
+#[test]
 fn install_shell_writes_sourceable_prod_integration() {
     let home = temp_root("install_shell_writes_sourceable_prod_integration_home");
 

@@ -11,6 +11,11 @@ pub(crate) fn render_output(
     root: &Path,
 ) -> Result<()> {
     match output {
+        CommandOutput::WorkArchived(work) => {
+            writeln!(writer, "work archived: {}", work.title)?;
+            writeln!(writer, "from: {}", work.path.display())?;
+            writeln!(writer, "to: {}", work.archive_path.display())?;
+        }
         CommandOutput::Context(context) => {
             writeln!(writer, "context: {}", context.status)?;
             writeln!(writer, "{}", context.message)?;
@@ -56,6 +61,7 @@ pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
         writer,
         "wo\n\
          wo <work-query>\n\
+         wo archive <work-query>\n\
          wo --intent <intent-id> \"<goal>\"\n\
          wo ctx\n\
          wo install-shell"

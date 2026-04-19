@@ -29,6 +29,16 @@ pub struct OpenedWork {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivedWork {
+    pub title: String,
+    pub slug: String,
+    pub goal: String,
+    pub intent_id: String,
+    pub path: PathBuf,
+    pub archive_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkSummary {
     pub title: String,
     pub slug: String,

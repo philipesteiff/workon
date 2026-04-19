@@ -1,3 +1,4 @@
+pub(crate) mod archive_work;
 pub(crate) mod context;
 pub(crate) mod create_work;
 pub(crate) mod install_shell;

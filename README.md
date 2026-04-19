@@ -167,6 +167,17 @@ wo billing
 
 Use this as the fast path when the Work already exists.
 
+### `wo archive <work>`
+
+Archive the best matching active Work.
+
+```sh
+wo archive billing
+```
+
+Workon moves the Work folder from `.workon/work/` to `.workon/archive/`.
+Archived Works no longer appear in `wo` and cannot be opened by normal Work queries.
+
 ### `wo ctx`
 
 Open the context surface for the current Work.

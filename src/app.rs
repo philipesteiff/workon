@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::domain::{ContextStatus, CreatedWork, OpenedWork, WorkList};
+use crate::domain::{ArchivedWork, ContextStatus, CreatedWork, OpenedWork, WorkList};
 use crate::error::Result;
 use crate::feature;
 use crate::intents::IntentCatalog;
@@ -14,6 +14,9 @@ pub struct App {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    ArchiveWork {
+        query: String,
+    },
     Context,
     CreateWork {
         goal: String,
@@ -35,6 +38,7 @@ pub enum Command {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutput {
+    WorkArchived(ArchivedWork),
     Context(ContextStatus),
     ShellInstalled {
         label: String,
@@ -56,6 +60,7 @@ impl App {
 
     pub fn execute(&self, command: Command) -> Result<CommandOutput> {
         match command {
+            Command::ArchiveWork { query } => feature::archive_work::execute(&self.store, &query),
             Command::Context => feature::context::execute(),
             Command::CreateWork { goal, intent_id } => {
                 feature::create_work::execute(&self.store, &self.intents, &goal, &intent_id)

@@ -14,7 +14,7 @@ mod storage;
 pub use app::{App, Command, CommandOutput};
 pub use cli::run_cli;
 pub use domain::{
-    AmbiguousWorkMatch, ContextStatus, CreatedWork, IntentProfile, OpenedWork, WorkList,
-    WorkSummary,
+    AmbiguousWorkMatch, ArchivedWork, ContextStatus, CreatedWork, IntentProfile, OpenedWork,
+    WorkList, WorkSummary,
 };
 pub use error::{Result, WorkonError};

@@ -77,6 +77,85 @@ fn list_and_open_work_use_existing_state() {
 }
 
 #[test]
+fn archive_work_moves_it_out_of_active_list() {
+    let root = temp_root("archive_work_moves_it_out_of_active_list");
+    let app = App::new(root.path().to_path_buf());
+    let archived = create_investigate(&app, "Investigate billing timeout");
+    let active = create_investigate(&app, "Prepare design document");
+
+    let CommandOutput::WorkArchived(output) = app
+        .execute(Command::ArchiveWork {
+            query: "billing".to_string(),
+        })
+        .expect("archive should succeed")
+    else {
+        panic!("expected WorkArchived output");
+    };
+
+    assert_eq!(output.title, archived.title);
+    assert_eq!(output.slug, archived.slug);
+    assert_eq!(output.path, archived.path);
+    assert!(output.archive_path.ends_with("investigate-billing-timeout"));
+    assert!(!archived.path.exists());
+    assert!(output.archive_path.is_dir());
+
+    let CommandOutput::WorkList(list) = app
+        .execute(Command::ListWorks)
+        .expect("list works should succeed")
+    else {
+        panic!("expected WorkList output");
+    };
+    assert_eq!(list.works.len(), 1);
+    assert_eq!(list.works[0].title, active.title);
+
+    let error = app
+        .execute(Command::OpenWork {
+            query: archived.slug,
+        })
+        .expect_err("archived work should not open as active");
+    assert!(matches!(error, WorkonError::WorkNotFound { .. }));
+}
+
+#[test]
+fn archive_work_uses_open_matching_errors() {
+    let root = temp_root("archive_work_uses_open_matching_errors");
+    let app = App::new(root.path().to_path_buf());
+    create_investigate(&app, "Answer billing question");
+    create_investigate(&app, "Answer billing question");
+
+    let error = app
+        .execute(Command::ArchiveWork {
+            query: "billing".to_string(),
+        })
+        .expect_err("ambiguous archive query should fail");
+
+    assert!(matches!(error, WorkonError::AmbiguousWork { .. }));
+}
+
+#[test]
+fn archive_work_uses_suffixed_destination_when_archive_exists() {
+    let root = temp_root("archive_work_uses_suffixed_destination_when_archive_exists");
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Answer billing question");
+    let existing_archive = root.path().join(".workon/archive/answer-billing-question");
+    fs::create_dir_all(&existing_archive).expect("existing archive should be created");
+
+    let CommandOutput::WorkArchived(output) = app
+        .execute(Command::ArchiveWork {
+            query: work.slug.clone(),
+        })
+        .expect("archive should succeed")
+    else {
+        panic!("expected WorkArchived output");
+    };
+
+    assert_eq!(output.slug, work.slug);
+    assert!(output.archive_path.ends_with("answer-billing-question-2"));
+    assert!(output.archive_path.is_dir());
+    assert!(existing_archive.is_dir());
+}
+
+#[test]
 fn ambiguous_work_error_includes_slug_and_title() {
     let root = temp_root("ambiguous_work_error_includes_slug_and_title");
     let app = App::new(root.path().to_path_buf());

@@ -72,6 +72,28 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
         return Ok(command_request(Command::ListWorks, machine));
     }
 
+    if let Some(query) = input.strip_prefix("archive ") {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(WorkonError::MissingArgument {
+                message: "archive requires a work query".to_string(),
+            });
+        }
+
+        return Ok(command_request(
+            Command::ArchiveWork {
+                query: query.to_string(),
+            },
+            machine,
+        ));
+    }
+
+    if input == "archive" {
+        return Err(WorkonError::MissingArgument {
+            message: "archive requires a work query".to_string(),
+        });
+    }
+
     if input == "ctx" || input == "context" {
         return Ok(command_request(Command::Context, machine));
     }
@@ -161,6 +183,43 @@ mod tests {
                 machine: false,
             }
         );
+    }
+
+    #[test]
+    fn parses_archive_command() {
+        assert_eq!(
+            parse_args(vec!["archive".to_string(), "billing".to_string()])
+                .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ArchiveWork {
+                    query: "billing".to_string(),
+                },
+                machine: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "--machine".to_string(),
+                "archive".to_string(),
+                "billing".to_string()
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ArchiveWork {
+                    query: "billing".to_string(),
+                },
+                machine: true,
+            }
+        );
+    }
+
+    #[test]
+    fn archive_requires_query() {
+        let error =
+            parse_args(vec!["archive".to_string()]).expect_err("archive without query should fail");
+
+        assert_eq!(error.to_string(), "archive requires a work query");
     }
 
     fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
