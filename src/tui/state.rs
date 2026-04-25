@@ -14,7 +14,7 @@ pub(super) struct TuiState {
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
     pub(super) root: PathBuf,
-    pub(super) active_work_path: Option<PathBuf>,
+    pub(super) current_work_path: Option<PathBuf>,
     pub(super) trace: Vec<TraceEvent>,
     pub(super) trace_visible: bool,
     pub(super) detail_visible: bool,
@@ -78,7 +78,7 @@ impl TuiState {
             create_intent: 0,
             intents: Vec::new(),
             root: PathBuf::new(),
-            active_work_path: None,
+            current_work_path: None,
             trace: Vec::new(),
             trace_visible: false,
             detail_visible: false,
@@ -97,18 +97,17 @@ impl TuiState {
         self
     }
 
-    pub(super) fn with_active_work_path(mut self, active_work_path: Option<&Path>) -> Self {
-        let Some(active_work_path) = active_work_path else {
+    pub(super) fn with_current_directory(mut self, current_directory: Option<&Path>) -> Self {
+        let Some(current_directory) = current_directory else {
             return self;
         };
-
-        self.active_work_path = Some(active_work_path.to_path_buf());
 
         if let Some(index) = self
             .works
             .iter()
-            .position(|work| work.path == active_work_path)
+            .position(|work| current_directory.starts_with(&work.path))
         {
+            self.current_work_path = Some(self.works[index].path.clone());
             self.selected = index;
         }
 
@@ -135,9 +134,9 @@ impl TuiState {
     }
 
     pub(super) fn is_active_work(&self, work: &WorkSummary) -> bool {
-        self.active_work_path
+        self.current_work_path
             .as_deref()
-            .is_some_and(|active_path| active_path == work.path)
+            .is_some_and(|current_path| current_path == work.path)
     }
 
     pub(super) fn filtered_count(&self) -> usize {
@@ -513,9 +512,9 @@ mod tests {
     }
 
     #[test]
-    fn selects_active_work_path_when_opening_list() {
-        let state = TuiState::new(work_list()).with_active_work_path(Some(std::path::Path::new(
-            "/tmp/workon/.workon/work/review-cache-invalidation-pr",
+    fn selects_current_work_when_cwd_is_inside_work_folder() {
+        let state = TuiState::new(work_list()).with_current_directory(Some(std::path::Path::new(
+            "/tmp/workon/.workon/work/review-cache-invalidation-pr/src",
         )));
 
         assert_eq!(
@@ -524,16 +523,29 @@ mod tests {
         );
         let selected = state
             .selected_work()
-            .expect("active work should be selected");
+            .expect("current work should be selected");
         assert!(state.is_active_work(selected));
         assert_eq!(
-            state.active_work_path.as_deref(),
+            state.current_work_path.as_deref(),
             Some(std::path::Path::new(
                 "/tmp/workon/.workon/work/review-cache-invalidation-pr"
             ))
         );
         assert_eq!(state.filtered_count(), 3);
         assert_eq!(state.total_count(), 3);
+    }
+
+    #[test]
+    fn leaves_all_work_active_when_cwd_is_outside_work_folders() {
+        let state = TuiState::new(work_list())
+            .with_current_directory(Some(std::path::Path::new("/tmp/workon/elsewhere")));
+
+        assert_eq!(
+            state.selected_work().map(|work| work.slug.as_str()),
+            Some("billing-retry-audit")
+        );
+        assert!(state.current_work_path.is_none());
+        assert!(state.works.iter().all(|work| !state.is_active_work(work)));
     }
 
     #[test]

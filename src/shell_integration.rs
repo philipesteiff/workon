@@ -7,7 +7,6 @@ use crate::error::{Result, WorkonError};
 
 const WORKON_HOOK_ACTIVE_ENV: &str = "WORKON_HOOK_ACTIVE";
 const WORKON_ROOT_ENV: &str = "WORKON_ROOT";
-const WORKON_WORK_ENV: &str = "WORKON_WORK";
 const WORKON_DEV_MANIFEST_ENV: &str = "WORKON_DEV_MANIFEST";
 
 const PROD_SCRIPT: &str = "wo.zsh";
@@ -31,10 +30,6 @@ pub(crate) fn workon_root() -> std::io::Result<PathBuf> {
 
 pub(crate) fn is_shell_hook_active() -> bool {
     std::env::var_os(WORKON_HOOK_ACTIVE_ENV).is_some()
-}
-
-pub(crate) fn current_work_path() -> Option<PathBuf> {
-    std::env::var_os(WORKON_WORK_ENV).map(PathBuf::from)
 }
 
 pub(crate) fn install_shell_integration(kind: ShellInstallKind) -> Result<ShellInstallOutcome> {

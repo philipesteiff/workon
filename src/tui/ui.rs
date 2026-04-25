@@ -878,7 +878,7 @@ mod tests {
 
     #[test]
     fn renders_work_list_and_detail() {
-        let state = TuiState::new(work_list()).with_active_work_path(Some(std::path::Path::new(
+        let state = TuiState::new(work_list()).with_current_directory(Some(std::path::Path::new(
             "/tmp/workon/.workon/work/billing-retry-audit",
         )));
         let content = render_content(&state, 120, 36);
@@ -915,7 +915,7 @@ mod tests {
 
     #[test]
     fn renders_active_and_current_queue_rows_as_distinct_work_states() {
-        let mut state = TuiState::new(multi_work_list()).with_active_work_path(Some(
+        let mut state = TuiState::new(multi_work_list()).with_current_directory(Some(
             std::path::Path::new("/tmp/workon/.workon/work/billing-retry-audit"),
         ));
         state.move_selection(1);
@@ -990,7 +990,7 @@ mod tests {
 
     #[test]
     fn renders_detail_as_active_when_not_current_work() {
-        let mut state = TuiState::new(multi_work_list()).with_active_work_path(Some(
+        let mut state = TuiState::new(multi_work_list()).with_current_directory(Some(
             std::path::Path::new("/tmp/workon/.workon/work/billing-retry-audit"),
         ));
         state.move_selection(1);
@@ -1002,6 +1002,18 @@ mod tests {
         assert!(!content.contains("TARGET"));
         assert!(!content.contains("READY"));
         assert!(!content.contains("STANDBY"));
+    }
+
+    #[test]
+    fn renders_all_work_as_active_when_cwd_is_outside_work_folders() {
+        let state = TuiState::new(multi_work_list())
+            .with_current_directory(Some(std::path::Path::new("/tmp/workon/elsewhere")));
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains(">> ACTIVE"));
+        assert!(!content.contains("@ CURRENT"));
+        assert!(!content.contains("CURRENT WORK"));
     }
 
     #[test]

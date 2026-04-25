@@ -15,7 +15,6 @@ use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use crate::app::{App, Command, CommandOutput};
 use crate::error::Result;
-use crate::shell_integration::current_work_path;
 
 use self::animation::{input_poll_timeout, AnimationRuntime, AnimationSnapshot};
 use self::state::{Toast, TraceKind, TuiAction, TuiState};
@@ -31,7 +30,7 @@ pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
     let mut state = TuiState::new(work_list)
         .with_intents(app.available_intents())
         .with_root(root)
-        .with_active_work_path(current_work_path().as_deref());
+        .with_current_directory(std::env::current_dir().ok().as_deref());
     state.push_trace(TraceKind::Run, "list loaded");
     let mut terminal = TerminalSession::enter()?;
     run_loop(app, terminal.terminal_mut(), &mut state)
