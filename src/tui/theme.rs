@@ -2,6 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 
 const AMBER: Color = Color::Rgb(255, 176, 64);
 const ORANGE: Color = Color::Rgb(255, 140, 32);
+const TARGET_BG: Color = Color::Rgb(92, 58, 32);
 const DIM_AMBER: Color = Color::Rgb(160, 104, 48);
 const BORDER_AMBER: Color = Color::Rgb(104, 72, 40);
 const OK_AMBER: Color = Color::Rgb(220, 180, 84);
@@ -52,6 +53,26 @@ pub(super) fn style_key() -> Style {
 
 pub(super) fn style_selected() -> Style {
     Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
+}
+
+pub(super) fn style_target_row() -> Style {
+    Style::new()
+        .fg(AMBER)
+        .bg(TARGET_BG)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(super) fn style_current_text() -> Style {
+    Style::new()
+        .fg(OK_AMBER)
+        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+}
+
+pub(super) fn style_current_badge() -> Style {
+    Style::new()
+        .fg(Color::Black)
+        .bg(OK_AMBER)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_active() -> Style {

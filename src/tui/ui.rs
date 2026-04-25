@@ -132,37 +132,72 @@ fn render_task_queue(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         return;
     }
 
+    let selected = state.selected.min(works.len().saturating_sub(1));
     let items = works
         .iter()
-        .map(|work| task_item(work, state.is_active_work(work)))
+        .enumerate()
+        .map(|(index, work)| task_item(work, state.is_active_work(work), index == selected))
         .collect::<Vec<_>>();
 
     let mut list_state = ListState::default();
-    list_state.select(Some(state.selected.min(items.len().saturating_sub(1))));
+    list_state.select(Some(selected));
     let list = List::new(items)
         .block(block)
-        .highlight_symbol("◆ ")
-        .highlight_style(theme::style_selected());
+        .highlight_symbol(">>")
+        .highlight_style(theme::style_target_row());
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
 
-fn task_item(work: &WorkSummary, active: bool) -> ListItem<'static> {
-    let status = if active {
-        status_badge("ACTIVE", theme::style_active())
+fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
+    let mut status = Vec::new();
+    if selected {
+        status.push(status_badge("TARGET", theme::style_target_row()));
+    }
+    status.push(if active {
+        status_badge("CURRENT", theme::style_current_badge())
     } else {
         status_badge("READY", theme::style_muted_text())
-    };
-    ListItem::new(vec![
+    });
+    let primary_style = task_primary_style(active, selected);
+    let secondary_style = task_secondary_style(active, selected);
+    status.extend([
+        Span::raw(" "),
+        Span::styled(work.title.clone(), primary_style),
+    ]);
+
+    let item = ListItem::new(vec![
+        Line::from(status),
         Line::from(vec![
-            status,
-            Span::raw(" "),
-            Span::styled(work.title.clone(), theme::style_primary_text()),
+            Span::styled(format!("{:<12}", work.intent_id), secondary_style),
+            Span::styled(work.slug.clone(), secondary_style),
         ]),
-        Line::from(vec![
-            Span::styled(format!("{:<12}", work.intent_id), theme::style_command()),
-            Span::styled(work.slug.clone(), theme::style_muted_text()),
-        ]),
-    ])
+    ]);
+
+    if active && !selected {
+        item.style(theme::style_current_text())
+    } else {
+        item
+    }
+}
+
+fn task_primary_style(active: bool, selected: bool) -> Style {
+    if selected {
+        theme::style_target_row()
+    } else if active {
+        theme::style_current_text()
+    } else {
+        theme::style_primary_text()
+    }
+}
+
+fn task_secondary_style(active: bool, selected: bool) -> Style {
+    if selected {
+        theme::style_target_row()
+    } else if active {
+        theme::style_current_text()
+    } else {
+        theme::style_muted_text()
+    }
 }
 
 fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
@@ -738,7 +773,9 @@ mod tests {
     use std::path::PathBuf;
 
     use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::{Color, Modifier};
     use ratatui::Terminal;
 
     use super::{control_panel_rect, render};
@@ -766,6 +803,26 @@ mod tests {
         assert!(!content.contains("archive"));
         assert!(!content.contains("Goal"));
         assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
+    }
+
+    #[test]
+    fn renders_active_and_highlighted_queue_rows_as_distinct_signals() {
+        let mut state = TuiState::new(multi_work_list()).with_active_work_path(Some(
+            std::path::Path::new("/tmp/workon/.workon/work/billing-retry-audit"),
+        ));
+        state.move_selection(1);
+
+        let content = render_content(&state, 120, 36);
+        let buffer = render_buffer(&state, 120, 36);
+        let current_row = row_containing(&buffer, "CURRENT");
+        let target_row = row_containing(&buffer, ">> TARGET");
+
+        assert!(content.contains("CURRENT"));
+        assert!(content.contains("Billing retry audit"));
+        assert!(content.contains("Review cache invalidation PR"));
+        assert!(content.contains(">> TARGET"));
+        assert!(row_has_bg(&buffer, target_row, Color::Rgb(92, 58, 32)));
+        assert!(row_has_modifier(&buffer, current_row, Modifier::UNDERLINED));
     }
 
     #[test]
@@ -987,6 +1044,28 @@ mod tests {
         }
     }
 
+    fn multi_work_list() -> WorkList {
+        WorkList {
+            works: vec![
+                WorkSummary {
+                    title: "Billing retry audit".to_string(),
+                    slug: "billing-retry-audit".to_string(),
+                    goal: "Find why billing retry alerts spiked after the queue rollout."
+                        .to_string(),
+                    intent_id: "investigate".to_string(),
+                    path: PathBuf::from("/tmp/workon/.workon/work/billing-retry-audit"),
+                },
+                WorkSummary {
+                    title: "Review cache invalidation PR".to_string(),
+                    slug: "review-cache-invalidation-pr".to_string(),
+                    goal: "Review the cache invalidation PR for regressions.".to_string(),
+                    intent_id: "review-pr".to_string(),
+                    path: PathBuf::from("/tmp/workon/.workon/work/review-cache-invalidation-pr"),
+                },
+            ],
+        }
+    }
+
     fn render_content(state: &TuiState, width: u16, height: u16) -> String {
         let mut terminal = Terminal::new(TestBackend::new(width, height))
             .expect("test terminal should initialize");
@@ -998,7 +1077,40 @@ mod tests {
         format!("{}", terminal.backend())
     }
 
+    fn render_buffer(state: &TuiState, width: u16, height: u16) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height))
+            .expect("test terminal should initialize");
+
+        terminal
+            .draw(|frame| render(frame, state))
+            .expect("render should succeed");
+
+        terminal.backend().buffer().clone()
+    }
+
     fn first_lines(content: &str, count: usize) -> String {
         content.lines().take(count).collect::<Vec<_>>().join("\n")
+    }
+
+    fn row_containing(buffer: &Buffer, text: &str) -> u16 {
+        for y in 0..buffer.area.height {
+            let mut row = String::new();
+            for x in 0..buffer.area.width {
+                row.push_str(buffer[(x, y)].symbol());
+            }
+            if row.contains(text) {
+                return y;
+            }
+        }
+
+        panic!("buffer did not contain row text: {text}");
+    }
+
+    fn row_has_bg(buffer: &Buffer, y: u16, color: Color) -> bool {
+        (0..buffer.area.width).any(|x| buffer[(x, y)].bg == color)
+    }
+
+    fn row_has_modifier(buffer: &Buffer, y: u16, modifier: Modifier) -> bool {
+        (0..buffer.area.width).any(|x| buffer[(x, y)].modifier.contains(modifier))
     }
 }
