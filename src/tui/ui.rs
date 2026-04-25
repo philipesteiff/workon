@@ -371,6 +371,8 @@ fn footer_keys(
             "open ".dim(),
             key("n"),
             "new ".dim(),
+            key("a"),
+            "arch ".dim(),
             key("/"),
             "find ".dim(),
             key("?"),
@@ -383,6 +385,8 @@ fn footer_keys(
             "open ".dim(),
             key("n"),
             "new ".dim(),
+            key("a"),
+            "archive ".dim(),
             key("/"),
             "find ".dim(),
             key("C-d"),
@@ -401,6 +405,8 @@ fn footer_keys(
             "open ".dim(),
             key("n"),
             "new ".dim(),
+            key("a"),
+            "archive ".dim(),
             key("/"),
             "find ".dim(),
             key("C-d"),
@@ -901,7 +907,7 @@ mod tests {
         assert!(content.contains("intent investigate"));
         assert!(!content.contains("slug billing-retry-audit"));
         assert!(content.contains("folder"));
-        assert!(!content.contains("archive"));
+        assert!(!content.contains(".workon/archive"));
         assert!(!content.contains("Goal"));
         assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
         assert!(content.contains("@ CURRENT"));
@@ -1050,15 +1056,24 @@ mod tests {
 
         let compact = render_content(&state, 120, 36);
         assert!(!compact.contains("Goal"));
-        assert!(!compact.contains("archive"));
+        assert!(!compact.contains(".workon/archive"));
         assert!(compact.contains("C-d details"));
 
         state.detail_visible = true;
         let expanded = render_content(&state, 120, 36);
 
         assert!(expanded.contains("Goal"));
-        assert!(expanded.contains("archive"));
+        assert!(expanded.contains(".workon/archive"));
         assert!(expanded.contains("C-d hide details"));
+    }
+
+    #[test]
+    fn renders_archive_shortcut_in_list_footer() {
+        let full = render_content(&TuiState::new(work_list()), 120, 36);
+        assert!(full.contains("a archive"));
+
+        let compact = render_content(&TuiState::new(work_list()), 80, 24);
+        assert!(compact.contains("a arch"));
     }
 
     #[test]
