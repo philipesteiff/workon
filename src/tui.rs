@@ -6,7 +6,7 @@ mod ui;
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use self::state::{RepoOperation, Toast, TraceKind, TuiAction, TuiMode, TuiState}
 use self::ui::render_for_animation;
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 28;
+const REPO_OPERATION_ANIMATION_INTERVAL: Duration = Duration::from_millis(90);
 
 pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {
@@ -168,17 +169,16 @@ fn run_loop(
                 work_slug,
                 add,
                 remove,
+                force_remove,
             } => {
-                let outcome = apply_repo_changes(
-                    app,
-                    terminal,
-                    state,
-                    &mut animation,
-                    &work_slug,
+                let request = RepoChangeRequest {
+                    work_slug,
                     add,
                     remove,
-                )?;
-                refresh_attached_repositories(app, state, &work_slug);
+                    force_remove,
+                };
+                let outcome = apply_repo_changes(app, terminal, state, &mut animation, &request)?;
+                refresh_attached_repositories(app, state, &request.work_slug);
                 show_repo_batch_outcome(state, outcome);
             }
         }
@@ -232,6 +232,13 @@ struct RepoContextData {
 struct RepoLoadJob {
     work_slug: String,
     receiver: Receiver<Result<RepoContextData>>,
+}
+
+struct RepoChangeRequest {
+    work_slug: String,
+    add: Vec<String>,
+    remove: Vec<String>,
+    force_remove: bool,
 }
 
 #[derive(Debug, Default)]
@@ -340,23 +347,25 @@ fn apply_repo_changes(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     state: &mut TuiState,
     animation: &mut AnimationRuntime,
-    work_slug: &str,
-    add: Vec<String>,
-    remove: Vec<String>,
+    request: &RepoChangeRequest,
 ) -> Result<RepoBatchOutcome> {
     let mut outcome = RepoBatchOutcome::default();
 
-    let total = add.len() + remove.len();
+    let total = request.add.len() + request.remove.len();
     let mut current = 0;
 
-    for repository in add {
+    for repository in &request.add {
         current += 1;
-        state.start_repo_step(RepoOperation::Add, current, total, &repository);
+        state.start_repo_step(RepoOperation::Add, current, total, repository);
         draw_frame(terminal, state, animation, Duration::ZERO)?;
-        match app.execute(Command::AddWorkRepositories {
-            query: work_slug.to_string(),
-            repositories: vec![repository.clone()],
-        }) {
+        let receiver = spawn_repo_command(
+            app.clone(),
+            Command::AddWorkRepositories {
+                query: request.work_slug.clone(),
+                repositories: vec![repository.clone()],
+            },
+        );
+        match wait_for_repo_command(receiver, terminal, state, animation)? {
             Ok(_) => {
                 outcome.successes += 1;
                 state.push_repo_log(TraceKind::Sync, format!("attached {repository}"));
@@ -370,17 +379,27 @@ fn apply_repo_changes(
         draw_frame(terminal, state, animation, Duration::ZERO)?;
     }
 
-    for repository in remove {
+    for repository in &request.remove {
         current += 1;
-        state.start_repo_step(RepoOperation::Remove, current, total, &repository);
+        state.start_repo_step(RepoOperation::Remove, current, total, repository);
         draw_frame(terminal, state, animation, Duration::ZERO)?;
-        match app.execute(Command::RemoveWorkRepositories {
-            query: work_slug.to_string(),
-            repositories: vec![repository.clone()],
-        }) {
+        let receiver = spawn_repo_command(
+            app.clone(),
+            Command::RemoveWorkRepositories {
+                query: request.work_slug.clone(),
+                repositories: vec![repository.clone()],
+                force: request.force_remove,
+            },
+        );
+        match wait_for_repo_command(receiver, terminal, state, animation)? {
             Ok(_) => {
                 outcome.successes += 1;
-                state.push_repo_log(TraceKind::Sync, format!("removed {repository}"));
+                let verb = if request.force_remove {
+                    "force removed"
+                } else {
+                    "removed"
+                };
+                state.push_repo_log(TraceKind::Sync, format!("{verb} {repository}"));
             }
             Err(error) => {
                 let failure = format!("{repository}: {error}");
@@ -394,6 +413,41 @@ fn apply_repo_changes(
     Ok(outcome)
 }
 
+fn spawn_repo_command(app: App, command: Command) -> Receiver<Result<CommandOutput>> {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(app.execute(command));
+    });
+    receiver
+}
+
+fn wait_for_repo_command(
+    receiver: Receiver<Result<CommandOutput>>,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    state: &mut TuiState,
+    animation: &mut AnimationRuntime,
+) -> Result<Result<CommandOutput>> {
+    loop {
+        match receiver.recv_timeout(REPO_OPERATION_ANIMATION_INTERVAL) {
+            Ok(result) => return Ok(result),
+            Err(RecvTimeoutError::Timeout) => {
+                state.advance_activity_frame();
+                draw_frame(
+                    terminal,
+                    state,
+                    animation,
+                    REPO_OPERATION_ANIMATION_INTERVAL,
+                )?;
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Ok(Err(WorkonError::RepositoryContext {
+                    message: "repository operation stopped before returning a result".to_string(),
+                }));
+            }
+        }
+    }
+}
+
 fn show_repo_batch_outcome(state: &mut TuiState, outcome: RepoBatchOutcome) {
     if outcome.failures.is_empty() {
         state.toast = Some(Toast::info(
@@ -405,18 +459,35 @@ fn show_repo_batch_outcome(state: &mut TuiState, outcome: RepoBatchOutcome) {
             format!("repo context: {} applied", outcome.successes),
         );
     } else {
-        state.toast = Some(Toast::error(
-            "Repository context updated",
-            &format!(
-                "{} applied, {} failed.",
-                outcome.successes,
-                outcome.failures.len()
-            ),
-        ));
+        let message = outcome
+            .failures
+            .first()
+            .map(|failure| first_error_line(failure))
+            .unwrap_or_else(|| {
+                format!(
+                    "{} applied, {} failed.",
+                    outcome.successes,
+                    outcome.failures.len()
+                )
+            });
+        let title = if outcome.successes == 0 {
+            "Repository context failed"
+        } else {
+            "Repository context partially updated"
+        };
+        state.toast = Some(Toast::error(title, &message));
         for failure in outcome.failures {
             state.push_trace(TraceKind::Err, failure);
         }
     }
+}
+
+fn first_error_line(message: &str) -> String {
+    message
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(message)
+        .to_string()
 }
 
 #[cfg(test)]
@@ -429,7 +500,30 @@ mod tests {
         input_poll_timeout, AnimationRuntime, AnimationSnapshot, AnimationTarget,
         ANIMATION_FRAME_INTERVAL,
     };
-    use super::state::{Toast, TuiMode, TuiState};
+    use super::state::{Toast, TraceKind, TuiMode, TuiState};
+    use super::{show_repo_batch_outcome, RepoBatchOutcome};
+
+    #[test]
+    fn repo_batch_failure_toast_shows_first_failure_reason() {
+        let mut state = TuiState::new(work_list());
+        show_repo_batch_outcome(
+            &mut state,
+            RepoBatchOutcome {
+                successes: 0,
+                failures: vec![
+                    "example/private-repo: Cannot remove worktree: workon/workon-improve-creation-and-intent has uncommitted changes\nrepository context command failed: wt -C /cache remove".to_string(),
+                ],
+            },
+        );
+
+        let toast = state.toast.expect("failure toast should be shown");
+        assert_eq!(toast.title, "Repository context failed");
+        assert_eq!(
+            toast.message,
+            "example/private-repo: Cannot remove worktree: workon/workon-improve-creation-and-intent has uncommitted changes"
+        );
+        assert_eq!(state.trace[0].kind, TraceKind::Err);
+    }
 
     #[test]
     fn animation_runtime_enqueues_targets_for_visible_state_transitions() {

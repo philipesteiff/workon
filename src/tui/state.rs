@@ -25,6 +25,7 @@ pub(super) struct TuiState {
     pub(super) repo_filter: String,
     pub(super) repo_pending_add: BTreeSet<String>,
     pub(super) repo_pending_remove: BTreeSet<String>,
+    pub(super) repo_force_remove: bool,
     pub(super) repo_status: RepoStatus,
     pub(super) repo_logs: Vec<TraceEvent>,
     pub(super) root: PathBuf,
@@ -82,6 +83,7 @@ pub(super) enum RepoSelectionState {
     Attached,
     PendingAdd,
     PendingRemove,
+    PendingForceRemove,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +136,7 @@ pub(super) enum TuiAction {
         work_slug: String,
         add: Vec<String>,
         remove: Vec<String>,
+        force_remove: bool,
     },
 }
 
@@ -158,6 +161,7 @@ impl TuiState {
             repo_filter: String::new(),
             repo_pending_add: BTreeSet::new(),
             repo_pending_remove: BTreeSet::new(),
+            repo_force_remove: false,
             repo_status: RepoStatus::Ready,
             repo_logs: Vec::new(),
             root: PathBuf::new(),
@@ -354,6 +358,7 @@ impl TuiState {
         self.repo_filter.clear();
         self.repo_pending_add.clear();
         self.repo_pending_remove.clear();
+        self.repo_force_remove = false;
         self.repo_status = RepoStatus::Ready;
     }
 
@@ -369,6 +374,7 @@ impl TuiState {
         self.repo_filter.clear();
         self.repo_pending_add.clear();
         self.repo_pending_remove.clear();
+        self.repo_force_remove = false;
         self.repo_logs.clear();
         self.repo_status = RepoStatus::Loading {
             message: "Loading GitHub repositories".to_string(),
@@ -385,13 +391,17 @@ impl TuiState {
 
     pub(super) fn is_title_activity_active(&self) -> bool {
         matches!(self.mode, TuiMode::Repos)
-            && matches!(self.repo_status, RepoStatus::Loading { .. })
+            && matches!(
+                self.repo_status,
+                RepoStatus::Loading { .. } | RepoStatus::Applying { .. }
+            )
     }
 
     pub(super) fn update_attached_repositories(&mut self, attached: Vec<AttachedRepository>) {
         self.repo_attached = attached;
         self.repo_pending_add.clear();
         self.repo_pending_remove.clear();
+        self.repo_force_remove = false;
         self.repo_status = RepoStatus::Ready;
         self.clamp_repo_selection();
         self.clamp_selected_repo_selection();
@@ -418,6 +428,7 @@ impl TuiState {
             total,
             repository: repository.to_string(),
         };
+        self.activity_frame = 0;
         self.push_repo_log(
             TraceKind::Run,
             format!(
@@ -459,7 +470,11 @@ impl TuiState {
                     .repo_pending_remove
                     .contains(&repository.name_with_owner)
                 {
-                    RepoSelectionState::PendingRemove
+                    if self.repo_force_remove {
+                        RepoSelectionState::PendingForceRemove
+                    } else {
+                        RepoSelectionState::PendingRemove
+                    }
                 } else {
                     RepoSelectionState::Attached
                 },
@@ -685,6 +700,7 @@ impl TuiState {
             KeyCode::Esc => {
                 self.repo_pending_add.clear();
                 self.repo_pending_remove.clear();
+                self.repo_force_remove = false;
                 self.repo_filter.clear();
                 self.restore_queue_mode();
                 TuiAction::None
@@ -708,6 +724,10 @@ impl TuiState {
             }
             KeyCode::Char(' ') if is_plain_character(key) => {
                 self.toggle_focused_repository();
+                TuiAction::None
+            }
+            KeyCode::Char('!') if is_plain_character(key) => {
+                self.toggle_repo_force_remove();
                 TuiAction::None
             }
             KeyCode::Enter => self.repo_apply_action(),
@@ -857,6 +877,7 @@ impl TuiState {
             work_slug: self.repo_work_slug.clone(),
             add: self.repo_pending_add.iter().cloned().collect(),
             remove: self.repo_pending_remove.iter().cloned().collect(),
+            force_remove: self.repo_force_remove && !self.repo_pending_remove.is_empty(),
         }
     }
 
@@ -872,15 +893,44 @@ impl TuiState {
         if attached {
             if !self.repo_pending_remove.insert(name.to_string()) {
                 self.repo_pending_remove.remove(name);
+                if self.repo_pending_remove.is_empty() {
+                    self.repo_force_remove = false;
+                }
             }
             return;
         }
 
         if self.repo_pending_remove.remove(name) {
+            if self.repo_pending_remove.is_empty() {
+                self.repo_force_remove = false;
+            }
             return;
         }
 
         self.repo_pending_add.insert(name.to_string());
+    }
+
+    fn toggle_repo_force_remove(&mut self) {
+        if self.repo_pending_remove.is_empty() {
+            self.toast = Some(Toast::error(
+                "No removals selected",
+                "Select attached repositories before arming force.",
+            ));
+            return;
+        }
+        self.repo_force_remove = !self.repo_force_remove;
+        self.push_repo_log(
+            if self.repo_force_remove {
+                TraceKind::Warn
+            } else {
+                TraceKind::Run
+            },
+            if self.repo_force_remove {
+                "force remove armed"
+            } else {
+                "force remove disarmed"
+            },
+        );
     }
 
     fn selected_catalog_repo_name(&self) -> Option<String> {
@@ -1340,6 +1390,33 @@ mod tests {
                 work_slug: "billing-retry-audit".to_string(),
                 add: vec!["openai/api-docs".to_string()],
                 remove: vec!["openai/api".to_string()],
+                force_remove: false,
+            }
+        );
+    }
+
+    #[test]
+    fn repo_context_can_arm_force_remove_for_pending_removals() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            attached_repositories(),
+        );
+        state.repo_focus = RepoPane::Selected;
+
+        state.handle_key(key(KeyCode::Char(' ')));
+        state.handle_key(key(KeyCode::Char('!')));
+
+        assert!(state.repo_force_remove);
+        assert_eq!(
+            state.handle_key(key(KeyCode::Enter)),
+            TuiAction::ApplyRepoChanges {
+                work_slug: "billing-retry-audit".to_string(),
+                add: Vec::new(),
+                remove: vec!["openai/api".to_string()],
+                force_remove: true,
             }
         );
     }

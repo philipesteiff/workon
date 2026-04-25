@@ -158,7 +158,7 @@ fn repos_help_prints_usage() {
         assert!(stdout.contains("wo repos - attach GitHub repositories"));
         assert!(stdout.contains("wo repos list <work-query>"));
         assert!(stdout.contains("wo repos add <work-query> <owner/repo>..."));
-        assert!(stdout.contains("wo repos remove <work-query> <owner/repo>..."));
+        assert!(stdout.contains("wo repos remove [--force] <work-query> <owner/repo>..."));
         assert!(stdout.contains("Highlight a Work, press /r"));
     }
 }
@@ -309,6 +309,7 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
         .args([
             "repos",
             "remove",
+            "--force",
             "repository-context-cli-smoke",
             "openai/workon",
         ])
@@ -336,7 +337,7 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
     assert!(log.contains("gh repo view openai/workon"));
     assert!(log.contains("gh repo clone openai/workon"));
     assert!(log.contains("wt -C"));
-    assert!(log.contains("remove --no-delete-branch"));
+    assert!(log.contains("remove --no-delete-branch --foreground --format json --force"));
 }
 
 #[test]

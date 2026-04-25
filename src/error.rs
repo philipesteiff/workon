@@ -66,7 +66,7 @@ impl fmt::Display for WorkonError {
                 } else {
                     write!(
                         formatter,
-                        "repository context command failed: {command}\n{stderr}"
+                        "{stderr}\nrepository context command failed: {command}"
                     )
                 }
             }

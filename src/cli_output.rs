@@ -202,63 +202,64 @@ fn display_folder(path: &Path, root: &Path) -> String {
 }
 
 pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
-    writeln!(
-        writer,
-        "wo - start, open, and archive work folders\n\
-         \n\
-         Usage:\n\
-           wo                         list active work\n\
-           wo list                    list active work\n\
-           wo <work-query>            open matching work\n\
-           wo archive <work-query>    archive matching work\n\
-           wo repos list <work-query>\n\
-                                      list attached GitHub repos\n\
-           wo repos add <work> <owner/repo>...\n\
-                                      attach GitHub repos as worktrees\n\
-           wo repos remove <work> <owner/repo>...\n\
-                                      remove attached repo worktrees\n\
-           wo repos                  show GitHub repo context help\n\
-           wo --intent <id> \"<goal>\"  create work\n\
-           wo ctx                     print context status\n\
-           wo install-shell           install folder switching\n\
-         \n\
-         Options:\n\
-           -i, --intent <id>          intent for new work\n\
-           --machine                  emit shell switch signals\n\
-           -h, --help                 show this help\n\
-         \n\
-         Env:\n\
-           WORKON_ROOT=/path          override the default ~/.workon root"
+    writer.write_all(
+        b"wo - start, open, and archive work folders
+
+Usage:
+  wo                         list active work
+  wo list                    list active work
+  wo <work-query>            open matching work
+  wo archive <work-query>    archive matching work
+  wo repos list <work-query>
+                             list attached GitHub repos
+  wo repos add <work> <owner/repo>...
+                             attach GitHub repos as worktrees
+  wo repos remove [--force] <work> <owner/repo>...
+                             remove attached repo worktrees
+  wo repos                   show GitHub repo context help
+  wo --intent <id> \"<goal>\"  create work
+  wo ctx                     print context status
+  wo install-shell           install folder switching
+
+Options:
+  -i, --intent <id>          intent for new work
+  --machine                  emit shell switch signals
+  -h, --help                 show this help
+
+Env:
+  WORKON_ROOT=/path          override the default ~/.workon root
+",
     )?;
     Ok(())
 }
 
 pub(crate) fn write_repos_help(writer: &mut dyn Write) -> Result<()> {
-    writeln!(
-        writer,
-        "wo repos - attach GitHub repositories to a Work as git worktrees\n\
-         \n\
-         Usage:\n\
-           wo repos list <work-query>\n\
-               List GitHub repositories attached to the matching Work.\n\
-         \n\
-           wo repos add <work-query> <owner/repo>...\n\
-               Attach one or more GitHub repositories to the matching Work.\n\
-               Repositories are cached as bare repos, then checked out under:\n\
-               <work>/repos/<owner>__<repo>\n\
-         \n\
-           wo repos remove <work-query> <owner/repo>...\n\
-               Remove one or more attached repository worktrees.\n\
-               Branches and bare repo caches are kept.\n\
-         \n\
-         TUI:\n\
-           wo\n\
-               Highlight a Work, press /r, use the left GitHub catalog and right selected panel,\n\
-               then press enter to apply pending add/remove changes.\n\
-         \n\
-         Requires:\n\
-           gh auth login\n\
-           wt"
+    writer.write_all(
+        b"wo repos - attach GitHub repositories to a Work as git worktrees
+
+Usage:
+  wo repos list <work-query>
+      List GitHub repositories attached to the matching Work.
+
+  wo repos add <work-query> <owner/repo>...
+      Attach one or more GitHub repositories to the matching Work.
+      Repositories are cached as bare repos, then checked out under:
+      <work>/repos/<owner>__<repo>
+
+  wo repos remove [--force] <work-query> <owner/repo>...
+      Remove one or more attached repository worktrees.
+      Branches and bare repo caches are kept.
+      Use --force only when you accept losing dirty worktree changes.
+
+TUI:
+  wo
+      Highlight a Work, press /r, use the left GitHub catalog and right selected panel,
+      press ! to arm force removal, then press enter to apply pending changes.
+
+Requires:
+  gh auth login
+  wt
+",
     )?;
     Ok(())
 }

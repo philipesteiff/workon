@@ -197,13 +197,19 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
             ))
         }
         Some("remove") => {
-            let Some(query) = input_parts.get(2) else {
+            let force = input_parts[2..].iter().any(|part| part == "--force");
+            let parts = input_parts[2..]
+                .iter()
+                .filter(|part| part.as_str() != "--force")
+                .cloned()
+                .collect::<Vec<_>>();
+            let Some(query) = parts.first() else {
                 return Err(WorkonError::MissingArgument {
                     message: "repos remove requires a work query and at least one repository"
                         .to_string(),
                 });
             };
-            let repositories = input_parts[3..].to_vec();
+            let repositories = parts[1..].to_vec();
             if repositories.is_empty() {
                 return Err(WorkonError::MissingArgument {
                     message: "repos remove requires at least one repository".to_string(),
@@ -211,8 +217,9 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
             }
             Ok(command_request(
                 Command::RemoveWorkRepositories {
-                    query: query.clone(),
+                    query: query.to_string(),
                     repositories,
+                    force,
                 },
                 machine,
             ))
@@ -389,6 +396,29 @@ mod tests {
                 CliRequest::ReposHelp
             );
         }
+    }
+
+    #[test]
+    fn parses_force_repository_remove() {
+        assert_eq!(
+            parse_args(vec![
+                "repos".to_string(),
+                "remove".to_string(),
+                "--force".to_string(),
+                "billing".to_string(),
+                "openai/workon".to_string(),
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::RemoveWorkRepositories {
+                    query: "billing".to_string(),
+                    repositories: vec!["openai/workon".to_string()],
+                    force: true,
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
     }
 
     fn restore_env(key: &str, value: Option<std::ffi::OsString>) {

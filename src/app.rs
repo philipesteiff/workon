@@ -48,6 +48,7 @@ pub enum Command {
     RemoveWorkRepositories {
         query: String,
         repositories: Vec<String>,
+        force: bool,
     },
 }
 
@@ -107,7 +108,14 @@ impl App {
             Command::RemoveWorkRepositories {
                 query,
                 repositories,
-            } => feature::repositories::remove(&self.store, &self.intents, &query, &repositories),
+                force,
+            } => feature::repositories::remove(
+                &self.store,
+                &self.intents,
+                &query,
+                &repositories,
+                force,
+            ),
         }
     }
 

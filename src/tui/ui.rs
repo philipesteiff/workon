@@ -55,6 +55,12 @@ fn title_activity(state: &TuiState) -> Option<TitleActivity> {
         RepoStatus::Loading { message } if state.mode == TuiMode::Repos => Some(
             TitleActivity::loading(message.clone(), state.activity_frame),
         ),
+        RepoStatus::Applying {
+            action, repository, ..
+        } if state.mode == TuiMode::Repos => Some(TitleActivity::loading(
+            repo_activity_message(*action, repository),
+            state.activity_frame,
+        )),
         _ => None,
     }
 }
@@ -488,6 +494,8 @@ fn footer_keys(
             "find ".dim(),
             key("space"),
             "select ".dim(),
+            key("!"),
+            "force ".dim(),
             key("enter"),
             "apply ".dim(),
             key("esc"),
@@ -673,7 +681,16 @@ fn render_repo_status(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     let lines = vec![match &state.repo_status {
         RepoStatus::Ready => {
             if state.pending_repo_change_count() == 0 {
-                Line::from("space selects repos; enter applies pending changes".dim())
+                Line::from("space selects repos; ! arms force remove; enter applies changes".dim())
+            } else if state.repo_force_remove && !state.repo_pending_remove.is_empty() {
+                Line::from(vec![
+                    status_badge("FORCE", theme::style_status_warn()),
+                    Span::raw(" "),
+                    Span::styled(
+                        "dirty selected worktrees may be removed",
+                        theme::style_command(),
+                    ),
+                ])
             } else {
                 Line::from(vec![
                     status_badge("READY", theme::style_status_ok()),
@@ -745,6 +762,7 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
                 state
                     .repo_pending_remove
                     .contains(&repository.name_with_owner),
+                state.repo_force_remove,
                 index == state.repo_selected && state.repo_focus == RepoPane::Catalog,
             )
         }));
@@ -804,6 +822,8 @@ fn render_repo_selected_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiStat
         "panel ".dim(),
         key("space"),
         "select/remove ".dim(),
+        key("!"),
+        "force ".dim(),
         key("enter"),
         "apply ".dim(),
         key("esc"),
@@ -1044,9 +1064,12 @@ fn catalog_repo_row(
     selected_for_work: bool,
     pending_add: bool,
     pending_remove: bool,
+    force_remove: bool,
     selected: bool,
 ) -> Line<'static> {
-    let marker = if pending_remove {
+    let marker = if pending_remove && force_remove {
+        "[!]"
+    } else if pending_remove {
         "[-]"
     } else if pending_add || selected_for_work {
         "[x]"
@@ -1055,6 +1078,8 @@ fn catalog_repo_row(
     };
     let status = if pending_add {
         "ADD"
+    } else if pending_remove && force_remove {
+        "FORCE"
     } else if pending_remove {
         "REMOVE"
     } else if selected_for_work {
@@ -1086,6 +1111,7 @@ fn selected_repo_row(
         RepoSelectionState::Attached => ("[x]", "ATTACHED"),
         RepoSelectionState::PendingAdd => ("[+]", "ADD"),
         RepoSelectionState::PendingRemove => ("[-]", "REMOVE"),
+        RepoSelectionState::PendingForceRemove => ("[!]", "FORCE"),
     };
     let anchor = if selected { ">>" } else { "  " };
     Line::from(vec![
@@ -1106,6 +1132,14 @@ fn repo_operation_label(action: RepoOperation) -> &'static str {
         RepoOperation::Add => "CLONE",
         RepoOperation::Remove => "REMOVE",
         RepoOperation::Refresh => "SYNC",
+    }
+}
+
+fn repo_activity_message(action: RepoOperation, repository: &str) -> String {
+    match action {
+        RepoOperation::Add => format!("Cloning {repository}"),
+        RepoOperation::Remove => format!("Removing {repository}"),
+        RepoOperation::Refresh => format!("Refreshing {repository}"),
     }
 }
 
@@ -1596,6 +1630,42 @@ mod tests {
         assert!(!second_title.contains("[\\]"));
         assert!(first_title.contains("Loading GitHub repositories"));
         assert!(second_title.contains("Loading GitHub repositories"));
+    }
+
+    #[test]
+    fn animates_repo_context_apply_title() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            attached_repositories(),
+        );
+        state.start_repo_step(
+            crate::tui::state::RepoOperation::Remove,
+            1,
+            1,
+            "openai/workon",
+        );
+
+        let first = render_content(&state, 120, 36);
+        state.advance_activity_frame();
+        let second = render_content(&state, 120, 36);
+
+        let first_title = first
+            .lines()
+            .find(|line| line.contains("WORKON // CONTROL"))
+            .expect("control title should render");
+        let second_title = second
+            .lines()
+            .find(|line| line.contains("WORKON // CONTROL"))
+            .expect("control title should render");
+
+        assert_ne!(first_title, second_title);
+        assert!(first_title.contains("SYNC"));
+        assert!(second_title.contains("SYNC"));
+        assert!(first_title.contains("Removing openai/workon"));
+        assert!(second_title.contains("Removing openai/workon"));
     }
 
     #[test]

@@ -111,6 +111,7 @@ pub(crate) fn remove(
     intents: &IntentCatalog,
     query: &str,
     repositories: &[String],
+    force: bool,
 ) -> Result<CommandOutput> {
     let work = store.open(query)?;
     let requested = normalize_requested_repositories(repositories)?;
@@ -126,7 +127,7 @@ pub(crate) fn remove(
             continue;
         };
         let cache_path = repository_cache_path(store.root(), &repository.name_with_owner)?;
-        remove_worktree(&cache_path, &repository.branch)?;
+        remove_worktree(&cache_path, &repository.branch, force)?;
         removed.push(repository);
     }
 
@@ -255,21 +256,22 @@ fn switch_worktree(
     }
 }
 
-fn remove_worktree(cache_path: &Path, branch: &str) -> Result<()> {
-    run_checked(
-        "wt",
-        &[
-            "-C",
-            &cache_path.display().to_string(),
-            "remove",
-            "--no-delete-branch",
-            "--foreground",
-            "--format",
-            "json",
-            branch,
-        ],
-        &[],
-    )?;
+fn remove_worktree(cache_path: &Path, branch: &str, force: bool) -> Result<()> {
+    let mut args = vec![
+        "-C".to_string(),
+        cache_path.display().to_string(),
+        "remove".to_string(),
+        "--no-delete-branch".to_string(),
+        "--foreground".to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ];
+    if force {
+        args.push("--force".to_string());
+    }
+    args.push(branch.to_string());
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_checked("wt", &args, &[])?;
     Ok(())
 }
 
