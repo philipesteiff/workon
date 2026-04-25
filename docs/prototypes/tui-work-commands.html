@@ -834,23 +834,13 @@
             <div class="help-row"><span><kbd>enter</kbd></span><span>switch to selected Work</span></div>
             <div class="help-row"><span><kbd>n</kbd></span><span>create Work</span></div>
             <div class="help-row"><span><kbd>a</kbd></span><span>archive selected Work</span></div>
-            <div class="help-row"><span><kbd>:</kbd></span><span>command line</span></div>
             <div class="help-row"><span><kbd>esc</kbd></span><span>close panel</span></div>
           </div>
         </div>
         <div class="dialog-actions">
-          <span>Commands: list, create, switch, archive</span>
           <button class="btn primary" id="closeHelp">Done</button>
         </div>
       </div>
-    </div>
-
-    <div class="search hidden" id="commandBox" role="dialog" aria-label="Command line">
-      <div class="search-line">
-        <span class="prompt">:</span>
-        <span class="search-value" id="commandValue"></span>
-      </div>
-      <div class="search-hint">try list, create, switch, archive</div>
     </div>
 
     <div class="toast hidden" id="toast" role="status"></div>
@@ -924,7 +914,6 @@
         selected: 0,
         mode: "list",
         filter: "",
-        command: "",
         toastTimer: null,
       };
 
@@ -948,8 +937,6 @@
         archiveModal: document.querySelector("#archiveModal"),
         archiveBody: document.querySelector("#archiveBody"),
         helpModal: document.querySelector("#helpModal"),
-        commandBox: document.querySelector("#commandBox"),
-        commandValue: document.querySelector("#commandValue"),
         toast: document.querySelector("#toast"),
       };
 
@@ -1103,17 +1090,12 @@
       function renderChrome() {
         els.modeLabel.textContent = state.mode;
         els.searchBox.classList.toggle("hidden", state.mode !== "search");
-        els.commandBox.classList.toggle("hidden", state.mode !== "command");
         els.createModal.classList.toggle("hidden", state.mode !== "create");
         els.archiveModal.classList.toggle("hidden", state.mode !== "archive");
         els.helpModal.classList.toggle("hidden", state.mode !== "help");
         els.searchValue.textContent = state.filter || " ";
-        els.commandValue.textContent = state.command || " ";
 
-        if (state.mode === "command") {
-          els.promptLabel.textContent = ":";
-          els.commandText.innerHTML = "command mode";
-        } else if (state.mode === "search") {
+        if (state.mode === "search") {
           els.promptLabel.textContent = "/";
           els.commandText.innerHTML = `<strong>filter</strong> ${escapeHtml(state.filter || "active Work")}`;
         } else {
@@ -1126,7 +1108,6 @@
           ["n", "create"],
           ["a", "archive"],
           ["/", "filter"],
-          [":", "command"],
           ["?", "keys"],
           ["q", "quit"],
         ];
@@ -1190,7 +1171,6 @@
 
       function closePanel() {
         state.mode = "list";
-        state.command = "";
         render();
       }
 
@@ -1249,32 +1229,16 @@
         }, 3200);
       }
 
-      function runCommand() {
-        const command = state.command.trim().toLowerCase();
-        state.command = "";
-        if (!command || command === "list") {
-          closePanel();
-          return;
-        }
-        if (command === "create" || command === "new") {
-          openCreate();
-          return;
-        }
-        if (command === "switch" || command === "open") {
-          closePanel();
-          switchWork();
-          return;
-        }
-        if (command === "archive") {
-          openArchive();
-          return;
-        }
-        closePanel();
-        showToast("Unknown command", command);
-      }
-
       function printable(event) {
         return event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey;
+      }
+
+      function shortcut(event, key) {
+        return event.key === key && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
+      }
+
+      function shiftedShortcut(event, key) {
+        return event.key === key && !event.metaKey && !event.ctrlKey && !event.altKey;
       }
 
       document.addEventListener("keydown", (event) => {
@@ -1311,30 +1275,11 @@
           return;
         }
 
-        if (state.mode === "command") {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            closePanel();
-          } else if (event.key === "Enter") {
-            event.preventDefault();
-            runCommand();
-          } else if (event.key === "Backspace") {
-            event.preventDefault();
-            state.command = state.command.slice(0, -1);
-            render();
-          } else if (printable(event)) {
-            event.preventDefault();
-            state.command += event.key;
-            render();
-          }
-          return;
-        }
-
         if (state.mode === "archive") {
-          if (event.key === "Escape" || event.key.toLowerCase() === "n") {
+          if (event.key === "Escape" || shortcut(event, "n")) {
             event.preventDefault();
             closePanel();
-          } else if (event.key.toLowerCase() === "y" || event.key === "Enter") {
+          } else if (shortcut(event, "y") || event.key === "Enter") {
             event.preventDefault();
             archiveWork();
           }
@@ -1342,17 +1287,17 @@
         }
 
         if (state.mode === "help") {
-          if (event.key === "Escape" || event.key === "?") {
+          if (event.key === "Escape" || shiftedShortcut(event, "?")) {
             event.preventDefault();
             closePanel();
           }
           return;
         }
 
-        if (event.key === "ArrowDown" || event.key.toLowerCase() === "j") {
+        if (event.key === "ArrowDown" || shortcut(event, "j")) {
           event.preventDefault();
           moveSelection(1);
-        } else if (event.key === "ArrowUp" || event.key.toLowerCase() === "k") {
+        } else if (event.key === "ArrowUp" || shortcut(event, "k")) {
           event.preventDefault();
           moveSelection(-1);
         } else if (event.key === "Enter") {
@@ -1361,23 +1306,25 @@
         } else if (event.key === "/") {
           event.preventDefault();
           openSearch();
-        } else if (event.key === ":") {
-          event.preventDefault();
-          state.mode = "command";
-          render();
-        } else if (event.key.toLowerCase() === "n") {
+        } else if (shortcut(event, "n")) {
           event.preventDefault();
           openCreate();
-        } else if (event.key.toLowerCase() === "a") {
+        } else if (shortcut(event, "a")) {
           event.preventDefault();
           openArchive();
-        } else if (event.key === "?") {
+        } else if (shiftedShortcut(event, "?")) {
           event.preventDefault();
           state.mode = "help";
           render();
-        } else if (event.key.toLowerCase() === "q") {
+        } else if (shortcut(event, "q")) {
           event.preventDefault();
           showToast("Exit", "return to the shell");
+        } else if (printable(event)) {
+          event.preventDefault();
+          state.mode = "search";
+          state.filter += event.key;
+          state.selected = 0;
+          render();
         }
       });
 

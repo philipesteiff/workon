@@ -136,7 +136,7 @@ fn render_work_queue(
     let items = works
         .iter()
         .enumerate()
-        .map(|(index, work)| work_item(work, state.is_active_work(work), index == selected))
+        .map(|(index, work)| work_item(work, state.is_current_work(work), index == selected))
         .collect::<Vec<_>>();
 
     let mut list_state = ListState::default();
@@ -158,16 +158,16 @@ fn work_queue_title(count: usize) -> Line<'static> {
     ])
 }
 
-fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
+fn work_item(work: &WorkSummary, current: bool, selected: bool) -> ListItem<'static> {
     let mut status = Vec::new();
-    status.push(row_anchor(active, selected));
-    status.push(if active {
+    status.push(row_anchor(current, selected));
+    status.push(if current {
         status_badge("CURRENT", theme::style_current_badge())
     } else {
         status_badge("ACTIVE", theme::style_active_badge())
     });
-    let primary_style = work_primary_style(active);
-    let secondary_style = work_secondary_style(active);
+    let primary_style = work_primary_style(current);
+    let secondary_style = work_secondary_style(current);
     status.extend([
         Span::raw(" "),
         Span::styled(work.title.clone(), primary_style),
@@ -178,15 +178,15 @@ fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
         Line::from(vec![
             Span::raw("  "),
             Span::styled("intent ", secondary_style),
-            Span::styled(work.intent_id.clone(), work_meta_value_style(active)),
+            Span::styled(work.intent_id.clone(), work_meta_value_style(current)),
         ]),
     ]);
 
     item
 }
 
-fn row_anchor(active: bool, selected: bool) -> Span<'static> {
-    if active {
+fn row_anchor(current: bool, selected: bool) -> Span<'static> {
+    if current {
         Span::styled("@", theme::style_current_anchor())
     } else if selected {
         Span::styled(">>", theme::style_command())
@@ -195,24 +195,24 @@ fn row_anchor(active: bool, selected: bool) -> Span<'static> {
     }
 }
 
-fn work_primary_style(active: bool) -> Style {
-    if active {
+fn work_primary_style(current: bool) -> Style {
+    if current {
         theme::style_current_text()
     } else {
         theme::style_work_title()
     }
 }
 
-fn work_secondary_style(active: bool) -> Style {
-    if active {
+fn work_secondary_style(current: bool) -> Style {
+    if current {
         theme::style_current_meta_label()
     } else {
         theme::style_meta_key()
     }
 }
 
-fn work_meta_value_style(active: bool) -> Style {
-    if active {
+fn work_meta_value_style(current: bool) -> Style {
+    if current {
         theme::style_current_intent_value()
     } else {
         theme::style_meta_value()
@@ -699,7 +699,7 @@ fn intent_catalog_label(state: &TuiState) -> String {
 }
 
 fn work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
-    let mut spans = if state.is_active_work(work) {
+    let mut spans = if state.is_current_work(work) {
         vec![status_badge("CURRENT", theme::style_current_badge())]
     } else {
         vec![status_badge("ACTIVE", theme::style_active_badge())]
@@ -712,7 +712,7 @@ fn work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
 }
 
 fn work_section_label(state: &TuiState, work: &WorkSummary) -> &'static str {
-    if state.is_active_work(work) {
+    if state.is_current_work(work) {
         "CURRENT WORK"
     } else {
         "ACTIVE WORK"
@@ -720,7 +720,7 @@ fn work_section_label(state: &TuiState, work: &WorkSummary) -> &'static str {
 }
 
 fn work_state_label(state: &TuiState, work: &WorkSummary) -> &'static str {
-    if state.is_active_work(work) {
+    if state.is_current_work(work) {
         "CURRENT"
     } else {
         "ACTIVE"
@@ -1180,7 +1180,6 @@ mod tests {
         assert!(content.contains("KEY INDEX"));
         assert!(content.contains("j/down"));
         assert!(!content.contains("operator command"));
-        assert!(!content.contains("Commands: list, create, switch, archive"));
     }
 
     #[test]

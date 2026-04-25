@@ -133,7 +133,7 @@ impl TuiState {
             .and_then(|index| self.works.get(*index))
     }
 
-    pub(super) fn is_active_work(&self, work: &WorkSummary) -> bool {
+    pub(super) fn is_current_work(&self, work: &WorkSummary) -> bool {
         self.current_work_path
             .as_deref()
             .is_some_and(|current_path| current_path == work.path)
@@ -262,12 +262,20 @@ impl TuiState {
 
     fn handle_list_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
-            KeyCode::Char('q') => TuiAction::Quit,
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Char('q') if is_shortcut_character(key) => TuiAction::Quit,
+            KeyCode::Char('j') if is_shortcut_character(key) => {
                 self.move_selection(1);
                 TuiAction::None
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Down => {
+                self.move_selection(1);
+                TuiAction::None
+            }
+            KeyCode::Char('k') if is_shortcut_character(key) => {
+                self.move_selection(-1);
+                TuiAction::None
+            }
+            KeyCode::Up => {
                 self.move_selection(-1);
                 TuiAction::None
             }
@@ -280,20 +288,19 @@ impl TuiState {
                 self.push_trace(TraceKind::Signal, "filter ready");
                 TuiAction::None
             }
-            KeyCode::Char(':') => TuiAction::None,
-            KeyCode::Char('n') => {
+            KeyCode::Char('n') if is_shortcut_character(key) => {
                 self.mode = TuiMode::Create;
                 self.push_trace(TraceKind::Run, "work init ready");
                 TuiAction::None
             }
-            KeyCode::Char('a') => {
+            KeyCode::Char('a') if is_shortcut_character(key) => {
                 if self.selected_work().is_some() {
                     self.mode = TuiMode::Archive;
                     self.push_trace(TraceKind::Warn, "archive confirmation armed");
                 }
                 TuiAction::None
             }
-            KeyCode::Char('?') => {
+            KeyCode::Char('?') if is_plain_character(key) => {
                 self.mode = TuiMode::Help;
                 TuiAction::None
             }
@@ -319,11 +326,19 @@ impl TuiState {
                 self.push_trace(TraceKind::Signal, filter_trace_message(&self.filter));
                 TuiAction::None
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 self.move_selection(1);
                 TuiAction::None
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Char('j') if is_shortcut_character(key) => {
+                self.move_selection(1);
+                TuiAction::None
+            }
+            KeyCode::Up => {
+                self.move_selection(-1);
+                TuiAction::None
+            }
+            KeyCode::Char('k') if is_shortcut_character(key) => {
                 self.move_selection(-1);
                 TuiAction::None
             }
@@ -366,11 +381,19 @@ impl TuiState {
 
     fn handle_archive_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('n') => {
+            KeyCode::Esc => {
                 self.close_panel();
                 TuiAction::None
             }
-            KeyCode::Enter | KeyCode::Char('y') => self
+            KeyCode::Char('n') if is_shortcut_character(key) => {
+                self.close_panel();
+                TuiAction::None
+            }
+            KeyCode::Enter => self
+                .selected_work()
+                .map(|work| TuiAction::Archive(work.slug.clone()))
+                .unwrap_or(TuiAction::None),
+            KeyCode::Char('y') if is_shortcut_character(key) => self
                 .selected_work()
                 .map(|work| TuiAction::Archive(work.slug.clone()))
                 .unwrap_or(TuiAction::None),
@@ -380,7 +403,15 @@ impl TuiState {
 
     fn handle_help_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+            KeyCode::Esc => {
+                self.close_panel();
+                TuiAction::None
+            }
+            KeyCode::Char('?') if is_plain_character(key) => {
+                self.close_panel();
+                TuiAction::None
+            }
+            KeyCode::Char('q') if is_shortcut_character(key) => {
                 self.close_panel();
                 TuiAction::None
             }
@@ -472,6 +503,10 @@ fn is_plain_character(key: KeyEvent) -> bool {
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
 
+fn is_shortcut_character(key: KeyEvent) -> bool {
+    key.modifiers == KeyModifiers::NONE
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -524,7 +559,7 @@ mod tests {
         let selected = state
             .selected_work()
             .expect("current work should be selected");
-        assert!(state.is_active_work(selected));
+        assert!(state.is_current_work(selected));
         assert_eq!(
             state.current_work_path.as_deref(),
             Some(std::path::Path::new(
@@ -545,7 +580,7 @@ mod tests {
             Some("billing-retry-audit")
         );
         assert!(state.current_work_path.is_none());
-        assert!(state.works.iter().all(|work| !state.is_active_work(work)));
+        assert!(state.works.iter().all(|work| !state.is_current_work(work)));
     }
 
     #[test]
@@ -615,14 +650,36 @@ mod tests {
     }
 
     #[test]
-    fn colon_does_not_open_operator_command() {
+    fn colon_starts_filter_like_other_printable_characters() {
         let mut state = TuiState::new(work_list());
 
         let action = state.handle_key(key(KeyCode::Char(':')));
 
         assert_eq!(action, TuiAction::None);
-        assert_eq!(state.mode, TuiMode::List);
-        assert!(state.trace.is_empty());
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, ":");
+        assert_eq!(state.trace[0].message, "filter :");
+    }
+
+    #[test]
+    fn modified_list_shortcuts_are_ignored() {
+        for (code, modifiers) in [
+            (KeyCode::Char('q'), KeyModifiers::ALT),
+            (KeyCode::Char('j'), KeyModifiers::CONTROL),
+            (KeyCode::Char('k'), KeyModifiers::ALT),
+            (KeyCode::Char('n'), KeyModifiers::ALT),
+            (KeyCode::Char('a'), KeyModifiers::CONTROL),
+            (KeyCode::Char('?'), KeyModifiers::ALT),
+        ] {
+            let mut state = TuiState::new(work_list());
+
+            let action = state.handle_key(KeyEvent::new(code, modifiers));
+
+            assert_eq!(action, TuiAction::None);
+            assert_eq!(state.mode, TuiMode::List);
+            assert_eq!(state.selected, 0);
+            assert!(state.trace.is_empty());
+        }
     }
 
     #[test]

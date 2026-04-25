@@ -42,7 +42,7 @@ struct TerminalSession {
 
 impl TerminalSession {
     fn enter() -> Result<Self> {
-        enable_raw_mode()?;
+        let mut raw_mode = RawModeGuard::enter()?;
         let backend = CrosstermBackend::new(io::stdout());
         let mut terminal = Terminal::with_options(
             backend,
@@ -51,11 +51,35 @@ impl TerminalSession {
             },
         )?;
         terminal.hide_cursor()?;
+        raw_mode.disarm();
         Ok(Self { terminal })
     }
 
     fn terminal_mut(&mut self) -> &mut Terminal<CrosstermBackend<Stdout>> {
         &mut self.terminal
+    }
+}
+
+struct RawModeGuard {
+    active: bool,
+}
+
+impl RawModeGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self { active: true })
+    }
+
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = disable_raw_mode();
+        }
     }
 }
 
