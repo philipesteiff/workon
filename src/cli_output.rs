@@ -124,7 +124,7 @@ fn render_switch_signal(
     root: &Path,
     machine: bool,
 ) -> Result<()> {
-    if machine {
+    if machine || std::env::var_os("WORKON_SIGNAL_FILE").is_some() {
         write_machine_signal(writer, path, title, root)?;
     }
     Ok(())

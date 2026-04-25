@@ -81,17 +81,14 @@ pub(crate) fn development_manifest_from_env() -> Result<PathBuf> {
 fn production_script() -> Result<String> {
     let binary = std::env::current_exe()?;
     Ok(render_zsh_integration(
-        &format!(
-            "{} --machine \"$@\"",
-            shell_quote(&binary.display().to_string())
-        ),
+        &shell_quote(&binary.display().to_string()),
         None,
     ))
 }
 
 fn dev_runner(manifest_path: &Path) -> String {
     format!(
-        "cargo run --manifest-path {} -- --machine \"$@\"",
+        "cargo run --manifest-path {} --",
         shell_quote(&manifest_path.display().to_string())
     )
 }
@@ -139,12 +136,12 @@ _workon_run() {{
 
   if [ \"$#\" -eq 0 ]; then
     workon_signal_file=\"$(mktemp \"${{TMPDIR:-/tmp}}/workon-signals.XXXXXX\")\" || return
-    {hook_active}=1 {root_env}=\"$workon_root\" WORKON_SIGNAL_FILE=\"$workon_signal_file\" {runner}
+    {hook_active}=1 {root_env}=\"$workon_root\" WORKON_SIGNAL_FILE=\"$workon_signal_file\" {runner} \"$@\"
     workon_status=$?
     workon_output=\"$(cat \"$workon_signal_file\" 2>/dev/null)\"
     rm -f \"$workon_signal_file\"
   else
-    workon_output=\"$({hook_active}=1 {root_env}=\"$workon_root\" {runner} 2>&1)\"
+    workon_output=\"$({hook_active}=1 {root_env}=\"$workon_root\" {runner} --machine \"$@\" 2>&1)\"
     workon_status=$?
     printf '%s\\n' \"$workon_output\" | sed '/^__WORKON_/d'
   fi
@@ -239,24 +236,28 @@ mod tests {
 
     #[test]
     fn generated_script_defines_workon_function_and_cd_signal() {
-        let script = render_zsh_integration("'wo' --machine \"$@\"", None);
+        let script = render_zsh_integration("'wo'", None);
 
         assert!(script.contains("wo()"));
         assert!(script.contains("__WORKON_CD="));
         assert!(script.contains("cd \"$workon_cd\""));
+        assert!(script.contains("WORKON_SIGNAL_FILE=\"$workon_signal_file\" 'wo' \"$@\""));
+        assert!(script.contains("'wo' --machine \"$@\""));
         assert!(!script.contains("just()"));
     }
 
     #[test]
     fn generated_dev_script_intercepts_just_wo() {
         let script = render_zsh_integration(
-            "cargo run --manifest-path '/repo/Cargo.toml' -- --machine \"$@\"",
+            "cargo run --manifest-path '/repo/Cargo.toml' --",
             Some(Path::new("/repo")),
         );
 
         assert!(script.contains("export WORKON_DEV_ROOT='/repo'"));
         assert!(script.contains("just()"));
         assert!(script.contains("wo \"$@\""));
+        assert!(script.contains("cargo run --manifest-path '/repo/Cargo.toml' -- \"$@\""));
+        assert!(script.contains("cargo run --manifest-path '/repo/Cargo.toml' -- --machine \"$@\""));
     }
 
     #[test]
