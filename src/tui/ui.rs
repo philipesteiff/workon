@@ -63,14 +63,8 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Span::styled("SIGNAL ", theme::style_muted_text()),
         Span::styled(state.mode_status(), mode_style(state.mode)),
         Span::raw("   "),
-        Span::styled("TASKS ", theme::style_muted_text()),
-        Span::styled(
-            format!("{}/{}", state.filtered_count(), state.total_count()),
-            theme::style_primary_text(),
-        ),
-        Span::raw("   "),
-        Span::styled("SELECT ", theme::style_muted_text()),
-        Span::styled(state.selected_position_label(), theme::style_selected()),
+        Span::styled("WORKS ", theme::style_muted_text()),
+        Span::styled(state.total_count().to_string(), theme::style_primary_text()),
     ]);
 
     frame.render_widget(Paragraph::new(status), area);
@@ -118,26 +112,26 @@ fn render_main_panels(
     if area.width < 86 {
         let [queue, diagnostic] =
             Layout::vertical([Constraint::Percentage(50), Constraint::Fill(1)]).areas(area);
-        render_task_queue(frame, queue, state, regions);
+        render_work_queue(frame, queue, state, regions);
         render_diagnostic(frame, diagnostic, state, regions);
     } else {
         let [queue, diagnostic] =
             Layout::horizontal([Constraint::Percentage(44), Constraint::Fill(1)]).areas(area);
-        render_task_queue(frame, queue, state, regions);
+        render_work_queue(frame, queue, state, regions);
         render_diagnostic(frame, diagnostic, state, regions);
     }
 }
 
-fn render_task_queue(
+fn render_work_queue(
     frame: &mut Frame<'_>,
     area: Rect,
     state: &TuiState,
     regions: &mut Option<&mut RenderRegions>,
 ) {
-    mark_region(regions, AnimationTarget::TaskQueue, area);
+    mark_region(regions, AnimationTarget::WorkQueue, area);
     let works = state.filtered_works();
     let block = panel_block(
-        "TASK QUEUE",
+        "WORK QUEUE",
         matches!(state.mode, TuiMode::List | TuiMode::Search),
     );
 
@@ -152,7 +146,7 @@ fn render_task_queue(
                 Line::from(status_badge("WARN", theme::style_status_warn())),
                 Line::from(message),
                 Line::from(""),
-                Line::from("TASK QUEUE awaiting operator input.".dim()),
+                Line::from("WORK QUEUE awaiting operator input.".dim()),
             ])
             .block(block)
             .wrap(Wrap { trim: true }),
@@ -165,7 +159,7 @@ fn render_task_queue(
     let items = works
         .iter()
         .enumerate()
-        .map(|(index, work)| task_item(work, state.is_active_work(work), index == selected))
+        .map(|(index, work)| work_item(work, state.is_active_work(work), index == selected))
         .collect::<Vec<_>>();
 
     let mut list_state = ListState::default();
@@ -177,7 +171,7 @@ fn render_task_queue(
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
 
-fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
+fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
     let mut status = Vec::new();
     if selected {
         status.push(status_badge("TARGET", theme::style_target_row()));
@@ -187,8 +181,8 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     } else {
         status_badge("READY", theme::style_ready_badge())
     });
-    let primary_style = task_primary_style(active);
-    let secondary_style = task_secondary_style(active);
+    let primary_style = work_primary_style(active);
+    let secondary_style = work_secondary_style(active);
     status.extend([
         Span::raw(" "),
         Span::styled(work.title.clone(), primary_style),
@@ -198,7 +192,7 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
         Line::from(status),
         Line::from(vec![
             Span::styled("intent ", secondary_style),
-            Span::styled(work.intent_id.clone(), task_meta_value_style(active)),
+            Span::styled(work.intent_id.clone(), work_meta_value_style(active)),
         ]),
     ]);
 
@@ -209,15 +203,15 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     }
 }
 
-fn task_primary_style(active: bool) -> Style {
+fn work_primary_style(active: bool) -> Style {
     if active {
         theme::style_current_text()
     } else {
-        theme::style_task_title()
+        theme::style_work_title()
     }
 }
 
-fn task_secondary_style(active: bool) -> Style {
+fn work_secondary_style(active: bool) -> Style {
     if active {
         theme::style_current_meta_label()
     } else {
@@ -225,7 +219,7 @@ fn task_secondary_style(active: bool) -> Style {
     }
 }
 
-fn task_meta_value_style(active: bool) -> Style {
+fn work_meta_value_style(active: bool) -> Style {
     if active {
         theme::style_current_intent_value()
     } else {
@@ -562,7 +556,7 @@ fn render_create(
     let popup = centered_rect(78, 56, area);
     mark_region(regions, AnimationTarget::Overlay, popup);
     let mut lines = vec![
-        section("TASK INTAKE"),
+        section("WORK INTAKE"),
         label_value("Goal", ""),
         Line::from(if state.create_goal.is_empty() {
             "Type the Work goal.".dim()
@@ -601,7 +595,7 @@ fn render_create(
     render_popup(
         frame,
         popup,
-        "TASK INIT",
+        "WORK INIT",
         lines,
         theme::style_focused_border(),
     );
@@ -661,7 +655,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, regions: &mut Option<&mut Rend
         help_line("k/up", "previous Work"),
         help_line("/", "signal filter"),
         help_line("enter", "switch to selected Work"),
-        help_line("n", "task init"),
+        help_line("n", "work init"),
         help_line("a", "archive selected Work"),
         help_line(":", "operator command"),
         help_line("esc", "close panel"),
@@ -945,7 +939,11 @@ mod tests {
         assert!(content.contains("WORKON // CONTROL"));
         assert!(!content.contains("SYSTEM ONLINE"));
         assert!(!content.contains("ROOT "));
-        assert!(content.contains("TASK QUEUE"));
+        assert!(content.contains("WORK QUEUE"));
+        assert!(content.contains("WORKS 1"));
+        assert!(!content.contains("TASKS "));
+        assert!(!content.contains("WORKS 1/1"));
+        assert!(!content.contains("SELECT "));
         assert!(!content.contains("EXECUTION TRACE"));
         assert!(content.contains("OPERATOR COMMAND"));
         assert!(content.contains("SELECTED WORK"));
@@ -1098,7 +1096,10 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("TASK INIT"));
+        assert!(content.contains("WORK INIT"));
+        assert!(content.contains("WORK INTAKE"));
+        assert!(!content.contains("TASK INIT"));
+        assert!(!content.contains("TASK INTAKE"));
         assert!(content.contains("Type the Work goal."));
         assert!(content.contains("selected"));
         assert!(content.contains("1/1 investigate"));
@@ -1230,7 +1231,7 @@ mod tests {
         let content = render_content(&state, 80, 24);
 
         assert!(content.contains("WORKON // CONTROL"));
-        assert!(content.contains("TASK QUEUE"));
+        assert!(content.contains("WORK QUEUE"));
         assert!(content.contains("OPERATOR COMMAND"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
@@ -1267,7 +1268,7 @@ mod tests {
         let (animated_content, regions) = render_content_for_animation(&state, 120, 36);
 
         assert_eq!(animated_content, static_content);
-        assert!(regions.has_region(AnimationTarget::TaskQueue));
+        assert!(regions.has_region(AnimationTarget::WorkQueue));
         assert!(regions.has_region(AnimationTarget::DetailPanel));
         assert!(regions.has_region(AnimationTarget::TracePanel));
         assert!(regions.has_region(AnimationTarget::FooterStatus));
@@ -1281,7 +1282,7 @@ mod tests {
             let content = render_content(&TuiState::new(work_list()), width, height);
 
             assert!(content.contains("WORKON // CONTROL"), "{width}x{height}");
-            assert!(content.contains("TASK QUEUE"), "{width}x{height}");
+            assert!(content.contains("WORK QUEUE"), "{width}x{height}");
             assert!(content.contains("OPERATOR COMMAND"), "{width}x{height}");
         }
     }

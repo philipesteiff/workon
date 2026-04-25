@@ -73,7 +73,7 @@ fn slack_to_pr() -> IntentProfile {
         ],
         instructions: vec![
             "Preserve the original request and decisions.".to_string(),
-            "Keep task, branch, and PR context aligned.".to_string(),
+            "Keep work, branch, and PR context aligned.".to_string(),
         ],
     }
 }

@@ -28,7 +28,7 @@ pub(super) struct AnimationSnapshot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum AnimationTarget {
-    TaskQueue,
+    WorkQueue,
     DetailPanel,
     TracePanel,
     FooterStatus,
@@ -38,7 +38,7 @@ pub(super) enum AnimationTarget {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RenderRegions {
-    task_queue: Option<Rect>,
+    work_queue: Option<Rect>,
     detail_panel: Option<Rect>,
     trace_panel: Option<Rect>,
     footer_status: Option<Rect>,
@@ -72,7 +72,7 @@ impl AnimationRuntime {
         }
 
         if before.list_count != after.list_count || before.filtered_count != after.filtered_count {
-            self.queue(AnimationTarget::TaskQueue);
+            self.queue(AnimationTarget::WorkQueue);
         }
 
         if before.trace_visible != after.trace_visible {
@@ -150,7 +150,7 @@ impl AnimationSnapshot {
 impl RenderRegions {
     pub(super) fn set(&mut self, target: AnimationTarget, area: Rect) {
         match target {
-            AnimationTarget::TaskQueue => self.task_queue = Some(area),
+            AnimationTarget::WorkQueue => self.work_queue = Some(area),
             AnimationTarget::DetailPanel => self.detail_panel = Some(area),
             AnimationTarget::TracePanel => self.trace_panel = Some(area),
             AnimationTarget::FooterStatus => self.footer_status = Some(area),
@@ -161,7 +161,7 @@ impl RenderRegions {
 
     fn area_for(&self, target: AnimationTarget) -> Option<Rect> {
         match target {
-            AnimationTarget::TaskQueue => self.task_queue,
+            AnimationTarget::WorkQueue => self.work_queue,
             AnimationTarget::DetailPanel => self.detail_panel,
             AnimationTarget::TracePanel => self.trace_panel,
             AnimationTarget::FooterStatus => self.footer_status,
@@ -212,7 +212,7 @@ fn effect_for(target: AnimationTarget) -> Effect {
                 (220, Interpolation::QuadOut),
             ),
         ]),
-        AnimationTarget::TracePanel | AnimationTarget::DetailPanel | AnimationTarget::TaskQueue => {
+        AnimationTarget::TracePanel | AnimationTarget::DetailPanel | AnimationTarget::WorkQueue => {
             fx::parallel(&[
                 fx::coalesce((180, Interpolation::QuadOut)),
                 fx::sweep_in(
@@ -250,8 +250,8 @@ mod tests {
         let mut regions = RenderRegions::default();
         let mut buffer = Buffer::empty(area);
 
-        regions.set(AnimationTarget::TaskQueue, area);
-        runtime.queue(AnimationTarget::TaskQueue);
+        regions.set(AnimationTarget::WorkQueue, area);
+        runtime.queue(AnimationTarget::WorkQueue);
         runtime.prepare_frame(&regions);
 
         assert!(runtime.is_animating());

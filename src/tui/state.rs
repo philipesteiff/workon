@@ -151,21 +151,12 @@ impl TuiState {
         self.works.len()
     }
 
-    pub(super) fn selected_position_label(&self) -> String {
-        let count = self.filtered_count();
-        if count == 0 {
-            "0/0".to_string()
-        } else {
-            format!("{}/{}", self.selected.min(count - 1) + 1, count)
-        }
-    }
-
     pub(super) fn mode_status(&self) -> &'static str {
         match self.mode {
             TuiMode::List => "AWAITING INPUT",
             TuiMode::Search => "SIGNAL FILTER",
             TuiMode::Command => "OPERATOR COMMAND",
-            TuiMode::Create => "TASK INIT",
+            TuiMode::Create => "WORK INIT",
             TuiMode::Archive => "ARCHIVE CONFIRM",
             TuiMode::Help => "KEY INDEX",
         }
@@ -314,7 +305,7 @@ impl TuiState {
             }
             KeyCode::Char('n') => {
                 self.mode = TuiMode::Create;
-                self.push_trace(TraceKind::Run, "task init ready");
+                self.push_trace(TraceKind::Run, "work init ready");
                 TuiAction::None
             }
             KeyCode::Char('a') => {
@@ -481,7 +472,7 @@ impl TuiState {
                 "Goal required",
                 "Type a Work goal before creating.",
             ));
-            self.push_trace(TraceKind::Err, "task init missing goal");
+            self.push_trace(TraceKind::Err, "work init missing goal");
             return TuiAction::None;
         }
 
@@ -617,7 +608,6 @@ mod tests {
                 "/tmp/workon/.workon/work/review-cache-invalidation-pr"
             ))
         );
-        assert_eq!(state.selected_position_label(), "2/3");
         assert_eq!(state.filtered_count(), 3);
         assert_eq!(state.total_count(), 3);
     }

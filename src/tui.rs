@@ -184,11 +184,11 @@ mod tests {
         after.detail_visible = true;
         after.toast = Some(Toast::info("Work created", "/tmp/workon/.workon/work/new"));
         after.works.push(WorkSummary {
-            title: "New task".to_string(),
-            slug: "new-task".to_string(),
-            goal: "Create a new animated task.".to_string(),
+            title: "New Work".to_string(),
+            slug: "new-work".to_string(),
+            goal: "Create a new animated Work.".to_string(),
             intent_id: "investigate".to_string(),
-            path: "/tmp/workon/.workon/work/new-task".into(),
+            path: "/tmp/workon/.workon/work/new-work".into(),
         });
 
         let mut runtime = AnimationRuntime::default();
@@ -198,7 +198,7 @@ mod tests {
         );
 
         assert!(runtime.has_pending(AnimationTarget::Overlay));
-        assert!(runtime.has_pending(AnimationTarget::TaskQueue));
+        assert!(runtime.has_pending(AnimationTarget::WorkQueue));
         assert!(runtime.has_pending(AnimationTarget::TracePanel));
         assert!(runtime.has_pending(AnimationTarget::DetailPanel));
         assert!(runtime.has_pending(AnimationTarget::Toast));
@@ -217,7 +217,7 @@ mod tests {
             AnimationSnapshot::from_state(&after),
         );
 
-        assert!(!runtime.has_pending(AnimationTarget::TaskQueue));
+        assert!(!runtime.has_pending(AnimationTarget::WorkQueue));
     }
 
     #[test]

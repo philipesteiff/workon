@@ -12,7 +12,7 @@ pub(super) fn style_primary_text() -> Style {
     Style::new().fg(AMBER)
 }
 
-pub(super) fn style_task_title() -> Style {
+pub(super) fn style_work_title() -> Style {
     Style::new().fg(AMBER).add_modifier(Modifier::BOLD)
 }
 
@@ -61,10 +61,6 @@ pub(super) fn style_command() -> Style {
 }
 
 pub(super) fn style_key() -> Style {
-    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
-}
-
-pub(super) fn style_selected() -> Style {
     Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
