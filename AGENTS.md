@@ -62,6 +62,42 @@ How AI agents should work in this repo.
 - Return typed errors from core code; format messages at the interface edge.
 - Split modules before they become hard to scan.
 
+## Package Map
+
+- `src/domain/` contains product language and rules that should not know about filesystems, processes, terminals, `gh`, or `wt`.
+- `src/domain/work/` owns Work concepts, work summaries, archive/create/open domain types, and work naming rules such as title and slug generation.
+- `src/domain/intent/` owns intent profiles and the default intent catalog.
+- `src/domain/repository_context/` owns repository context types, repository path naming, cache path policy, work branch naming, and repository name validation.
+- `src/domain/agent_context/` owns agent-facing context status types and other pure context concepts.
+- `src/application/` is the command layer and source of truth for behavior. Add new product features here first, then wire interfaces to it.
+- `src/application/work/` owns Work use cases such as create, list, open, archive, and open-or-create.
+- `src/application/repository_context/` owns attaching, listing, and removing GitHub repository context for a Work.
+- `src/application/shell/` owns shell-install use cases, while shell script details stay in `src/interfaces/shell/`.
+- `src/application/context_status/` owns the context status command until context editing becomes a fuller feature.
+- `src/infrastructure/` contains adapters for external systems. It may depend on domain/application contracts, but domain must not depend on it.
+- `src/infrastructure/storage/` owns Work storage, repository metadata JSON, and bare repository cache persistence.
+- `src/infrastructure/filesystem/` owns filesystem traits and standard filesystem implementations used for testable storage.
+- `src/infrastructure/process/` owns command execution abstractions for adapters that call external tools.
+- `src/infrastructure/github/` owns the `gh` CLI adapter and GitHub response parsing.
+- `src/infrastructure/worktrunk/` owns the Worktrunk `wt` adapter. Use it for worktree operations.
+- `src/infrastructure/agent_files/` owns rendering and rewriting `AGENTS.md` and agent-specific projections inside Work folders.
+- `src/interfaces/` contains user-facing adapters only. It should parse input, render output, and call `src/application/`.
+- `src/interfaces/cli/` owns CLI parsing, help text, prompting, and command output formatting.
+- `src/interfaces/tui/` owns Ratatui state, key handling, rendering, animation, and TUI job orchestration. It must not introduce product behavior that bypasses `src/application/`.
+- `src/interfaces/shell/` owns shell integration scripts, shell environment detection, and current-shell folder switching support.
+- `src/shared/` contains narrow cross-cutting primitives only. Keep it small; do not create a generic utilities dumping ground.
+- `src/shared/error.rs` owns `WorkonError` and the crate-wide `Result` alias. Add errors here only when more local typed errors would not fit.
+- `src/lib.rs` should stay as the public re-export surface. Preserve stable exports unless an API change is intentional.
+- `src/main.rs` should stay minimal and delegate to the CLI interface.
+
+## Feature Placement
+
+- For new behavior, start in `src/application/`, add or update domain types in `src/domain/`, add adapters in `src/infrastructure/`, then expose it through `src/interfaces/`.
+- For new CLI or TUI affordances, first verify the command already exists in `src/application/`; if it does not, add the command layer path before UI wiring.
+- For new repository-context behavior, keep GitHub discovery in `src/infrastructure/github/`, worktree operations in `src/infrastructure/worktrunk/`, metadata/cache persistence in `src/infrastructure/storage/`, and orchestration in `src/application/repository_context/`.
+- For new Work lifecycle behavior, keep product flow in `src/application/work/`, storage mechanics in `src/infrastructure/storage/`, and naming rules in `src/domain/work/`.
+- For shared helpers, place them next to the domain or adapter that owns the concept. Use `src/shared/` only for truly cross-cutting types with clear names.
+
 ## Testing And Verification
 
 - Test the command layer first, adapters second, interface wiring last.
