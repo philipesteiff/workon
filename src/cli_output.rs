@@ -65,7 +65,9 @@ pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
          wo archive <work-query>\n\
          wo --intent <intent-id> \"<goal>\"\n\
          wo ctx\n\
-         wo install-shell"
+         wo install-shell\n\
+         \n\
+         env: WORKON_ROOT=/path/to/root overrides the default ~/.workon root"
     )?;
     Ok(())
 }

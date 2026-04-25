@@ -9,6 +9,7 @@ fn machine_switch_writes_cd_signal_to_signal_file_when_requested() {
 
     let create_output = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
         .args(["--intent", "investigate", "Billing retry audit"])
         .output()
         .expect("wo should run");
@@ -16,6 +17,7 @@ fn machine_switch_writes_cd_signal_to_signal_file_when_requested() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
         .env("WORKON_SIGNAL_FILE", &signal_file)
         .args(["--machine", "billing-retry-audit"])
         .output()

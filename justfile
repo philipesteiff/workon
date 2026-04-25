@@ -38,6 +38,8 @@ smoke:
     switch_expected="just-manual-smoke-switch-$$"
     smoke_home="$(mktemp -d)"
     smoke_root="$(mktemp -d)"
+    expected_path="$smoke_home/.workon/work/$expected"
+    switch_expected_path="$smoke_home/.workon/work/$switch_expected"
     real_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
     real_rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
     command_file="$(mktemp /tmp/workon-smoke.XXXXXX)"
@@ -48,14 +50,15 @@ smoke:
         "export WORKON_DEV_ROOT='$smoke_root'" \
         "cd '$smoke_root'" \
         "wo --intent investigate '$goal'" \
-        "test \"\${PWD##*/}\" = \"$expected\"" \
+        "test \"\$PWD\" = '$expected_path'" \
         "test -f AGENTS.md" \
         "test -f CLAUDE.md" \
         "test -f workon.meta" \
         "grep -q \"Investigate (investigate)\" AGENTS.md" \
+        "cd '$smoke_root'" \
         "just wo --intent investigate '$switch_goal'" \
-        "test \"\${PWD##*/}\" = \"$switch_expected\"" \
+        "test \"\$PWD\" = '$switch_expected_path'" \
         > "$command_file"
 
     HOME="$smoke_home" CARGO_HOME="$real_cargo_home" RUSTUP_HOME="$real_rustup_home" WORKON_DEV_MANIFEST="{{justfile_directory()}}/Cargo.toml" cargo run -- install-dev-shell
-    zsh -f -c "source '$command_file'"
+    HOME="$smoke_home" CARGO_HOME="$real_cargo_home" RUSTUP_HOME="$real_rustup_home" zsh -f -c "source '$command_file'"

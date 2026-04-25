@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, WorkonError};
@@ -24,10 +26,7 @@ pub(crate) enum ShellInstallKind {
 }
 
 pub(crate) fn workon_root() -> std::io::Result<PathBuf> {
-    match std::env::var(WORKON_ROOT_ENV) {
-        Ok(root) => Ok(PathBuf::from(root)),
-        Err(_) => std::env::current_dir(),
-    }
+    root_from_env()
 }
 
 pub(crate) fn is_shell_hook_active() -> bool {
@@ -127,10 +126,10 @@ just() {
 # Workon shell integration.
 {dev_root_export}
 _workon_current_root() {{
-  if [ -n \"${{WORKON_ROOT:-}}\" ] && {{ [ \"$PWD\" = \"$WORKON_ROOT\" ] || [[ \"$PWD\" == \"$WORKON_ROOT\"/* ]]; }}; then
+  if [ -n \"${{WORKON_ROOT:-}}\" ]; then
     printf '%s\\n' \"$WORKON_ROOT\"
   else
-    printf '%s\\n' \"$PWD\"
+    printf '%s\\n' \"$HOME\"
   fi
 }}
 
@@ -207,6 +206,20 @@ fn home_dir() -> Result<PathBuf> {
         .map_err(|_| WorkonError::MissingArgument {
             message: "HOME is required to install shell integration".to_string(),
         })
+}
+
+fn root_from_env() -> io::Result<PathBuf> {
+    if let Some(root) = non_empty_env(WORKON_ROOT_ENV) {
+        return Ok(PathBuf::from(root));
+    }
+
+    non_empty_env("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME is required"))
+}
+
+fn non_empty_env(name: &str) -> Option<OsString> {
+    std::env::var_os(name).filter(|value| !value.is_empty())
 }
 
 fn shell_quote(value: &str) -> String {
