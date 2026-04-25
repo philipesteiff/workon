@@ -10,6 +10,7 @@ pub(super) struct TuiState {
     pub(super) selected: usize,
     pub(super) mode: TuiMode,
     pub(super) filter: String,
+    pre_filter_selected_slug: Option<String>,
     pub(super) create_goal: String,
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
@@ -74,6 +75,7 @@ impl TuiState {
             selected: 0,
             mode: TuiMode::List,
             filter: String::new(),
+            pre_filter_selected_slug: None,
             create_goal: String::new(),
             create_intent: 0,
             intents: Vec::new(),
@@ -283,8 +285,8 @@ impl TuiState {
                 .selected_work()
                 .map(|work| TuiAction::Switch(work.slug.clone()))
                 .unwrap_or(TuiAction::None),
-            KeyCode::Char('/') => {
-                self.mode = TuiMode::Search;
+            KeyCode::Char('/') if is_plain_character(key) => {
+                self.enter_filter_mode();
                 self.push_trace(TraceKind::Signal, "filter ready");
                 TuiAction::None
             }
@@ -305,7 +307,7 @@ impl TuiState {
                 TuiAction::None
             }
             KeyCode::Char(character) if is_plain_character(key) => {
-                self.mode = TuiMode::Search;
+                self.enter_filter_mode();
                 self.push_filter_char(character);
                 self.push_trace(TraceKind::Signal, format!("filter {}", self.filter));
                 TuiAction::None
@@ -316,10 +318,14 @@ impl TuiState {
 
     fn handle_search_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
-                self.mode = TuiMode::List;
+            KeyCode::Esc => {
+                self.close_filter_mode();
                 TuiAction::None
             }
+            KeyCode::Enter => self
+                .selected_work()
+                .map(|work| TuiAction::Switch(work.slug.clone()))
+                .unwrap_or(TuiAction::None),
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.selected = 0;
@@ -330,15 +336,7 @@ impl TuiState {
                 self.move_selection(1);
                 TuiAction::None
             }
-            KeyCode::Char('j') if is_shortcut_character(key) => {
-                self.move_selection(1);
-                TuiAction::None
-            }
             KeyCode::Up => {
-                self.move_selection(-1);
-                TuiAction::None
-            }
-            KeyCode::Char('k') if is_shortcut_character(key) => {
                 self.move_selection(-1);
                 TuiAction::None
             }
@@ -416,6 +414,25 @@ impl TuiState {
                 TuiAction::None
             }
             _ => TuiAction::None,
+        }
+    }
+
+    fn enter_filter_mode(&mut self) {
+        if self.mode != TuiMode::Search {
+            self.pre_filter_selected_slug = self.selected_work().map(|work| work.slug.clone());
+        }
+        self.mode = TuiMode::Search;
+    }
+
+    fn close_filter_mode(&mut self) {
+        let pre_filter_selected_slug = self.pre_filter_selected_slug.take();
+        self.filter.clear();
+        self.mode = TuiMode::List;
+
+        if let Some(slug) = pre_filter_selected_slug {
+            self.select_slug(&slug);
+        } else {
+            self.clamp_selection();
         }
     }
 
@@ -662,6 +679,105 @@ mod tests {
     }
 
     #[test]
+    fn slash_enters_filter_without_changing_visible_list() {
+        let mut state = TuiState::new(work_list());
+        state.move_selection(1);
+        let selected_before = state.selected_work().map(|work| work.slug.clone());
+
+        let action = state.handle_key(key(KeyCode::Char('/')));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, "");
+        assert_eq!(state.filtered_count(), 3);
+        assert_eq!(
+            state.selected_work().map(|work| work.slug.clone()),
+            selected_before
+        );
+    }
+
+    #[test]
+    fn enter_in_filter_switches_highlighted_match() {
+        let mut state = TuiState::new(work_list());
+        state.handle_key(key(KeyCode::Char('/')));
+        for character in "context".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+
+        let action = state.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(
+            action,
+            TuiAction::Switch("context-command-sketch".to_string())
+        );
+    }
+
+    #[test]
+    fn search_navigation_switches_directly_from_filtered_queue() {
+        let mut state = TuiState::new(work_list());
+        state.handle_key(key(KeyCode::Char('/')));
+        state.handle_key(key(KeyCode::Char('i')));
+        state.handle_key(key(KeyCode::Char('n')));
+        state.handle_key(key(KeyCode::Char('v')));
+        state.handle_key(key(KeyCode::Down));
+
+        let action = state.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(
+            action,
+            TuiAction::Switch("review-cache-invalidation-pr".to_string())
+        );
+    }
+
+    #[test]
+    fn j_and_k_are_search_text_in_filter_mode() {
+        let mut state = TuiState::new(work_list());
+        state.handle_key(key(KeyCode::Char('/')));
+
+        state.handle_key(key(KeyCode::Char('j')));
+        state.handle_key(key(KeyCode::Char('k')));
+
+        assert_eq!(state.filter, "jk");
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn escape_clears_filter_and_restores_previous_selection() {
+        let mut state = TuiState::new(work_list());
+        state.move_selection(1);
+        let selected_before = state.selected_work().map(|work| work.slug.clone());
+        state.handle_key(key(KeyCode::Char('/')));
+        for character in "context".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+
+        let action = state.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::List);
+        assert_eq!(state.filter, "");
+        assert_eq!(
+            state.selected_work().map(|work| work.slug.clone()),
+            selected_before
+        );
+    }
+
+    #[test]
+    fn enter_on_empty_filter_match_does_not_switch_or_close_filter() {
+        let mut state = TuiState::new(work_list());
+        state.handle_key(key(KeyCode::Char('/')));
+        for character in "missing".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+
+        let action = state.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, "missing");
+    }
+
+    #[test]
     fn modified_list_shortcuts_are_ignored() {
         for (code, modifiers) in [
             (KeyCode::Char('q'), KeyModifiers::ALT),
@@ -670,6 +786,7 @@ mod tests {
             (KeyCode::Char('n'), KeyModifiers::ALT),
             (KeyCode::Char('a'), KeyModifiers::CONTROL),
             (KeyCode::Char('?'), KeyModifiers::ALT),
+            (KeyCode::Char('/'), KeyModifiers::CONTROL),
         ] {
             let mut state = TuiState::new(work_list());
 

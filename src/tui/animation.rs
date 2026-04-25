@@ -66,12 +66,12 @@ impl AnimationRuntime {
     ) {
         if before.mode != after.mode {
             self.queue(AnimationTarget::FooterStatus);
-            if after.mode != TuiMode::List {
+            if after.mode != TuiMode::List && after.mode != TuiMode::Search {
                 self.queue(AnimationTarget::Overlay);
             }
         }
 
-        if before.list_count != after.list_count || before.filtered_count != after.filtered_count {
+        if before.list_count != after.list_count {
             self.queue(AnimationTarget::WorkQueue);
         }
 

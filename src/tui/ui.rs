@@ -108,7 +108,7 @@ fn render_work_queue(
     mark_region(regions, AnimationTarget::WorkQueue, area);
     let works = state.filtered_works();
     let block = panel_block_with_title(
-        work_queue_title(state.total_count()),
+        work_queue_title(state),
         matches!(state.mode, TuiMode::List | TuiMode::Search),
     );
 
@@ -148,14 +148,34 @@ fn render_work_queue(
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
 
-fn work_queue_title(count: usize) -> Line<'static> {
-    Line::from(vec![
+fn work_queue_title(state: &TuiState) -> Line<'static> {
+    let mut spans = vec![
         Span::raw(" "),
         Span::styled("WORK QUEUE", theme::style_panel_title()),
         Span::styled(" (", theme::style_panel_title()),
-        Span::styled(count.to_string(), theme::style_command()),
+        Span::styled(state.total_count().to_string(), theme::style_command()),
         Span::styled(") ", theme::style_panel_title()),
-    ])
+    ];
+
+    if state.mode == TuiMode::Search {
+        let query = if state.filter.is_empty() {
+            " ".to_string()
+        } else {
+            state.filter.clone()
+        };
+        spans.extend([
+            Span::styled("/ ", theme::style_command()),
+            Span::styled(query, theme::style_primary_text()),
+            Span::raw(" "),
+            Span::styled(
+                match_count_label(state.filtered_count()),
+                theme::style_command(),
+            ),
+            Span::raw(" "),
+        ]);
+    }
+
+    Line::from(spans)
 }
 
 fn work_item(work: &WorkSummary, current: bool, selected: bool) -> ListItem<'static> {
@@ -428,10 +448,10 @@ fn footer_keys(
         ],
         TuiMode::Search => vec![
             key("enter"),
-            "apply ".dim(),
+            "open ".dim(),
             key("esc"),
-            "close ".dim(),
-            key("j/k"),
+            "clear ".dim(),
+            key("up/down"),
             "move".dim(),
         ],
         TuiMode::Create => vec![
@@ -459,55 +479,15 @@ fn render_overlay(
     regions: &mut Option<&mut RenderRegions>,
 ) {
     match state.mode {
-        TuiMode::Search => render_search(frame, area, state, regions),
         TuiMode::Create => render_create(frame, area, state, regions),
         TuiMode::Archive => render_archive(frame, area, state, regions),
         TuiMode::Help => render_help(frame, area, regions),
-        TuiMode::List => {}
+        TuiMode::List | TuiMode::Search => {}
     }
 
     if let Some(toast) = &state.toast {
         render_toast(frame, area, toast, regions);
     }
-}
-
-fn render_search(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &TuiState,
-    regions: &mut Option<&mut RenderRegions>,
-) {
-    let popup = top_popup(72, 7, area);
-    mark_region(regions, AnimationTarget::Overlay, popup);
-    let query = if state.filter.is_empty() {
-        " ".to_string()
-    } else {
-        state.filter.clone()
-    };
-    let lines = vec![
-        Line::from(vec![
-            Span::styled("/ ", theme::style_command()),
-            Span::styled(
-                query,
-                theme::style_primary_text().add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        label_value("fields", "title, slug, intent, goal"),
-        label_value("matches", match_count_label(state.filtered_count())),
-        Line::from(vec![
-            key("enter"),
-            "apply ".dim(),
-            key("esc"),
-            "close".dim(),
-        ]),
-    ];
-    render_popup(
-        frame,
-        popup,
-        "SIGNAL FILTER",
-        lines,
-        theme::style_focused_border(),
-    );
 }
 
 fn render_create(
@@ -616,7 +596,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, regions: &mut Option<&mut Rend
     let lines = vec![
         help_line("j/down", "next Work"),
         help_line("k/up", "previous Work"),
-        help_line("/", "signal filter"),
+        help_line("/", "find Work"),
         help_line("enter", "switch to highlighted Work"),
         help_line("n", "work init"),
         help_line("a", "archive highlighted Work"),
@@ -828,17 +808,6 @@ fn work_folder_label(work: &WorkSummary) -> String {
         .file_name()
         .map(|folder| format!("work/{}", folder.to_string_lossy()))
         .unwrap_or_else(|| work.path.display().to_string())
-}
-
-fn top_popup(percent_x: u16, height: u16, area: Rect) -> Rect {
-    let width = area.width.saturating_mul(percent_x).saturating_div(100);
-    let width = width.clamp(30.min(area.width), area.width);
-    Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + 2,
-        width,
-        height.min(area.height),
-    )
 }
 
 fn match_count_label(count: usize) -> String {
@@ -1077,19 +1046,19 @@ mod tests {
     }
 
     #[test]
-    fn renders_search_overlay_with_query_fields_and_count() {
+    fn renders_inline_queue_filter_with_query_and_count() {
         let mut state = TuiState::new(work_list());
         state.mode = TuiMode::Search;
         state.filter = "billing".to_string();
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("SIGNAL FILTER"));
+        assert!(!content.contains("SIGNAL FILTER"));
+        assert!(content.contains("WORK QUEUE"));
         assert!(content.contains("/ billing"));
-        assert!(content.contains("title, slug, intent, goal"));
         assert!(content.contains("1 match"));
-        assert!(content.contains("enter apply"));
-        assert!(content.contains("esc close"));
+        assert!(content.contains("enter open"));
+        assert!(content.contains("esc clear"));
     }
 
     #[test]
@@ -1277,7 +1246,7 @@ mod tests {
         assert!(regions.has_region(AnimationTarget::DetailPanel));
         assert!(regions.has_region(AnimationTarget::TracePanel));
         assert!(regions.has_region(AnimationTarget::FooterStatus));
-        assert!(regions.has_region(AnimationTarget::Overlay));
+        assert!(!regions.has_region(AnimationTarget::Overlay));
         assert!(regions.has_region(AnimationTarget::Toast));
     }
 

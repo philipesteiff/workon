@@ -220,7 +220,7 @@ mod tests {
             AnimationSnapshot::from_state(&after),
         );
 
-        assert!(runtime.has_pending(AnimationTarget::Overlay));
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
         assert!(runtime.has_pending(AnimationTarget::WorkQueue));
         assert!(runtime.has_pending(AnimationTarget::TracePanel));
         assert!(runtime.has_pending(AnimationTarget::DetailPanel));
@@ -241,6 +241,23 @@ mod tests {
         );
 
         assert!(!runtime.has_pending(AnimationTarget::WorkQueue));
+    }
+
+    #[test]
+    fn animation_runtime_does_not_animate_filter_input() {
+        let mut before = TuiState::new(work_list());
+        before.mode = TuiMode::Search;
+        let mut after = before.clone();
+        after.push_filter_char('b');
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&after),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::WorkQueue));
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
     }
 
     #[test]
