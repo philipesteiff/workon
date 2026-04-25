@@ -59,8 +59,9 @@ impl TerminalSession {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
+        let _ = self.terminal.clear();
         let _ = self.terminal.show_cursor();
+        let _ = disable_raw_mode();
     }
 }
 
