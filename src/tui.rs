@@ -1,4 +1,6 @@
+mod components;
 mod state;
+mod theme;
 mod ui;
 
 use std::io::{self, Stdout};
@@ -16,7 +18,7 @@ use crate::app::{App, Command, CommandOutput};
 use crate::error::Result;
 use crate::shell_integration::current_work_path;
 
-use self::state::{Toast, TuiAction, TuiState};
+use self::state::{Toast, TraceKind, TuiAction, TuiState};
 use self::ui::render;
 
 pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
@@ -28,6 +30,7 @@ pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
         .with_intents(app.available_intents())
         .with_root(root)
         .with_active_work_path(current_work_path().as_deref());
+    state.push_trace(TraceKind::Run, "list loaded");
     let mut terminal = TerminalSession::enter()?;
     run_loop(app, terminal.terminal_mut(), &mut state)
 }
@@ -84,11 +87,13 @@ fn run_loop(
                         "Work archived",
                         &work.archive_path.display().to_string(),
                     ));
+                    state.push_trace(TraceKind::Sync, format!("archived {}", work.slug));
                     state.close_panel();
                 }
                 Ok(_) => unreachable!("archive work command returns archive output"),
                 Err(error) => {
                     state.toast = Some(Toast::error("Archive failed", &error.to_string()));
+                    state.push_trace(TraceKind::Err, format!("archive failed: {error}"));
                     state.close_panel();
                 }
             },
@@ -102,12 +107,14 @@ fn run_loop(
                             "Work created",
                             &work.path.display().to_string(),
                         ));
+                        state.push_trace(TraceKind::Sync, format!("created {}", work.slug));
                         state.reset_create_form();
                         state.close_panel();
                     }
                     Ok(_) => unreachable!("create work command returns create output"),
                     Err(error) => {
                         state.toast = Some(Toast::error("Create failed", &error.to_string()));
+                        state.push_trace(TraceKind::Err, format!("create failed: {error}"));
                     }
                 }
             }

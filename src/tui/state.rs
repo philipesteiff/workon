@@ -15,6 +15,8 @@ pub(super) struct TuiState {
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
     pub(super) root: PathBuf,
+    pub(super) active_work_path: Option<PathBuf>,
+    pub(super) trace: Vec<TraceEvent>,
     pub(super) toast: Option<Toast>,
 }
 
@@ -42,6 +44,21 @@ pub(super) enum ToastKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TraceEvent {
+    pub(super) kind: TraceKind,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TraceKind {
+    Run,
+    Sync,
+    Signal,
+    Warn,
+    Err,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum TuiAction {
     None,
     Quit,
@@ -62,6 +79,8 @@ impl TuiState {
             create_intent: 0,
             intents: Vec::new(),
             root: PathBuf::new(),
+            active_work_path: None,
+            trace: Vec::new(),
             toast: None,
         }
     }
@@ -81,6 +100,8 @@ impl TuiState {
         let Some(active_work_path) = active_work_path else {
             return self;
         };
+
+        self.active_work_path = Some(active_work_path.to_path_buf());
 
         if let Some(index) = self
             .works
@@ -110,6 +131,51 @@ impl TuiState {
         indices
             .get(self.selected)
             .and_then(|index| self.works.get(*index))
+    }
+
+    pub(super) fn is_active_work(&self, work: &WorkSummary) -> bool {
+        self.active_work_path
+            .as_deref()
+            .is_some_and(|active_path| active_path == work.path)
+    }
+
+    pub(super) fn filtered_count(&self) -> usize {
+        self.filtered_indices().len()
+    }
+
+    pub(super) fn total_count(&self) -> usize {
+        self.works.len()
+    }
+
+    pub(super) fn selected_position_label(&self) -> String {
+        let count = self.filtered_count();
+        if count == 0 {
+            "0/0".to_string()
+        } else {
+            format!("{}/{}", self.selected.min(count - 1) + 1, count)
+        }
+    }
+
+    pub(super) fn mode_status(&self) -> &'static str {
+        match self.mode {
+            TuiMode::List => "AWAITING INPUT",
+            TuiMode::Search => "SIGNAL FILTER",
+            TuiMode::Command => "OPERATOR COMMAND",
+            TuiMode::Create => "TASK INIT",
+            TuiMode::Archive => "ARCHIVE CONFIRM",
+            TuiMode::Help => "KEY INDEX",
+        }
+    }
+
+    pub(super) fn push_trace(&mut self, kind: TraceKind, message: impl Into<String>) {
+        self.trace.insert(
+            0,
+            TraceEvent {
+                kind,
+                message: message.into(),
+            },
+        );
+        self.trace.truncate(6);
     }
 
     pub(super) fn move_selection(&mut self, delta: isize) {
@@ -199,20 +265,24 @@ impl TuiState {
                 .unwrap_or(TuiAction::None),
             KeyCode::Char('/') => {
                 self.mode = TuiMode::Search;
+                self.push_trace(TraceKind::Signal, "filter ready");
                 TuiAction::None
             }
             KeyCode::Char(':') => {
                 self.command.clear();
                 self.mode = TuiMode::Command;
+                self.push_trace(TraceKind::Run, "operator command ready");
                 TuiAction::None
             }
             KeyCode::Char('n') => {
                 self.mode = TuiMode::Create;
+                self.push_trace(TraceKind::Run, "task init ready");
                 TuiAction::None
             }
             KeyCode::Char('a') => {
                 if self.selected_work().is_some() {
                     self.mode = TuiMode::Archive;
+                    self.push_trace(TraceKind::Warn, "archive confirmation armed");
                 }
                 TuiAction::None
             }
@@ -223,6 +293,7 @@ impl TuiState {
             KeyCode::Char(character) if is_plain_character(key) => {
                 self.mode = TuiMode::Search;
                 self.push_filter_char(character);
+                self.push_trace(TraceKind::Signal, format!("filter {}", self.filter));
                 TuiAction::None
             }
             _ => TuiAction::None,
@@ -238,6 +309,7 @@ impl TuiState {
             KeyCode::Backspace => {
                 self.filter.pop();
                 self.selected = 0;
+                self.push_trace(TraceKind::Signal, filter_trace_message(&self.filter));
                 TuiAction::None
             }
             KeyCode::Down | KeyCode::Char('j') => {
@@ -250,6 +322,7 @@ impl TuiState {
             }
             KeyCode::Char(character) if is_plain_character(key) => {
                 self.push_filter_char(character);
+                self.push_trace(TraceKind::Signal, filter_trace_message(&self.filter));
                 TuiAction::None
             }
             _ => TuiAction::None,
@@ -356,6 +429,7 @@ impl TuiState {
             }
             _ => {
                 self.toast = Some(Toast::error("Unknown command", &command));
+                self.push_trace(TraceKind::Err, format!("unknown command {command}"));
                 self.close_panel();
                 TuiAction::None
             }
@@ -369,6 +443,7 @@ impl TuiState {
                 "Goal required",
                 "Type a Work goal before creating.",
             ));
+            self.push_trace(TraceKind::Err, "task init missing goal");
             return TuiAction::None;
         }
 
@@ -432,6 +507,14 @@ fn work_matches(work: &WorkSummary, query: &str) -> bool {
         || work.goal.to_ascii_lowercase().contains(query)
 }
 
+fn filter_trace_message(filter: &str) -> String {
+    if filter.is_empty() {
+        "filter cleared".to_string()
+    } else {
+        format!("filter {filter}")
+    }
+}
+
 fn is_plain_character(key: KeyEvent) -> bool {
     !key.modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
@@ -443,7 +526,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{Toast, TuiAction, TuiMode, TuiState};
+    use super::{Toast, TraceKind, TuiAction, TuiMode, TuiState};
     use crate::domain::{WorkList, WorkSummary};
 
     #[test]
@@ -486,6 +569,33 @@ mod tests {
             state.selected_work().map(|work| work.slug.as_str()),
             Some("review-cache-invalidation-pr")
         );
+        let selected = state
+            .selected_work()
+            .expect("active work should be selected");
+        assert!(state.is_active_work(selected));
+        assert_eq!(
+            state.active_work_path.as_deref(),
+            Some(std::path::Path::new(
+                "/tmp/workon/.workon/work/review-cache-invalidation-pr"
+            ))
+        );
+        assert_eq!(state.selected_position_label(), "2/3");
+        assert_eq!(state.filtered_count(), 3);
+        assert_eq!(state.total_count(), 3);
+    }
+
+    #[test]
+    fn trace_records_newest_operational_events_first_and_caps_history() {
+        let mut state = TuiState::new(work_list());
+
+        for index in 0..10 {
+            state.push_trace(TraceKind::Run, format!("event {index}"));
+        }
+
+        assert_eq!(state.trace.len(), 6);
+        assert_eq!(state.trace[0].message, "event 9");
+        assert_eq!(state.trace[0].kind, TraceKind::Run);
+        assert_eq!(state.trace[5].message, "event 4");
     }
 
     #[test]

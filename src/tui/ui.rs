@@ -2,87 +2,120 @@ use std::path::PathBuf;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::{Frame, Line, Span, Stylize};
-use ratatui::style::Style;
-use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap,
-};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
 
 use crate::domain::WorkSummary;
 use crate::slug::{slugify, title_from_goal};
 
-use super::state::{Toast, ToastKind, TuiMode, TuiState};
+use super::components::{
+    bottom_border, key, label_value, panel_block, render_popup, section, status_badge, top_border,
+};
+use super::state::{Toast, ToastKind, TraceKind, TuiMode, TuiState};
+use super::theme;
 
 pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
     let area = frame.area();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::new().dark_gray());
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let [topbar, workspace, footer] = Layout::vertical([
-        Constraint::Length(3),
+    let [header, workspace, footer] = Layout::vertical([
+        Constraint::Length(if area.height < 12 { 2 } else { 3 }),
         Constraint::Fill(1),
         Constraint::Length(2),
     ])
-    .areas(inner);
+    .areas(area);
 
-    render_topbar(frame, topbar, state);
+    render_header(frame, header, state);
     render_workspace(frame, workspace, state);
     render_footer(frame, footer, state);
     render_overlay(frame, area, state);
 }
 
-fn render_topbar(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let [brand, path, mode] = Layout::horizontal([
-        Constraint::Length(14),
-        Constraint::Fill(1),
-        Constraint::Length(16),
-    ])
-    .areas(area);
+fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    if area.height == 0 {
+        return;
+    }
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![" wo ".bold().on_green(), " work".bold()])),
-        brand,
-    );
-    frame.render_widget(
-        Paragraph::new(root_label(state).dim()).block(bottom_border()),
-        path,
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            "mode ".dim(),
-            mode_label(state.mode).green().bold(),
-        ]))
-        .block(bottom_border()),
-        mode,
-    );
+    let root = root_label(state);
+    let top = Line::from(vec![
+        Span::styled(" WORKON // CONTROL ", theme::style_panel_title()),
+        Span::raw(" "),
+        status_badge("SYSTEM ONLINE", theme::style_status_ok()),
+        Span::raw(" "),
+        Span::styled("ROOT ", theme::style_muted_text()),
+        Span::styled(root, theme::style_primary_text()),
+    ]);
+    let bottom = Line::from(vec![
+        Span::styled(" MODE ", theme::style_muted_text()),
+        Span::styled(mode_label(state.mode), theme::style_command()),
+        Span::raw("   "),
+        Span::styled("SIGNAL ", theme::style_muted_text()),
+        Span::styled(state.mode_status(), mode_style(state.mode)),
+        Span::raw("   "),
+        Span::styled("TASKS ", theme::style_muted_text()),
+        Span::styled(
+            format!("{}/{}", state.filtered_count(), state.total_count()),
+            theme::style_primary_text(),
+        ),
+        Span::raw("   "),
+        Span::styled("SELECT ", theme::style_muted_text()),
+        Span::styled(state.selected_position_label(), theme::style_selected()),
+    ]);
+
+    let lines = if area.height < 3 {
+        vec![top]
+    } else {
+        vec![top, bottom]
+    };
+    frame.render_widget(Paragraph::new(lines).block(bottom_border()), area);
 }
 
 fn render_workspace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    if area.width < 86 {
-        let [list, detail] =
-            Layout::vertical([Constraint::Percentage(45), Constraint::Fill(1)]).areas(area);
-        render_work_list(frame, list, state);
-        render_detail(frame, detail, state);
+    if area.height == 0 {
+        return;
+    }
+
+    let trace_height = if area.height < 14 || area.width < 76 {
+        0
+    } else if area.height < 22 {
+        3
     } else {
-        let [list, detail] =
-            Layout::horizontal([Constraint::Percentage(42), Constraint::Fill(1)]).areas(area);
-        render_work_list(frame, list, state);
-        render_detail(frame, detail, state);
+        5
+    };
+
+    let (main, trace) = if trace_height == 0 {
+        (area, None)
+    } else {
+        let [main, trace] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(trace_height)]).areas(area);
+        (main, Some(trace))
+    };
+
+    render_main_panels(frame, main, state);
+
+    if let Some(trace) = trace {
+        render_trace(frame, trace, state);
     }
 }
 
-fn render_work_list(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_main_panels(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    if area.width < 86 {
+        let [queue, diagnostic] =
+            Layout::vertical([Constraint::Percentage(50), Constraint::Fill(1)]).areas(area);
+        render_task_queue(frame, queue, state);
+        render_diagnostic(frame, diagnostic, state);
+    } else {
+        let [queue, diagnostic] =
+            Layout::horizontal([Constraint::Percentage(44), Constraint::Fill(1)]).areas(area);
+        render_task_queue(frame, queue, state);
+        render_diagnostic(frame, diagnostic, state);
+    }
+}
+
+fn render_task_queue(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     let works = state.filtered_works();
-    let title = Line::from(vec![
-        " Active Work ".bold(),
-        format!("{} ", works.len()).dim(),
-    ]);
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::new().dark_gray());
+    let block = panel_block(
+        "TASK QUEUE",
+        matches!(state.mode, TuiMode::List | TuiMode::Search),
+    );
 
     if works.is_empty() {
         let message = if state.filter.is_empty() {
@@ -91,9 +124,14 @@ fn render_work_list(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             format!("No active Work matches \"{}\".", state.filter)
         };
         frame.render_widget(
-            Paragraph::new(message.dim())
-                .block(block)
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(vec![
+                Line::from(status_badge("WARN", theme::style_status_warn())),
+                Line::from(message),
+                Line::from(""),
+                Line::from("TASK QUEUE awaiting operator input.".dim()),
+            ])
+            .block(block)
+            .wrap(Wrap { trim: true }),
             area,
         );
         return;
@@ -101,52 +139,136 @@ fn render_work_list(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
 
     let items = works
         .iter()
-        .map(|work| {
-            ListItem::new(vec![
-                Line::from(work.title.clone().bold()),
-                Line::from(vec![
-                    work.intent_id.clone().cyan(),
-                    "  ".into(),
-                    work.slug.clone().dim(),
-                ]),
-            ])
-        })
+        .map(|work| task_item(work, state.is_active_work(work)))
         .collect::<Vec<_>>();
 
     let mut list_state = ListState::default();
     list_state.select(Some(state.selected.min(items.len().saturating_sub(1))));
     let list = List::new(items)
         .block(block)
-        .highlight_symbol("> ")
-        .highlight_style(Style::new().green().bold());
+        .highlight_symbol("◆ ")
+        .highlight_style(theme::style_selected());
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
 
-fn render_detail(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let block = Block::default()
-        .title(" Selected Work ".bold())
-        .borders(Borders::ALL)
-        .border_style(Style::new().dark_gray());
+fn task_item(work: &WorkSummary, active: bool) -> ListItem<'static> {
+    let status = if active {
+        status_badge("ACTIVE", theme::style_active())
+    } else {
+        status_badge("READY", theme::style_muted_text())
+    };
+    ListItem::new(vec![
+        Line::from(vec![
+            status,
+            Span::raw(" "),
+            Span::styled(work.title.clone(), theme::style_primary_text()),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("{:<12}", work.intent_id), theme::style_command()),
+            Span::styled(work.slug.clone(), theme::style_muted_text()),
+        ]),
+    ])
+}
+
+fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let block = panel_block(
+        "DIAGNOSTIC",
+        matches!(state.mode, TuiMode::Create | TuiMode::Archive),
+    );
 
     let Some(work) = state.selected_work() else {
         frame.render_widget(
-            Paragraph::new("No Work selected. Press n to create Work.".dim())
-                .block(block)
-                .wrap(Wrap { trim: true }),
+            Paragraph::new(vec![
+                Line::from(status_badge("WARN", theme::style_status_warn())),
+                Line::from("No Work selected. Press n to create Work."),
+                label_value("STATE", "NO SIGNAL"),
+            ])
+            .block(block)
+            .wrap(Wrap { trim: true }),
             area,
         );
         return;
     };
 
-    let lines = vec![
-        Line::from(work.title.clone().bold()),
-        Line::from(work.slug.clone().dim()),
-        Line::from("Goal".dim()),
-        Line::from(work.goal.clone()),
-        Line::from("Context".dim()),
-        Line::from(vec!["intent        ".dim(), work.intent_id.clone().cyan()]),
-        Line::from(vec!["folder        ".dim(), work_folder_label(work).into()]),
-    ];
+    let active_label = if state.is_active_work(work) {
+        "ACTIVE"
+    } else {
+        "STANDBY"
+    };
+    let lines = if area.height <= 9 {
+        vec![
+            section("ACTIVE SESSION"),
+            Line::from(vec![
+                status_badge(active_label, active_style(state.is_active_work(work))),
+                Span::raw(" "),
+                Span::styled(work.title.clone(), theme::style_primary_text()),
+            ]),
+            label_value("intent", work.intent_id.clone()),
+            label_value("folder", work_folder_label(work)),
+            section("Goal"),
+            Line::from(work.goal.clone()),
+        ]
+    } else {
+        vec![
+            section("ACTIVE SESSION"),
+            Line::from(vec![
+                status_badge(active_label, active_style(state.is_active_work(work))),
+                Span::raw(" "),
+                Span::styled(work.title.clone(), theme::style_primary_text()),
+            ]),
+            Line::from(work.slug.clone().dim()),
+            Line::from(""),
+            section("Context"),
+            label_value("intent", work.intent_id.clone()),
+            label_value("folder", work_folder_label(work)),
+            label_value("STATE", diagnostic_state_label(state)),
+            Line::from(""),
+            section("Goal"),
+            Line::from(work.goal.clone()),
+            label_value("archive", archive_path_for(work).display().to_string()),
+        ]
+    };
+
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+fn render_trace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let block = panel_block("EXECUTION TRACE", false);
+    let mut lines = if state.trace.is_empty() {
+        vec![
+            Line::from(vec![trace_badge(TraceKind::Run), Span::raw(" list loaded")]),
+            Line::from(vec![
+                status_badge("OK", theme::style_status_ok()),
+                Span::raw(" AWAITING INPUT"),
+            ]),
+        ]
+    } else {
+        state
+            .trace
+            .iter()
+            .map(|event| {
+                Line::from(vec![
+                    trace_badge(event.kind),
+                    Span::raw(" "),
+                    Span::styled(event.message.clone(), theme::style_primary_text()),
+                ])
+            })
+            .collect::<Vec<_>>()
+    };
+
+    if let Some(toast) = &state.toast {
+        lines.insert(
+            0,
+            Line::from(vec![
+                toast_badge(toast.kind),
+                Span::raw(" "),
+                Span::styled(toast.title.clone(), theme::style_primary_text()),
+            ]),
+        );
+    }
 
     frame.render_widget(
         Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
@@ -155,36 +277,69 @@ fn render_detail(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let line = match state.mode {
-        TuiMode::List => Line::from(vec![
+    let mut spans = vec![
+        status_badge("OPERATOR COMMAND", theme::style_command()),
+        Span::raw(" "),
+        Span::styled(mode_label(state.mode), mode_style(state.mode)),
+        Span::raw(" "),
+        Span::styled(state.mode_status(), theme::style_muted_text()),
+        Span::raw("  "),
+    ];
+    spans.extend(footer_keys(state.mode));
+
+    if area.width >= 96 {
+        if let Some(toast) = &state.toast {
+            spans.extend([
+                Span::raw("  "),
+                toast_badge(toast.kind),
+                Span::raw(" "),
+                Span::styled(toast.title.clone(), theme::style_muted_text()),
+            ]);
+        }
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)).block(top_border()), area);
+}
+
+fn footer_keys(mode: TuiMode) -> Vec<Span<'static>> {
+    match mode {
+        TuiMode::List => vec![
             key("enter"),
-            " switch ".dim(),
+            "switch ".dim(),
             key("n"),
-            " create ".dim(),
+            "create ".dim(),
             key("/"),
-            " filter ".dim(),
+            "filter ".dim(),
             key("?"),
-            " keys ".dim(),
+            "keys ".dim(),
             key("q"),
-            " quit".dim(),
-        ]),
-        TuiMode::Search => Line::from(vec![
+            "quit".dim(),
+        ],
+        TuiMode::Search => vec![
             key("enter"),
-            " apply ".dim(),
+            "apply ".dim(),
             key("esc"),
-            " close ".dim(),
+            "close ".dim(),
             key("j/k"),
-            " move".dim(),
-        ]),
-        TuiMode::Command => Line::from(vec![
+            "move".dim(),
+        ],
+        TuiMode::Command => vec![key("enter"), "run ".dim(), key("esc"), "cancel".dim()],
+        TuiMode::Create => vec![
             key("enter"),
-            " run ".dim(),
+            "create ".dim(),
+            key("tab/down"),
+            "intent ".dim(),
             key("esc"),
-            " cancel".dim(),
-        ]),
-        TuiMode::Create | TuiMode::Archive | TuiMode::Help => Line::from(""),
-    };
-    frame.render_widget(Paragraph::new(line), area);
+            "cancel".dim(),
+        ],
+        TuiMode::Archive => vec![
+            key("y/enter"),
+            "archive ".dim(),
+            key("esc/n"),
+            "cancel".dim(),
+        ],
+        TuiMode::Help => vec![key("esc/?/q"), "close".dim()],
+    }
 }
 
 fn render_overlay(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
@@ -203,61 +358,77 @@ fn render_overlay(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
 }
 
 fn render_search(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let popup = top_popup(70, 7, area);
+    let popup = top_popup(72, 7, area);
+    let query = if state.filter.is_empty() {
+        " ".to_string()
+    } else {
+        state.filter.clone()
+    };
     let lines = vec![
         Line::from(vec![
-            "/ ".green().bold(),
-            if state.filter.is_empty() {
-                " ".into()
-            } else {
-                state.filter.clone().bold()
-            },
+            Span::styled("/ ", theme::style_command()),
+            Span::styled(
+                query,
+                theme::style_primary_text().add_modifier(Modifier::BOLD),
+            ),
         ]),
-        Line::from("fields title, slug, intent, goal".dim()),
-        Line::from(match_count_label(state.filtered_indices().len()).dim()),
+        label_value("fields", "title, slug, intent, goal"),
+        label_value("matches", match_count_label(state.filtered_count())),
         Line::from(vec![
             key("enter"),
-            " apply ".dim(),
+            "apply ".dim(),
             key("esc"),
-            " close".dim(),
+            "close".dim(),
         ]),
     ];
-    render_popup(frame, popup, " Filter Work ", lines, Style::new().green());
+    render_popup(
+        frame,
+        popup,
+        "SIGNAL FILTER",
+        lines,
+        theme::style_focused_border(),
+    );
 }
 
 fn render_command(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let popup = top_popup(70, 6, area);
+    let popup = top_popup(72, 6, area);
+    let command = if state.command.is_empty() {
+        " ".to_string()
+    } else {
+        state.command.clone()
+    };
     let lines = vec![
         Line::from(vec![
-            ": ".green().bold(),
-            if state.command.is_empty() {
-                " ".into()
-            } else {
-                state.command.clone().bold()
-            },
+            Span::styled(": ", theme::style_command()),
+            Span::styled(
+                command,
+                theme::style_primary_text().add_modifier(Modifier::BOLD),
+            ),
         ]),
-        Line::from("commands list, create, switch, archive".dim()),
-        Line::from(vec![
-            key("enter"),
-            " run ".dim(),
-            key("esc"),
-            " cancel".dim(),
-        ]),
+        label_value("commands", "list, create, switch, archive"),
+        Line::from(vec![key("enter"), "run ".dim(), key("esc"), "cancel".dim()]),
     ];
-    render_popup(frame, popup, " Command ", lines, Style::new().green());
+    render_popup(
+        frame,
+        popup,
+        "OPERATOR COMMAND",
+        lines,
+        theme::style_focused_border(),
+    );
 }
 
 fn render_create(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let popup = centered_rect(76, 52, area);
+    let popup = centered_rect(78, 56, area);
     let mut lines = vec![
-        Line::from("Goal".dim()),
+        section("TASK INTAKE"),
+        label_value("Goal", ""),
         Line::from(if state.create_goal.is_empty() {
             "Type the Work goal.".dim()
         } else {
-            state.create_goal.clone().into()
+            Span::styled(state.create_goal.clone(), theme::style_primary_text())
         }),
         Line::from(""),
-        Line::from("Intent".dim()),
+        section("INTENT"),
     ];
     lines.extend(selected_intent_lines(state));
 
@@ -266,8 +437,9 @@ fn render_create(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         let slug = slugify(&title);
         lines.extend([
             Line::from(""),
-            Line::from("Slug preview".dim()),
-            Line::from(slug),
+            section("SLUG PREVIEW"),
+            label_value("title", title),
+            label_value("slug", slug),
         ]);
     }
 
@@ -275,135 +447,185 @@ fn render_create(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Line::from(""),
         Line::from(vec![
             key("enter"),
-            " create ".dim(),
+            "create ".dim(),
             key("tab/down"),
-            " intent ".dim(),
+            "intent ".dim(),
             key("up"),
-            " previous ".dim(),
+            "previous ".dim(),
             key("esc"),
-            " cancel".dim(),
+            "cancel".dim(),
         ]),
     ]);
-    render_popup(frame, popup, " Create Work ", lines, Style::new().green());
+    render_popup(
+        frame,
+        popup,
+        "TASK INIT",
+        lines,
+        theme::style_focused_border(),
+    );
 }
 
 fn render_archive(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let popup = centered_rect(70, 62, area);
+    let popup = centered_rect(74, 64, area);
     let Some(work) = state.selected_work() else {
         return;
     };
     let archive_path = archive_path_for(work);
     let lines = vec![
         Line::from(vec![
-            "Archive ".into(),
-            work.title.clone().bold(),
-            "?".into(),
+            status_badge("WARN", theme::style_status_warn()),
+            Span::raw(" Archive "),
+            Span::styled(
+                work.title.clone(),
+                theme::style_primary_text().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("?"),
         ]),
         Line::from(""),
+        label_value("from", work.path.display().to_string()),
+        label_value("to", archive_path.display().to_string()),
         Line::from(vec![
-            "from   ".dim(),
-            work.path.display().to_string().into(),
+            Span::styled(format!("{:<15}", "effect"), theme::style_muted_text()),
+            Span::styled("Hidden from Active Work.", theme::style_destructive()),
         ]),
-        Line::from(vec![
-            "to     ".dim(),
-            archive_path.display().to_string().into(),
-        ]),
-        Line::from(vec!["effect ".dim(), "Hidden from Active Work.".red()]),
         Line::from(""),
         Line::from(vec![
             key("y/enter"),
-            " archive ".dim(),
+            "archive ".dim(),
             key("esc/n"),
-            " cancel".dim(),
+            "cancel".dim(),
         ]),
     ];
-    render_popup(frame, popup, " Archive Work ", lines, Style::new().red());
+    render_popup(
+        frame,
+        popup,
+        "ARCHIVE CONFIRM",
+        lines,
+        theme::style_destructive(),
+    );
 }
 
 fn render_help(frame: &mut Frame<'_>, area: Rect) {
-    let popup = centered_rect(62, 48, area);
+    let popup = centered_rect(66, 52, area);
     let lines = vec![
         help_line("j/down", "next Work"),
         help_line("k/up", "previous Work"),
-        help_line("/", "filter like fzf"),
+        help_line("/", "signal filter"),
         help_line("enter", "switch to selected Work"),
-        help_line("n", "create Work"),
+        help_line("n", "task init"),
         help_line("a", "archive selected Work"),
-        help_line(":", "command line"),
+        help_line(":", "operator command"),
         help_line("esc", "close panel"),
         Line::from(""),
         Line::from("Commands: list, create, switch, archive".dim()),
     ];
-    render_popup(frame, popup, " Keys ", lines, Style::new().green());
+    render_popup(
+        frame,
+        popup,
+        "KEY INDEX",
+        lines,
+        theme::style_focused_border(),
+    );
 }
 
 fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
-    let width = area.width.min(58);
-    let height = 5;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let width = area.width.min(58).max(area.width.min(30));
+    let height = area.height.min(5);
     let x = area.x + area.width.saturating_sub(width + 2);
     let y = area.y + area.height.saturating_sub(height + 2);
     let popup = Rect::new(x, y, width, height);
     let style = match toast.kind {
-        ToastKind::Info => Style::new().green(),
-        ToastKind::Error => Style::new().red(),
+        ToastKind::Info => theme::style_status_ok(),
+        ToastKind::Error => theme::style_status_error(),
     };
     let lines = vec![
-        Line::from(toast.title.clone().bold()),
+        Line::from(vec![
+            toast_badge(toast.kind),
+            Span::raw(" "),
+            toast.title.clone().bold(),
+        ]),
         Line::from(toast.message.clone().dim()),
     ];
-    render_popup(frame, popup, " Last Result ", lines, style);
-}
-
-fn render_popup(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    title: &'static str,
-    lines: Vec<Line<'_>>,
-    border_style: Style,
-) {
-    frame.render_widget(Clear, area);
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(border_style);
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
-        area,
-    );
-}
-
-fn bottom_border<'a>() -> Block<'a> {
-    Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(Style::new().dark_gray())
-}
-
-fn key(value: &'static str) -> Span<'static> {
-    format!(" {value}").bold().green()
-}
-
-fn help_line(key_value: &'static str, label: &'static str) -> Line<'static> {
-    Line::from(vec![key(key_value), " ".into(), label.dim()])
+    render_popup(frame, popup, "LAST EVENT", lines, style);
 }
 
 fn selected_intent_lines(state: &TuiState) -> Vec<Line<'static>> {
     match state.intents.get(state.create_intent) {
         Some((intent, summary)) => vec![
-            Line::from(intent.clone().cyan().bold()),
+            Line::from(vec![
+                status_badge("RUN", theme::style_status_run()),
+                Span::raw(" "),
+                Span::styled(intent.clone(), theme::style_command()),
+            ]),
             Line::from(summary.clone().dim()),
         ],
-        None => vec![Line::from("investigate".cyan().bold())],
+        None => vec![Line::from(vec![
+            status_badge("RUN", theme::style_status_run()),
+            Span::raw(" "),
+            Span::styled("investigate", theme::style_command()),
+        ])],
+    }
+}
+
+fn help_line(key_value: &'static str, label: &'static str) -> Line<'static> {
+    Line::from(vec![key(key_value), Span::raw(" "), label.dim()])
+}
+
+fn trace_badge(kind: TraceKind) -> Span<'static> {
+    match kind {
+        TraceKind::Run => status_badge("RUN", theme::style_status_run()),
+        TraceKind::Sync => status_badge("SYNC", theme::style_status_ok()),
+        TraceKind::Signal => status_badge("SIGNAL", theme::style_command()),
+        TraceKind::Warn => status_badge("WARN", theme::style_status_warn()),
+        TraceKind::Err => status_badge("ERR", theme::style_status_error()),
+    }
+}
+
+fn toast_badge(kind: ToastKind) -> Span<'static> {
+    match kind {
+        ToastKind::Info => status_badge("OK", theme::style_status_ok()),
+        ToastKind::Error => status_badge("ERR", theme::style_status_error()),
+    }
+}
+
+fn active_style(active: bool) -> Style {
+    if active {
+        theme::style_active()
+    } else {
+        theme::style_muted_text()
+    }
+}
+
+fn mode_style(mode: TuiMode) -> Style {
+    match mode {
+        TuiMode::Archive => theme::style_status_warn(),
+        TuiMode::Command | TuiMode::Create | TuiMode::Search | TuiMode::Help => {
+            theme::style_command()
+        }
+        TuiMode::List => theme::style_status_ok(),
     }
 }
 
 fn mode_label(mode: TuiMode) -> &'static str {
     match mode {
-        TuiMode::List => "list",
-        TuiMode::Search => "search",
-        TuiMode::Command => "command",
-        TuiMode::Create => "create",
-        TuiMode::Archive => "archive",
-        TuiMode::Help => "help",
+        TuiMode::List => "LIST",
+        TuiMode::Search => "FILTER",
+        TuiMode::Command => "COMMAND",
+        TuiMode::Create => "CREATE",
+        TuiMode::Archive => "ARCHIVE",
+        TuiMode::Help => "HELP",
+    }
+}
+
+fn diagnostic_state_label(state: &TuiState) -> String {
+    if state.filter.is_empty() {
+        "READY".to_string()
+    } else {
+        format!("FILTER {}", state.filter)
     }
 }
 
@@ -432,8 +654,13 @@ fn work_folder_label(work: &WorkSummary) -> String {
 
 fn top_popup(percent_x: u16, height: u16, area: Rect) -> Rect {
     let width = area.width.saturating_mul(percent_x).saturating_div(100);
-    let width = width.clamp(30, area.width);
-    Rect::new(area.x + (area.width - width) / 2, area.y + 2, width, height)
+    let width = width.clamp(30.min(area.width), area.width);
+    Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + 2,
+        width,
+        height.min(area.height),
+    )
 }
 
 fn match_count_label(count: usize) -> String {
@@ -475,21 +702,23 @@ mod tests {
 
     #[test]
     fn renders_work_list_and_selected_detail() {
-        let state = TuiState::new(work_list());
+        let state = TuiState::new(work_list()).with_active_work_path(Some(std::path::Path::new(
+            "/tmp/workon/.workon/work/billing-retry-audit",
+        )));
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("wo"));
-        assert!(content.contains("Active Work"));
-        assert!(content.contains("Selected Work"));
+        assert!(content.contains("WORKON // CONTROL"));
+        assert!(content.contains("SYSTEM ONLINE"));
+        assert!(content.contains("TASK QUEUE"));
+        assert!(content.contains("DIAGNOSTIC"));
+        assert!(content.contains("EXECUTION TRACE"));
+        assert!(content.contains("OPERATOR COMMAND"));
+        assert!(content.contains("ACTIVE SESSION"));
+        assert!(content.contains("ACTIVE"));
         assert!(content.contains("Billing retry audit"));
         assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
-        assert!(!content.contains("switch result"));
-        assert!(!content.contains("Actions"));
-        assert!(!content.contains("Trail"));
-        assert!(!content.contains("Filtered Work"));
-        assert!(!content.contains("active"));
     }
 
     #[test]
@@ -500,7 +729,7 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("Filter Work"));
+        assert!(content.contains("SIGNAL FILTER"));
         assert!(content.contains("/ billing"));
         assert!(content.contains("title, slug, intent, goal"));
         assert!(content.contains("1 match"));
@@ -518,13 +747,13 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("Create Work"));
+        assert!(content.contains("TASK INIT"));
         assert!(content.contains("Type the Work goal."));
         assert!(content.contains("investigate"));
         assert!(content.contains("Answer a technical question with evidence."));
         assert!(content.contains("enter create"));
         assert!(content.contains("tab/down intent"));
-        assert!(!content.contains("Slug preview"));
+        assert!(!content.contains("SLUG PREVIEW"));
         assert!(!content.contains("Answer why billing retry alerts spiked"));
     }
 
@@ -549,7 +778,8 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("Archive Work"));
+        assert!(content.contains("ARCHIVE CONFIRM"));
+        assert!(content.contains("WARN"));
         assert!(content.contains("Archive Billing retry audit?"));
         assert!(content.contains("Hidden from Active Work."));
         assert!(content.contains("y/enter archive"));
@@ -575,9 +805,9 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("Keys"));
+        assert!(content.contains("KEY INDEX"));
         assert!(content.contains("j/down"));
-        assert!(content.contains("command line"));
+        assert!(content.contains("operator command"));
         assert!(content.contains("Commands: list, create, switch, archive"));
     }
 
@@ -591,9 +821,8 @@ mod tests {
         let filtered = render_content(&state, 100, 28);
 
         assert!(filtered.contains("No active Work matches \"missing\"."));
-        assert!(filtered.contains("Selected Work"));
+        assert!(filtered.contains("DIAGNOSTIC"));
         assert!(filtered.contains("No Work selected. Press n to create Work."));
-        assert!(!filtered.contains("Filtered Work"));
     }
 
     #[test]
@@ -610,7 +839,7 @@ mod tests {
 
         let content = render_content(&state, 74, 30);
 
-        assert!(content.contains("Selected Work"));
+        assert!(content.contains("DIAGNOSTIC"));
         assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
@@ -621,7 +850,10 @@ mod tests {
         let state = TuiState::new(work_list());
         let content = render_content(&state, 80, 24);
 
-        assert!(content.contains("Selected Work"));
+        assert!(content.contains("WORKON // CONTROL"));
+        assert!(content.contains("TASK QUEUE"));
+        assert!(content.contains("DIAGNOSTIC"));
+        assert!(content.contains("OPERATOR COMMAND"));
         assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
@@ -639,8 +871,20 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("Last Result"));
+        assert!(content.contains("LAST EVENT"));
         assert!(content.contains("Work created"));
+    }
+
+    #[test]
+    fn renders_mission_control_vocabulary_at_common_sizes() {
+        for (width, height) in [(120, 36), (100, 28), (80, 24), (74, 30)] {
+            let content = render_content(&TuiState::new(work_list()), width, height);
+
+            assert!(content.contains("WORKON // CONTROL"), "{width}x{height}");
+            assert!(content.contains("TASK QUEUE"), "{width}x{height}");
+            assert!(content.contains("DIAGNOSTIC"), "{width}x{height}");
+            assert!(content.contains("OPERATOR COMMAND"), "{width}x{height}");
+        }
     }
 
     fn work_list() -> WorkList {
