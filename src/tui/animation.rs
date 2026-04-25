@@ -65,9 +65,11 @@ impl AnimationRuntime {
         after: AnimationSnapshot,
     ) {
         if before.mode != after.mode {
-            self.queue(AnimationTarget::FooterStatus);
-            if after.mode != TuiMode::List && after.mode != TuiMode::Search {
+            if is_overlay_mode(after.mode) {
+                self.queue(AnimationTarget::FooterStatus);
                 self.queue(AnimationTarget::Overlay);
+            } else if is_overlay_mode(before.mode) {
+                self.queue(AnimationTarget::FooterStatus);
             }
         }
 
@@ -128,6 +130,10 @@ impl AnimationRuntime {
     fn queue(&mut self, target: AnimationTarget) {
         self.pending.insert(target);
     }
+}
+
+fn is_overlay_mode(mode: TuiMode) -> bool {
+    matches!(mode, TuiMode::Create | TuiMode::Archive | TuiMode::Help)
 }
 
 impl AnimationSnapshot {

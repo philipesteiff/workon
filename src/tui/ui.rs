@@ -109,12 +109,15 @@ fn render_work_queue(
     let works = state.filtered_works();
     let block = panel_block_with_title(
         work_queue_title(state),
-        matches!(state.mode, TuiMode::List | TuiMode::Search),
+        matches!(
+            state.mode,
+            TuiMode::List | TuiMode::Search | TuiMode::Leader
+        ),
     );
 
     if works.is_empty() {
         let message = if state.filter.is_empty() {
-            "No active Work. Press n to create Work.".to_string()
+            "No active Work. Press /n to create Work.".to_string()
         } else {
             format!("No active Work matches \"{}\".", state.filter)
         };
@@ -157,15 +160,10 @@ fn work_queue_title(state: &TuiState) -> Line<'static> {
         Span::styled(") ", theme::style_panel_title()),
     ];
 
-    if state.mode == TuiMode::Search {
-        let query = if state.filter.is_empty() {
-            " ".to_string()
-        } else {
-            state.filter.clone()
-        };
+    if !state.filter.is_empty() {
         spans.extend([
-            Span::styled("/ ", theme::style_command()),
-            Span::styled(query, theme::style_primary_text()),
+            Span::styled("find ", theme::style_command()),
+            Span::styled(state.filter.clone(), theme::style_primary_text()),
             Span::raw(" "),
             Span::styled(
                 match_count_label(state.filtered_count()),
@@ -252,7 +250,7 @@ fn render_diagnostic(
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(status_badge("WARN", theme::style_status_warn())),
-                Line::from("No active Work. Press n to create Work."),
+                Line::from("No active Work. Press /n to create Work."),
                 label_value("view", "EMPTY"),
             ])
             .block(block)
@@ -387,48 +385,42 @@ fn footer_keys(
 ) -> Vec<Span<'static>> {
     match mode {
         TuiMode::List if width < 88 => vec![
+            key("type"),
+            "find ".dim(),
             key("enter"),
             "open ".dim(),
-            key("n"),
-            "new ".dim(),
-            key("a"),
-            "arch ".dim(),
             key("/"),
-            "find ".dim(),
-            key("?"),
-            "help ".dim(),
-            key("q"),
-            "quit".dim(),
+            "cmd ".dim(),
+            key("esc"),
+            "clear/quit".dim(),
         ],
         TuiMode::List if width < 112 => vec![
+            key("type"),
+            "find ".dim(),
             key("enter"),
             "open ".dim(),
-            key("n"),
-            "new ".dim(),
-            key("a"),
-            "archive ".dim(),
+            key("up/down"),
+            "move ".dim(),
             key("/"),
-            "find ".dim(),
+            "commands ".dim(),
             key("C-d"),
             if detail_visible {
                 "less ".dim()
             } else {
                 "more ".dim()
             },
-            key("?"),
-            "help ".dim(),
-            key("q"),
-            "quit".dim(),
+            key("esc"),
+            "clear/quit".dim(),
         ],
-        TuiMode::List => vec![
+        TuiMode::List | TuiMode::Search => vec![
+            key("type"),
+            "find ".dim(),
             key("enter"),
             "open ".dim(),
-            key("n"),
-            "new ".dim(),
-            key("a"),
-            "archive ".dim(),
+            key("up/down"),
+            "move ".dim(),
             key("/"),
-            "find ".dim(),
+            "commands ".dim(),
             key("C-d"),
             if detail_visible {
                 "hide details ".dim()
@@ -441,18 +433,20 @@ fn footer_keys(
             } else {
                 "trace ".dim()
             },
-            key("?"),
-            "help ".dim(),
-            key("q"),
-            "quit".dim(),
-        ],
-        TuiMode::Search => vec![
-            key("enter"),
-            "open ".dim(),
             key("esc"),
-            "clear ".dim(),
-            key("up/down"),
-            "move".dim(),
+            "clear/quit".dim(),
+        ],
+        TuiMode::Leader => vec![
+            key("/n"),
+            "new ".dim(),
+            key("/a"),
+            "archive ".dim(),
+            key("/?"),
+            "help ".dim(),
+            key("/q"),
+            "quit ".dim(),
+            key("esc"),
+            "cancel".dim(),
         ],
         TuiMode::Create => vec![
             key("enter"),
@@ -482,7 +476,7 @@ fn render_overlay(
         TuiMode::Create => render_create(frame, area, state, regions),
         TuiMode::Archive => render_archive(frame, area, state, regions),
         TuiMode::Help => render_help(frame, area, regions),
-        TuiMode::List | TuiMode::Search => {}
+        TuiMode::List | TuiMode::Search | TuiMode::Leader => {}
     }
 
     if let Some(toast) = &state.toast {
@@ -594,13 +588,16 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, regions: &mut Option<&mut Rend
     let popup = centered_rect(66, 52, area);
     mark_region(regions, AnimationTarget::Overlay, popup);
     let lines = vec![
-        help_line("j/down", "next Work"),
-        help_line("k/up", "previous Work"),
-        help_line("/", "find Work"),
+        help_line("up/down", "move Work selection"),
+        help_line("type", "filter Work queue"),
+        help_line("/", "open command leader"),
         help_line("enter", "switch to highlighted Work"),
-        help_line("n", "work init"),
-        help_line("a", "archive highlighted Work"),
-        help_line("esc", "close panel"),
+        help_line("/n", "work init"),
+        help_line("/a", "archive highlighted Work"),
+        help_line("/?", "help"),
+        help_line("//", "insert slash in filter"),
+        help_line("/q", "quit"),
+        help_line("esc", "clear filter or close panel"),
     ];
     render_popup(
         frame,
@@ -756,7 +753,9 @@ fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
 fn mode_style(mode: TuiMode) -> Style {
     match mode {
         TuiMode::Archive => theme::style_status_warn(),
-        TuiMode::Create | TuiMode::Search | TuiMode::Help => theme::style_command(),
+        TuiMode::Create | TuiMode::Search | TuiMode::Leader | TuiMode::Help => {
+            theme::style_command()
+        }
         TuiMode::List => theme::style_status_ok(),
     }
 }
@@ -784,6 +783,7 @@ fn mode_label(mode: TuiMode) -> &'static str {
     match mode {
         TuiMode::List => "LIST",
         TuiMode::Search => "FILTER",
+        TuiMode::Leader => "COMMAND",
         TuiMode::Create => "CREATE",
         TuiMode::Archive => "ARCHIVE",
         TuiMode::Help => "HELP",
@@ -1041,12 +1041,19 @@ mod tests {
     }
 
     #[test]
-    fn renders_archive_shortcut_in_list_footer() {
+    fn renders_direct_filter_and_leader_shortcuts_in_list_footer() {
         let full = render_content(&TuiState::new(work_list()), 120, 36);
-        assert!(full.contains("a archive"));
+        assert!(full.contains("type find"));
+        assert!(full.contains("enter open"));
+        assert!(full.contains("up/down move"));
+        assert!(full.contains("/ commands"));
+        assert!(full.contains("esc clear/quit"));
+        assert!(!full.contains("/ find"));
+        assert!(!full.contains("a archive"));
 
         let compact = render_content(&TuiState::new(work_list()), 80, 24);
-        assert!(compact.contains("a arch"));
+        assert!(compact.contains("type find"));
+        assert!(compact.contains("/ cmd"));
     }
 
     #[test]
@@ -1059,10 +1066,30 @@ mod tests {
 
         assert!(!content.contains("SIGNAL FILTER"));
         assert!(content.contains("WORK QUEUE"));
-        assert!(content.contains("/ billing"));
+        assert!(content.contains("find billing"));
         assert!(content.contains("1 match"));
         assert!(content.contains("enter open"));
-        assert!(content.contains("esc clear"));
+        assert!(content.contains("esc clear/quit"));
+    }
+
+    #[test]
+    fn renders_leader_mode_inline_without_overlay() {
+        let mut state = TuiState::new(work_list());
+        state.mode = TuiMode::Leader;
+
+        let content = render_content(&state, 120, 36);
+        let (_, regions) = render_content_for_animation(&state, 120, 36);
+
+        assert!(content.contains("OPERATOR COMMAND"));
+        assert!(content.contains("COMMAND"));
+        assert!(content.contains("/n new"));
+        assert!(content.contains("/a archive"));
+        assert!(content.contains("/? help"));
+        assert!(content.contains("/q quit"));
+        assert!(content.contains("esc cancel"));
+        assert!(!content.contains("WORK INIT"));
+        assert!(!content.contains("SIGNAL FILTER"));
+        assert!(!regions.has_region(AnimationTarget::Overlay));
     }
 
     #[test]
@@ -1166,21 +1193,23 @@ mod tests {
         let content = render_content(&state, 120, 36);
 
         assert!(content.contains("KEY INDEX"));
-        assert!(content.contains("j/down"));
+        assert!(content.contains("up/down"));
+        assert!(content.contains("type"));
+        assert!(content.contains("/n"));
         assert!(!content.contains("operator command"));
     }
 
     #[test]
     fn renders_empty_list_and_empty_filter_result() {
         let empty = render_content(&TuiState::new(WorkList { works: Vec::new() }), 100, 28);
-        assert!(empty.contains("No active Work. Press n to create Work."));
+        assert!(empty.contains("No active Work. Press /n to create Work."));
 
         let mut state = TuiState::new(work_list());
         state.filter = "missing".to_string();
         let filtered = render_content(&state, 100, 28);
 
         assert!(filtered.contains("No active Work matches \"missing\"."));
-        assert!(filtered.contains("No active Work. Press n to create Work."));
+        assert!(filtered.contains("No active Work. Press /n to create Work."));
     }
 
     #[test]

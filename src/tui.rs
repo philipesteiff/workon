@@ -141,7 +141,7 @@ fn run_loop(
                 match app.execute(Command::CreateWork { goal, intent_id }) {
                     Ok(CommandOutput::WorkCreated(work)) => {
                         reload_work_list(app, state)?;
-                        state.filter.clear();
+                        state.clear_filter_context();
                         state.select_slug(&work.slug);
                         state.toast = Some(Toast::info(
                             "Work created",
@@ -258,6 +258,31 @@ mod tests {
 
         assert!(!runtime.has_pending(AnimationTarget::WorkQueue));
         assert!(!runtime.has_pending(AnimationTarget::Overlay));
+    }
+
+    #[test]
+    fn animation_runtime_does_not_animate_leader_entry_or_exit() {
+        let before = TuiState::new(work_list());
+        let mut leader = before.clone();
+        leader.mode = TuiMode::Leader;
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&leader),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
+        assert!(!runtime.has_pending(AnimationTarget::FooterStatus));
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&leader),
+            AnimationSnapshot::from_state(&before),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
+        assert!(!runtime.has_pending(AnimationTarget::FooterStatus));
     }
 
     #[test]

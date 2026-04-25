@@ -26,6 +26,7 @@ pub(super) struct TuiState {
 pub(super) enum TuiMode {
     List,
     Search,
+    Leader,
     Create,
     Archive,
     Help,
@@ -232,6 +233,7 @@ impl TuiState {
         match self.mode {
             TuiMode::List => self.handle_list_key(key),
             TuiMode::Search => self.handle_search_key(key),
+            TuiMode::Leader => self.handle_leader_key(key),
             TuiMode::Create => self.handle_create_key(key),
             TuiMode::Archive => self.handle_archive_key(key),
             TuiMode::Help => self.handle_help_key(key),
@@ -239,12 +241,17 @@ impl TuiState {
     }
 
     pub(super) fn close_panel(&mut self) {
-        self.mode = TuiMode::List;
+        self.restore_queue_mode();
     }
 
     pub(super) fn reset_create_form(&mut self) {
         self.create_goal.clear();
         self.create_intent = 0;
+    }
+
+    pub(super) fn clear_filter_context(&mut self) {
+        self.filter.clear();
+        self.pre_filter_selected_slug = None;
     }
 
     pub(super) fn filtered_indices(&self) -> Vec<usize> {
@@ -264,17 +271,9 @@ impl TuiState {
 
     fn handle_list_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
-            KeyCode::Char('q') if is_shortcut_character(key) => TuiAction::Quit,
-            KeyCode::Char('j') if is_shortcut_character(key) => {
-                self.move_selection(1);
-                TuiAction::None
-            }
+            KeyCode::Esc => TuiAction::Quit,
             KeyCode::Down => {
                 self.move_selection(1);
-                TuiAction::None
-            }
-            KeyCode::Char('k') if is_shortcut_character(key) => {
-                self.move_selection(-1);
                 TuiAction::None
             }
             KeyCode::Up => {
@@ -286,24 +285,8 @@ impl TuiState {
                 .map(|work| TuiAction::Switch(work.slug.clone()))
                 .unwrap_or(TuiAction::None),
             KeyCode::Char('/') if is_plain_character(key) => {
-                self.enter_filter_mode();
-                self.push_trace(TraceKind::Signal, "filter ready");
-                TuiAction::None
-            }
-            KeyCode::Char('n') if is_shortcut_character(key) => {
-                self.mode = TuiMode::Create;
-                self.push_trace(TraceKind::Run, "work init ready");
-                TuiAction::None
-            }
-            KeyCode::Char('a') if is_shortcut_character(key) => {
-                if self.selected_work().is_some() {
-                    self.mode = TuiMode::Archive;
-                    self.push_trace(TraceKind::Warn, "archive confirmation armed");
-                }
-                TuiAction::None
-            }
-            KeyCode::Char('?') if is_plain_character(key) => {
-                self.mode = TuiMode::Help;
+                self.mode = TuiMode::Leader;
+                self.push_trace(TraceKind::Run, "command leader ready");
                 TuiAction::None
             }
             KeyCode::Char(character) if is_plain_character(key) => {
@@ -318,6 +301,7 @@ impl TuiState {
 
     fn handle_search_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
+            KeyCode::Esc if self.filter.is_empty() => TuiAction::Quit,
             KeyCode::Esc => {
                 self.close_filter_mode();
                 TuiAction::None
@@ -326,7 +310,7 @@ impl TuiState {
                 .selected_work()
                 .map(|work| TuiAction::Switch(work.slug.clone()))
                 .unwrap_or(TuiAction::None),
-            KeyCode::Backspace => {
+            KeyCode::Backspace if !self.filter.is_empty() => {
                 self.filter.pop();
                 self.selected = 0;
                 self.push_trace(TraceKind::Signal, filter_trace_message(&self.filter));
@@ -340,12 +324,55 @@ impl TuiState {
                 self.move_selection(-1);
                 TuiAction::None
             }
+            KeyCode::Char('/') if is_plain_character(key) => {
+                self.mode = TuiMode::Leader;
+                self.push_trace(TraceKind::Run, "command leader ready");
+                TuiAction::None
+            }
             KeyCode::Char(character) if is_plain_character(key) => {
                 self.push_filter_char(character);
                 self.push_trace(TraceKind::Signal, filter_trace_message(&self.filter));
                 TuiAction::None
             }
             _ => TuiAction::None,
+        }
+    }
+
+    fn handle_leader_key(&mut self, key: KeyEvent) -> TuiAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.restore_queue_mode();
+                TuiAction::None
+            }
+            KeyCode::Char('n') if is_plain_character(key) => {
+                self.mode = TuiMode::Create;
+                self.push_trace(TraceKind::Run, "work init ready");
+                TuiAction::None
+            }
+            KeyCode::Char('a') if is_plain_character(key) => {
+                if self.selected_work().is_some() {
+                    self.mode = TuiMode::Archive;
+                    self.push_trace(TraceKind::Warn, "archive confirmation armed");
+                } else {
+                    self.restore_queue_mode();
+                }
+                TuiAction::None
+            }
+            KeyCode::Char('?') if is_plain_character(key) => {
+                self.mode = TuiMode::Help;
+                TuiAction::None
+            }
+            KeyCode::Char('q') if is_plain_character(key) => TuiAction::Quit,
+            KeyCode::Char('/') if is_plain_character(key) => {
+                self.enter_filter_mode();
+                self.push_filter_char('/');
+                self.push_trace(TraceKind::Signal, filter_trace_message(&self.filter));
+                TuiAction::None
+            }
+            _ => {
+                self.restore_queue_mode();
+                TuiAction::None
+            }
         }
     }
 
@@ -418,7 +445,7 @@ impl TuiState {
     }
 
     fn enter_filter_mode(&mut self) {
-        if self.mode != TuiMode::Search {
+        if self.filter.is_empty() && self.pre_filter_selected_slug.is_none() {
             self.pre_filter_selected_slug = self.selected_work().map(|work| work.slug.clone());
         }
         self.mode = TuiMode::Search;
@@ -434,6 +461,14 @@ impl TuiState {
         } else {
             self.clamp_selection();
         }
+    }
+
+    fn restore_queue_mode(&mut self) {
+        self.mode = if self.filter.is_empty() {
+            TuiMode::List
+        } else {
+            TuiMode::Search
+        };
     }
 
     fn create_action(&mut self) -> TuiAction {
@@ -656,7 +691,7 @@ mod tests {
             "/tmp/workon/.workon/work/billing",
         ));
 
-        let action = state.handle_key(key(KeyCode::Char('j')));
+        let action = state.handle_key(key(KeyCode::Down));
 
         assert_eq!(action, TuiAction::None);
         assert_eq!(state.toast, None);
@@ -679,7 +714,40 @@ mod tests {
     }
 
     #[test]
-    fn slash_enters_filter_without_changing_visible_list() {
+    fn direct_typing_starts_filtering_from_list_mode() {
+        let mut state = TuiState::new(work_list());
+        state.move_selection(1);
+
+        let mut action = TuiAction::None;
+        for character in "billing".chars() {
+            action = state.handle_key(key(KeyCode::Char(character)));
+        }
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, "billing");
+        assert_eq!(state.filtered_count(), 1);
+        assert_eq!(
+            state.selected_work().map(|work| work.slug.as_str()),
+            Some("billing-retry-audit")
+        );
+    }
+
+    #[test]
+    fn bare_printable_shortcuts_append_to_filter() {
+        for character in ['j', 'k', 'n', 'a', 'q', '?', ' '] {
+            let mut state = TuiState::new(work_list());
+
+            let action = state.handle_key(key(KeyCode::Char(character)));
+
+            assert_eq!(action, TuiAction::None);
+            assert_eq!(state.mode, TuiMode::Search);
+            assert_eq!(state.filter, character.to_string());
+        }
+    }
+
+    #[test]
+    fn slash_enters_leader_without_changing_filter_or_selection() {
         let mut state = TuiState::new(work_list());
         state.move_selection(1);
         let selected_before = state.selected_work().map(|work| work.slug.clone());
@@ -687,7 +755,7 @@ mod tests {
         let action = state.handle_key(key(KeyCode::Char('/')));
 
         assert_eq!(action, TuiAction::None);
-        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.mode, TuiMode::Leader);
         assert_eq!(state.filter, "");
         assert_eq!(state.filtered_count(), 3);
         assert_eq!(
@@ -699,7 +767,6 @@ mod tests {
     #[test]
     fn enter_in_filter_switches_highlighted_match() {
         let mut state = TuiState::new(work_list());
-        state.handle_key(key(KeyCode::Char('/')));
         for character in "context".chars() {
             state.handle_key(key(KeyCode::Char(character)));
         }
@@ -715,7 +782,6 @@ mod tests {
     #[test]
     fn search_navigation_switches_directly_from_filtered_queue() {
         let mut state = TuiState::new(work_list());
-        state.handle_key(key(KeyCode::Char('/')));
         state.handle_key(key(KeyCode::Char('i')));
         state.handle_key(key(KeyCode::Char('n')));
         state.handle_key(key(KeyCode::Char('v')));
@@ -730,15 +796,61 @@ mod tests {
     }
 
     #[test]
-    fn j_and_k_are_search_text_in_filter_mode() {
+    fn slash_leader_commands_route_actions() {
         let mut state = TuiState::new(work_list());
         state.handle_key(key(KeyCode::Char('/')));
+        assert_eq!(state.handle_key(key(KeyCode::Char('n'))), TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Create);
 
-        state.handle_key(key(KeyCode::Char('j')));
-        state.handle_key(key(KeyCode::Char('k')));
+        let mut archive_state = TuiState::new(work_list());
+        for character in "review".chars() {
+            archive_state.handle_key(key(KeyCode::Char(character)));
+        }
+        archive_state.handle_key(key(KeyCode::Char('/')));
+        assert_eq!(
+            archive_state.handle_key(key(KeyCode::Char('a'))),
+            TuiAction::None
+        );
+        assert_eq!(archive_state.mode, TuiMode::Archive);
+        assert_eq!(
+            archive_state.handle_key(key(KeyCode::Enter)),
+            TuiAction::Archive("review-cache-invalidation-pr".to_string())
+        );
 
-        assert_eq!(state.filter, "jk");
-        assert_eq!(state.selected, 0);
+        let mut help_state = TuiState::new(work_list());
+        help_state.handle_key(key(KeyCode::Char('/')));
+        assert_eq!(
+            help_state.handle_key(key(KeyCode::Char('?'))),
+            TuiAction::None
+        );
+        assert_eq!(help_state.mode, TuiMode::Help);
+
+        let mut quit_state = TuiState::new(work_list());
+        quit_state.handle_key(key(KeyCode::Char('/')));
+        assert_eq!(
+            quit_state.handle_key(key(KeyCode::Char('q'))),
+            TuiAction::Quit
+        );
+    }
+
+    #[test]
+    fn slash_leader_can_insert_literal_slash_and_cancel() {
+        let mut state = TuiState::new(work_list());
+        state.handle_key(key(KeyCode::Char('b')));
+        state.handle_key(key(KeyCode::Char('/')));
+
+        let action = state.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, "b");
+
+        state.handle_key(key(KeyCode::Char('/')));
+        let action = state.handle_key(key(KeyCode::Char('/')));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, "b/");
     }
 
     #[test]
@@ -746,7 +858,6 @@ mod tests {
         let mut state = TuiState::new(work_list());
         state.move_selection(1);
         let selected_before = state.selected_work().map(|work| work.slug.clone());
-        state.handle_key(key(KeyCode::Char('/')));
         for character in "context".chars() {
             state.handle_key(key(KeyCode::Char(character)));
         }
@@ -763,9 +874,34 @@ mod tests {
     }
 
     #[test]
+    fn clearing_filter_context_allows_next_filter_to_restore_current_selection() {
+        let mut state = TuiState::new(work_list());
+        state.move_selection(1);
+        for character in "context".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+
+        state.clear_filter_context();
+        state.select_slug("billing-retry-audit");
+        state.close_panel();
+        for character in "review".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+
+        let action = state.handle_key(key(KeyCode::Esc));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::List);
+        assert_eq!(state.filter, "");
+        assert_eq!(
+            state.selected_work().map(|work| work.slug.as_str()),
+            Some("billing-retry-audit")
+        );
+    }
+
+    #[test]
     fn enter_on_empty_filter_match_does_not_switch_or_close_filter() {
         let mut state = TuiState::new(work_list());
-        state.handle_key(key(KeyCode::Char('/')));
         for character in "missing".chars() {
             state.handle_key(key(KeyCode::Char(character)));
         }
@@ -775,6 +911,29 @@ mod tests {
         assert_eq!(action, TuiAction::None);
         assert_eq!(state.mode, TuiMode::Search);
         assert_eq!(state.filter, "missing");
+    }
+
+    #[test]
+    fn backspace_edits_filter_and_resets_selection() {
+        let mut state = TuiState::new(work_list());
+        for character in "review".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+        state.handle_key(key(KeyCode::Down));
+
+        let action = state.handle_key(key(KeyCode::Backspace));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::Search);
+        assert_eq!(state.filter, "revie");
+        assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn escape_with_empty_filter_quits() {
+        let mut state = TuiState::new(work_list());
+
+        assert_eq!(state.handle_key(key(KeyCode::Esc)), TuiAction::Quit);
     }
 
     #[test]
