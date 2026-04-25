@@ -414,6 +414,60 @@ mod tests {
         assert_eq!(repositories[0].url, "https://github.com/openai/workon");
     }
 
+    #[test]
+    fn scan_uses_detached_head_revision_when_current_branch_is_empty() {
+        let runner = RecordingRunner {
+            rev_parse_output: "abc1234\n".to_string(),
+            ..RecordingRunner::default()
+        };
+        let git = GitWorktree::new(&runner);
+        let root = temp_root("git_worktree_scan_detached");
+        fs::create_dir_all(root.path().join("repos/openai__workon")).expect("repo worktree path");
+
+        let repositories = git.scan(root.path(), &[]).expect("scan should succeed");
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].branch, "detached abc1234");
+    }
+
+    #[test]
+    fn scan_uses_origin_url_when_metadata_is_missing() {
+        let runner = RecordingRunner {
+            current_branch_output: "main\n".to_string(),
+            remote_url_output: "git@github.com:openai/workon.git\n".to_string(),
+            ..RecordingRunner::default()
+        };
+        let git = GitWorktree::new(&runner);
+        let root = temp_root("git_worktree_scan_origin_url");
+        fs::create_dir_all(root.path().join("repos/openai__workon")).expect("repo worktree path");
+
+        let repositories = git.scan(root.path(), &[]).expect("scan should succeed");
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].url, "git@github.com:openai/workon.git");
+        assert_eq!(repositories[0].default_branch, "");
+    }
+
+    #[test]
+    fn scan_skips_invalid_and_non_git_repo_folders() {
+        let runner = RecordingRunner {
+            branch_failure_contains: Some("openai__notgit".to_string()),
+            ..RecordingRunner::default()
+        };
+        let git = GitWorktree::new(&runner);
+        let root = temp_root("git_worktree_scan_skips");
+        fs::create_dir_all(root.path().join("repos/openai__workon")).expect("repo worktree path");
+        fs::create_dir_all(root.path().join("repos/openai__notgit")).expect("non git path");
+        fs::create_dir_all(root.path().join("repos/not-a-repo")).expect("invalid folder path");
+
+        let repositories = git
+            .scan(root.path(), &[repository_attachment()])
+            .expect("scan should succeed");
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].name_with_owner, "openai/workon");
+    }
+
     fn branch_list_args() -> &'static [&'static str] {
         &[
             "-C",
@@ -446,6 +500,9 @@ mod tests {
         commands: RefCell<Vec<RepoCommand>>,
         branch_list_output: String,
         current_branch_output: String,
+        rev_parse_output: String,
+        remote_url_output: String,
+        branch_failure_contains: Option<String>,
         remove_failure: bool,
     }
 
@@ -465,7 +522,23 @@ mod tests {
                 return Ok(self.branch_list_output.clone());
             }
             if args.ends_with(expected_args(&["branch", "--show-current"]).as_slice()) {
+                if self
+                    .branch_failure_contains
+                    .as_ref()
+                    .is_some_and(|value| args.iter().any(|arg| arg.contains(value)))
+                {
+                    return Err(WorkonError::ProcessFailed {
+                        command: "git branch --show-current".to_string(),
+                        stderr: "not a git repository".to_string(),
+                    });
+                }
                 return Ok(self.current_branch_output.clone());
+            }
+            if args.ends_with(expected_args(&["rev-parse", "--short", "HEAD"]).as_slice()) {
+                return Ok(self.rev_parse_output.clone());
+            }
+            if args.ends_with(expected_args(&["remote", "get-url", "origin"]).as_slice()) {
+                return Ok(self.remote_url_output.clone());
             }
             if self.remove_failure && args.contains(&"remove".to_string()) {
                 return Err(WorkonError::ProcessFailed {
