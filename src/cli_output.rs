@@ -3,6 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::app::CommandOutput;
+use crate::domain::WorkList;
 use crate::error::Result;
 
 pub(crate) fn render_output(
@@ -40,13 +41,7 @@ pub(crate) fn render_output(
             render_switch_signal(writer, &work.path, &work.title, root, machine)?;
         }
         CommandOutput::WorkList(list) => {
-            if list.works.is_empty() {
-                writeln!(writer, "no work yet")?;
-            } else {
-                for work in &list.works {
-                    writeln!(writer, "{}\t{}", work.slug, work.title)?;
-                }
-            }
+            render_work_list(list, writer, root)?;
         }
         CommandOutput::WorkOpened(work) => {
             writeln!(writer, "work opened: {}", work.title)?;
@@ -57,10 +52,44 @@ pub(crate) fn render_output(
     Ok(())
 }
 
+fn render_work_list(list: &WorkList, writer: &mut dyn Write, root: &Path) -> Result<()> {
+    if list.works.is_empty() {
+        writeln!(writer, "No active work.")?;
+        return Ok(());
+    }
+
+    let label = if list.works.len() == 1 {
+        "active work"
+    } else {
+        "active works"
+    };
+    writeln!(writer, "{} {label}", list.works.len())?;
+    writeln!(writer)?;
+    for (index, work) in list.works.iter().enumerate() {
+        if index > 0 {
+            writeln!(writer)?;
+        }
+        writeln!(writer, "{}. {}", index + 1, work.title)?;
+        writeln!(writer, "   intent  {}", work.intent_id)?;
+        writeln!(writer, "   slug    {}", work.slug)?;
+        writeln!(writer, "   folder  {}", display_folder(&work.path, root))?;
+    }
+
+    Ok(())
+}
+
+fn display_folder(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
 pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
     writeln!(
         writer,
         "wo\n\
+         wo list\n\
          wo <work-query>\n\
          wo archive <work-query>\n\
          wo --intent <intent-id> \"<goal>\"\n\

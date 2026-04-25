@@ -132,6 +132,16 @@ wo
 
 Use this to switch into existing Work without remembering exact names.
 
+### `wo list`
+
+Print active Work directly in the terminal.
+
+```sh
+wo list
+```
+
+The list includes each Work title, intent, slug, and folder.
+
 ### `wo install-shell`
 
 Install the shell function that lets `wo` change the current directory.

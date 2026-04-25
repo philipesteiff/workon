@@ -42,11 +42,16 @@ fn run(
         return Ok(0);
     }
 
-    let CliRequest::Command { command, machine } = request else {
+    let CliRequest::Command {
+        command,
+        machine,
+        allow_tui,
+    } = request
+    else {
         unreachable!("help request returned earlier");
     };
 
-    if should_run_tui(&command) {
+    if should_run_tui(&command, machine, allow_tui) {
         if let Some(output) = crate::tui::run(&app, root.clone())? {
             render_output(&output, stdout, machine, &root)?;
         }
@@ -100,8 +105,12 @@ fn should_offer_shell_install(command: &Command, machine: bool) -> bool {
         )
 }
 
-fn should_run_tui(command: &Command) -> bool {
-    io::stdin().is_terminal() && io::stdout().is_terminal() && matches!(command, Command::ListWorks)
+fn should_run_tui(command: &Command, machine: bool, allow_tui: bool) -> bool {
+    allow_tui
+        && !machine
+        && io::stdin().is_terminal()
+        && io::stdout().is_terminal()
+        && matches!(command, Command::ListWorks)
 }
 
 fn offer_shell_install(
