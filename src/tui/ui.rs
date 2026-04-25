@@ -185,7 +185,7 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     status.push(if active {
         status_badge("CURRENT", theme::style_current_badge())
     } else {
-        status_badge("READY", theme::style_muted_text())
+        status_badge("READY", theme::style_ready_badge())
     });
     let primary_style = task_primary_style(active, selected);
     let secondary_style = task_secondary_style(active, selected);
@@ -197,8 +197,11 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     let item = ListItem::new(vec![
         Line::from(status),
         Line::from(vec![
-            Span::styled(format!("{:<12}", work.intent_id), secondary_style),
-            Span::styled(work.slug.clone(), secondary_style),
+            Span::styled("intent ", secondary_style),
+            Span::styled(
+                work.intent_id.clone(),
+                task_meta_value_style(active, selected),
+            ),
         ]),
     ]);
 
@@ -215,7 +218,7 @@ fn task_primary_style(active: bool, selected: bool) -> Style {
     } else if active {
         theme::style_current_text()
     } else {
-        theme::style_primary_text()
+        theme::style_task_title()
     }
 }
 
@@ -223,9 +226,19 @@ fn task_secondary_style(active: bool, selected: bool) -> Style {
     if selected {
         theme::style_target_row()
     } else if active {
-        theme::style_current_text()
+        theme::style_current_meta_label()
     } else {
-        theme::style_muted_text()
+        theme::style_meta_key()
+    }
+}
+
+fn task_meta_value_style(active: bool, selected: bool) -> Style {
+    if selected {
+        theme::style_target_row()
+    } else if active {
+        theme::style_current_intent_value()
+    } else {
+        theme::style_meta_value()
     }
 }
 
@@ -947,7 +960,8 @@ mod tests {
         assert!(content.contains("SELECTED WORK"));
         assert!(content.contains("CURRENT"));
         assert!(content.contains("Billing retry audit"));
-        assert!(content.contains("intent"));
+        assert!(content.contains("intent investigate"));
+        assert!(!content.contains("slug billing-retry-audit"));
         assert!(content.contains("folder"));
         assert!(!content.contains("archive"));
         assert!(!content.contains("Goal"));
@@ -965,13 +979,34 @@ mod tests {
         let buffer = render_buffer(&state, 120, 36);
         let current_row = row_containing(&buffer, "CURRENT");
         let target_row = row_containing(&buffer, ">> TARGET");
+        let ready_row = row_containing(&buffer, "Context command sketch");
+        let ready_meta_row = row_containing(&buffer, "intent brainstorm");
 
         assert!(content.contains("CURRENT"));
         assert!(content.contains("Billing retry audit"));
         assert!(content.contains("Review cache invalidation PR"));
+        assert!(content.contains("Context command sketch"));
         assert!(content.contains(">> TARGET"));
+        assert!(content.contains("intent review-pr"));
+        assert!(content.contains("intent brainstorm"));
+        assert!(!content.contains("slug review-cache"));
+        assert!(!content.contains("slug context-command"));
         assert!(row_has_bg(&buffer, target_row, Color::Rgb(92, 58, 32)));
         assert!(row_has_modifier(&buffer, current_row, Modifier::UNDERLINED));
+
+        let target_label = cell_at_text(&buffer, target_row, "TARGET");
+        let ready_badge = cell_at_text(&buffer, ready_row, "READY");
+        let ready_title = cell_at_text(&buffer, ready_row, "Context command sketch");
+        let ready_meta_key = cell_at_text(&buffer, ready_meta_row, "intent ");
+        let ready_meta_value = cell_at_text(&buffer, ready_meta_row, "brainstorm");
+        assert_eq!(target_label.fg, Color::Rgb(255, 176, 64));
+        assert_eq!(target_label.bg, Color::Rgb(92, 58, 32));
+        assert_eq!(ready_badge.fg, Color::Rgb(190, 130, 70));
+        assert_eq!(ready_title.fg, Color::Rgb(255, 176, 64));
+        assert!(ready_title.modifier.contains(Modifier::BOLD));
+        assert_eq!(ready_meta_key.fg, Color::Rgb(104, 72, 40));
+        assert_eq!(ready_meta_value.fg, Color::Rgb(255, 140, 32));
+        assert!(ready_meta_value.modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -1273,10 +1308,17 @@ mod tests {
                 },
                 WorkSummary {
                     title: "Review cache invalidation PR".to_string(),
-                    slug: "review-cache-invalidation-pr".to_string(),
+                    slug: "review-cache".to_string(),
                     goal: "Review the cache invalidation PR for regressions.".to_string(),
                     intent_id: "review-pr".to_string(),
-                    path: PathBuf::from("/tmp/workon/.workon/work/review-cache-invalidation-pr"),
+                    path: PathBuf::from("/tmp/workon/.workon/work/review-cache"),
+                },
+                WorkSummary {
+                    title: "Context command sketch".to_string(),
+                    slug: "context-command".to_string(),
+                    goal: "Shape the first context surface.".to_string(),
+                    intent_id: "brainstorm".to_string(),
+                    path: PathBuf::from("/tmp/workon/.workon/work/context-command"),
                 },
             ],
         }
@@ -1349,5 +1391,22 @@ mod tests {
 
     fn row_has_modifier(buffer: &Buffer, y: u16, modifier: Modifier) -> bool {
         (0..buffer.area.width).any(|x| buffer[(x, y)].modifier.contains(modifier))
+    }
+
+    fn cell_at_text<'a>(buffer: &'a Buffer, y: u16, text: &str) -> &'a ratatui::buffer::Cell {
+        for x in 0..buffer.area.width {
+            let mut candidate = String::new();
+            for end in x..buffer.area.width {
+                candidate.push_str(buffer[(end, y)].symbol());
+                if candidate == text {
+                    return &buffer[(x, y)];
+                }
+                if !text.starts_with(&candidate) || candidate.len() >= text.len() {
+                    break;
+                }
+            }
+        }
+
+        panic!("row did not contain text: {text}");
     }
 }
