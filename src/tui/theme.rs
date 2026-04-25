@@ -71,26 +71,23 @@ pub(super) fn style_selected_row_highlight() -> Style {
 }
 
 pub(super) fn style_current_text() -> Style {
-    Style::new()
-        .fg(OK_AMBER)
-        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
+}
+
+pub(super) fn style_current_anchor() -> Style {
+    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_current_badge() -> Style {
-    Style::new()
-        .fg(Color::Black)
-        .bg(OK_AMBER)
-        .add_modifier(Modifier::BOLD)
+    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_current_meta_label() -> Style {
-    Style::new()
-        .fg(DIM_AMBER)
-        .add_modifier(Modifier::UNDERLINED)
+    Style::new().fg(DIM_AMBER)
 }
 
 pub(super) fn style_current_intent_value() -> Style {
-    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
+    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_active_badge() -> Style {

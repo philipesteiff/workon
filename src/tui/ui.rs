@@ -143,7 +143,7 @@ fn render_work_queue(
     list_state.select(Some(selected));
     let list = List::new(items)
         .block(block)
-        .highlight_symbol(">>")
+        .highlight_symbol("")
         .highlight_style(theme::style_selected_row_highlight());
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
@@ -160,6 +160,7 @@ fn work_queue_title(count: usize) -> Line<'static> {
 
 fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
     let mut status = Vec::new();
+    status.push(row_anchor(active, selected));
     status.push(if active {
         status_badge("CURRENT", theme::style_current_badge())
     } else {
@@ -175,15 +176,22 @@ fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     let item = ListItem::new(vec![
         Line::from(status),
         Line::from(vec![
+            Span::raw("  "),
             Span::styled("intent ", secondary_style),
             Span::styled(work.intent_id.clone(), work_meta_value_style(active)),
         ]),
     ]);
 
-    if active && !selected {
-        item.style(theme::style_current_text())
+    item
+}
+
+fn row_anchor(active: bool, selected: bool) -> Span<'static> {
+    if active {
+        Span::styled("@", theme::style_current_anchor())
+    } else if selected {
+        Span::styled(">>", theme::style_command())
     } else {
-        item
+        Span::raw("  ")
     }
 }
 
@@ -896,6 +904,8 @@ mod tests {
         assert!(!content.contains("archive"));
         assert!(!content.contains("Goal"));
         assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
+        assert!(content.contains("@ CURRENT"));
+        assert!(!content.contains(">> CURRENT"));
 
         let buffer = render_buffer(&state, 120, 36);
         let queue_title_row = row_containing(&buffer, "WORK QUEUE (1)");
@@ -912,7 +922,7 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
         let buffer = render_buffer(&state, 120, 36);
-        let current_row = row_containing(&buffer, "CURRENT");
+        let current_row = row_containing(&buffer, "@ CURRENT");
         let active_row = row_containing(&buffer, ">> ACTIVE");
         let other_active_row = row_containing(&buffer, "Context command sketch");
         let other_active_meta_row = row_containing(&buffer, "intent brainstorm");
@@ -923,6 +933,7 @@ mod tests {
         assert!(content.contains("Review cache invalidation PR"));
         assert!(content.contains("Context command sketch"));
         assert!(content.contains(">> ACTIVE"));
+        assert!(content.contains("@ CURRENT"));
         assert!(!content.contains("TARGET"));
         assert!(!content.contains("READY"));
         assert!(!content.contains("STANDBY"));
@@ -931,8 +942,17 @@ mod tests {
         assert!(!content.contains("slug review-cache"));
         assert!(!content.contains("slug context-command"));
         assert!(row_has_bg(&buffer, active_row, Color::Rgb(92, 58, 32)));
-        assert!(row_has_modifier(&buffer, current_row, Modifier::UNDERLINED));
+        assert!(!row_has_modifier(
+            &buffer,
+            current_row,
+            Modifier::UNDERLINED
+        ));
 
+        let current_anchor = cell_at_text(&buffer, current_row, "@");
+        let current_badge = cell_at_text(&buffer, current_row, "CURRENT");
+        let current_title = cell_at_text(&buffer, current_row, "Billing retry audit");
+        let current_meta_row = row_containing(&buffer, "intent investigate");
+        let current_meta_value = cell_at_text(&buffer, current_meta_row, "investigate");
         let selected_active_badge = cell_at_text(&buffer, active_row, "ACTIVE");
         let selected_active_title =
             cell_at_text(&buffer, active_row, "Review cache invalidation PR");
@@ -943,6 +963,16 @@ mod tests {
         let active_title = cell_at_text(&buffer, other_active_row, "Context command sketch");
         let active_meta_key = cell_at_text(&buffer, other_active_meta_row, "intent ");
         let active_meta_value = cell_at_text(&buffer, other_active_meta_row, "brainstorm");
+        assert_eq!(current_anchor.fg, Color::Rgb(220, 180, 84));
+        assert_eq!(current_anchor.bg, Color::Reset);
+        assert!(current_anchor.modifier.contains(Modifier::BOLD));
+        assert_eq!(current_badge.fg, Color::Rgb(220, 180, 84));
+        assert_eq!(current_badge.bg, Color::Reset);
+        assert!(current_badge.modifier.contains(Modifier::BOLD));
+        assert_eq!(current_title.fg, Color::Rgb(220, 180, 84));
+        assert_eq!(current_title.bg, Color::Reset);
+        assert_eq!(current_meta_value.fg, Color::Rgb(220, 180, 84));
+        assert_eq!(current_meta_value.bg, Color::Reset);
         assert_eq!(selected_active_badge.fg, Color::Rgb(190, 130, 70));
         assert_eq!(selected_active_badge.bg, Color::Rgb(92, 58, 32));
         assert_eq!(selected_active_title.fg, Color::Rgb(255, 176, 64));
