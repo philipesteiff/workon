@@ -13,10 +13,9 @@ use super::components::{
     key, label_value, panel_block, panel_block_with_activity, panel_block_with_title, render_popup,
     section, status_badge, top_border, TitleActivity,
 };
-use super::state::{
-    RepoOperation, RepoPane, RepoSelectionState, RepoStatus, Toast, ToastKind, TraceKind, TuiMode,
-    TuiState,
-};
+use super::repo_state::RepoStatus;
+use super::repo_ui::{render_repo_context, repo_activity_message};
+use super::state::{Toast, ToastKind, TraceKind, TuiMode, TuiState};
 use super::theme;
 
 const CONTROL_PANEL_MAX_WIDTH: u16 = 160;
@@ -59,9 +58,9 @@ fn control_title(state: &TuiState) -> &'static str {
 }
 
 fn title_activity(state: &TuiState) -> Option<TitleActivity> {
-    match &state.repo_status {
+    match &state.repo.status {
         RepoStatus::Loading { message } if state.mode == TuiMode::Repos => Some(
-            TitleActivity::loading(message.clone(), state.activity_frame),
+            TitleActivity::loading(message.clone(), state.repo.activity_frame),
         ),
         RepoStatus::Applying {
             action,
@@ -70,7 +69,7 @@ fn title_activity(state: &TuiState) -> Option<TitleActivity> {
             repository,
         } if state.mode == TuiMode::Repos => Some(TitleActivity::loading(
             repo_activity_message(*action, *current, *total, repository),
-            state.activity_frame,
+            state.repo.activity_frame,
         )),
         _ => None,
     }
@@ -659,178 +658,6 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, regions: &mut Option<&mut Rend
     );
 }
 
-fn render_repo_context(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &TuiState,
-    regions: &mut Option<&mut RenderRegions>,
-) {
-    mark_region(regions, AnimationTarget::WorkQueue, area);
-
-    if area.width < 72 {
-        let [catalog, selected] =
-            Layout::vertical([Constraint::Percentage(55), Constraint::Fill(1)]).areas(area);
-        render_repo_catalog_panel(frame, catalog, state);
-        render_repo_selected_panel(frame, selected, state);
-    } else {
-        let [catalog, selected] =
-            Layout::horizontal([Constraint::Percentage(60), Constraint::Fill(1)]).areas(area);
-        render_repo_catalog_panel(frame, catalog, state);
-        render_repo_selected_panel(frame, selected, state);
-    }
-}
-
-fn repo_status_line(state: &TuiState) -> Option<Line<'static>> {
-    Some(match &state.repo_status {
-        RepoStatus::Ready if state.pending_repo_change_count() == 0 => return None,
-        RepoStatus::Ready => {
-            if state.repo_force_remove && !state.repo_pending_remove.is_empty() {
-                Line::from(vec![
-                    status_badge("FORCE", theme::style_status_warn()),
-                    Span::raw(" "),
-                    Span::styled(
-                        "dirty selected worktrees may be removed",
-                        theme::style_command(),
-                    ),
-                ])
-            } else {
-                return None;
-            }
-        }
-        RepoStatus::Loading { .. } => Line::from("gh repo list --no-archived".dim()),
-        RepoStatus::Applying { .. } => return None,
-        RepoStatus::Failed { message } => Line::from(vec![
-            status_badge("ERR", theme::style_status_error()),
-            Span::raw(" "),
-            Span::styled(message.clone(), theme::style_primary_text()),
-        ]),
-    })
-}
-
-fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let repositories = state.filtered_available_repositories();
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("GITHUB REPOSITORIES", theme::style_panel_title()),
-        Span::raw(" "),
-        Span::styled(repositories.len().to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(
-            focus_label(state.repo_focus == RepoPane::Catalog),
-            theme::style_command(),
-        ),
-    ]);
-    let block = panel_block_with_title(title, state.repo_focus == RepoPane::Catalog);
-    let mut lines = vec![Line::from(
-        "space selects repos; ! arms force remove; enter applies changes".dim(),
-    )];
-
-    if let Some(status) = repo_status_line(state) {
-        lines.push(status);
-    }
-
-    if !state.repo_filter.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled("find ", theme::style_command()),
-            Span::styled(state.repo_filter.clone(), theme::style_primary_text()),
-        ]));
-    }
-
-    if matches!(state.repo_status, RepoStatus::Loading { .. }) {
-        lines.push(Line::from("Waiting for gh repository catalog.".dim()));
-    } else if repositories.is_empty() {
-        lines.push(Line::from("No GitHub repositories match.".dim()));
-    } else {
-        lines.extend(repositories.iter().enumerate().map(|(index, repository)| {
-            catalog_repo_row(
-                &repository.name_with_owner,
-                &format!("default {}", repository.default_branch),
-                state.is_repository_selected(&repository.name_with_owner),
-                state.repo_pending_add.contains(&repository.name_with_owner),
-                state
-                    .repo_pending_remove
-                    .contains(&repository.name_with_owner),
-                state.repo_force_remove,
-                index == state.repo_selected && state.repo_focus == RepoPane::Catalog,
-            )
-        }));
-    }
-
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
-        area,
-    );
-}
-
-fn render_repo_selected_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let rows = state.selected_repository_rows();
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("SELECTED FOR WORK", theme::style_panel_title()),
-        Span::raw(" "),
-        Span::styled(rows.len().to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(
-            focus_label(state.repo_focus == RepoPane::Selected),
-            theme::style_command(),
-        ),
-    ]);
-    let block = panel_block_with_title(title, state.repo_focus == RepoPane::Selected);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let log_height = if inner.height >= 12 { 6 } else { 0 };
-    let (selected_area, log_area) = if log_height == 0 {
-        (inner, None)
-    } else {
-        let [selected, log] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(log_height)]).areas(inner);
-        (selected, Some(log))
-    };
-
-    let lines = if rows.is_empty() {
-        vec![Line::from("No repositories selected for this Work.".dim())]
-    } else {
-        rows.iter()
-            .enumerate()
-            .map(|(index, repository)| {
-                selected_repo_row(
-                    &repository.name_with_owner,
-                    &repository.meta,
-                    repository.state,
-                    index == state.repo_selected_right && state.repo_focus == RepoPane::Selected,
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: true }),
-        selected_area,
-    );
-
-    if let Some(log_area) = log_area {
-        render_repo_log(frame, log_area, state);
-    }
-}
-
-fn render_repo_log(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let mut lines = vec![section("OPERATION LOG")];
-    if state.repo_logs.is_empty() {
-        lines.push(Line::from("No repository operations yet.".dim()));
-    } else {
-        lines.extend(state.repo_logs.iter().rev().map(|event| {
-            Line::from(vec![
-                trace_badge(event.kind),
-                Span::raw(" "),
-                Span::styled(event.message.clone(), theme::style_muted_text()),
-            ])
-        }));
-    }
-
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
-}
-
 fn render_toast(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -1011,96 +838,6 @@ fn mode_label(mode: TuiMode) -> &'static str {
         TuiMode::Archive => "ARCHIVE",
         TuiMode::Repos => "REPOS",
         TuiMode::Help => "HELP",
-    }
-}
-
-fn focus_label(focused: bool) -> &'static str {
-    if focused {
-        "FOCUS"
-    } else {
-        ""
-    }
-}
-
-fn catalog_repo_row(
-    name: &str,
-    meta: &str,
-    selected_for_work: bool,
-    pending_add: bool,
-    pending_remove: bool,
-    force_remove: bool,
-    selected: bool,
-) -> Line<'static> {
-    let marker = if pending_remove && force_remove {
-        "[!]"
-    } else if pending_remove {
-        "[-]"
-    } else if pending_add || selected_for_work {
-        "[x]"
-    } else {
-        "[ ]"
-    };
-    let status = if pending_add {
-        "ADD"
-    } else if pending_remove && force_remove {
-        "FORCE"
-    } else if pending_remove {
-        "REMOVE"
-    } else if selected_for_work {
-        "SELECTED"
-    } else {
-        ""
-    };
-    let anchor = if selected { ">>" } else { "  " };
-    Line::from(vec![
-        Span::styled(anchor.to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(marker.to_string(), theme::style_muted_text()),
-        Span::raw(" "),
-        Span::styled(name.to_string(), theme::style_primary_text()),
-        Span::raw("  "),
-        Span::styled(meta.to_string(), theme::style_meta_value()),
-        Span::raw(" "),
-        Span::styled(status.to_string(), theme::style_command()),
-    ])
-}
-
-fn selected_repo_row(
-    name: &str,
-    meta: &str,
-    state: RepoSelectionState,
-    selected: bool,
-) -> Line<'static> {
-    let (marker, status) = match state {
-        RepoSelectionState::Attached => ("[x]", "ATTACHED"),
-        RepoSelectionState::PendingAdd => ("[+]", "ADD"),
-        RepoSelectionState::PendingRemove => ("[-]", "REMOVE"),
-        RepoSelectionState::PendingForceRemove => ("[!]", "FORCE"),
-    };
-    let anchor = if selected { ">>" } else { "  " };
-    Line::from(vec![
-        Span::styled(anchor.to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(marker.to_string(), theme::style_muted_text()),
-        Span::raw(" "),
-        Span::styled(name.to_string(), theme::style_primary_text()),
-        Span::raw("  "),
-        Span::styled(meta.to_string(), theme::style_meta_value()),
-        Span::raw(" "),
-        Span::styled(status.to_string(), theme::style_command()),
-    ])
-}
-
-fn repo_activity_message(
-    action: RepoOperation,
-    current: usize,
-    total: usize,
-    repository: &str,
-) -> String {
-    match action {
-        RepoOperation::Add => format!("{current}/{total} Cloning {repository}"),
-        RepoOperation::Remove => format!("{current}/{total} Removing {repository}"),
-        RepoOperation::Refresh => format!("{current}/{total} Refreshing {repository}"),
     }
 }
 
@@ -1533,7 +1270,7 @@ mod tests {
             attached.contains("space selects repos; ! arms force remove; enter applies changes")
         );
 
-        state.repo_filter = "api".to_string();
+        state.repo.filter = "api".to_string();
         let add = render_content(&state, 120, 36);
         assert!(add.contains("find api"));
         assert!(add.contains("openai/api"));
@@ -1604,7 +1341,7 @@ mod tests {
             attached_repositories(),
         );
         state.start_repo_step(
-            crate::tui::state::RepoOperation::Remove,
+            crate::tui::repo_state::RepoOperation::Remove,
             1,
             1,
             "openai/workon",
@@ -1640,7 +1377,7 @@ mod tests {
             attached_repositories(),
         );
         state.start_repo_step(
-            crate::tui::state::RepoOperation::Add,
+            crate::tui::repo_state::RepoOperation::Add,
             1,
             2,
             "openai/api-docs",

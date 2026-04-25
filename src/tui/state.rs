@@ -1,9 +1,10 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
+
+use super::repo_state::{RepoOperation, RepoPickerAction, RepoPickerState, SelectedRepositoryRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TuiState {
@@ -15,26 +16,13 @@ pub(super) struct TuiState {
     pub(super) create_goal: String,
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
-    pub(super) repo_focus: RepoPane,
-    pub(super) repo_work_slug: String,
-    pub(super) repo_work_title: String,
-    pub(super) repo_available: Vec<AvailableRepository>,
-    pub(super) repo_attached: Vec<AttachedRepository>,
-    pub(super) repo_selected: usize,
-    pub(super) repo_selected_right: usize,
-    pub(super) repo_filter: String,
-    pub(super) repo_pending_add: BTreeSet<String>,
-    pub(super) repo_pending_remove: BTreeSet<String>,
-    pub(super) repo_force_remove: bool,
-    pub(super) repo_status: RepoStatus,
-    pub(super) repo_logs: Vec<TraceEvent>,
+    pub(super) repo: RepoPickerState,
     pub(super) root: PathBuf,
     pub(super) current_work_path: Option<PathBuf>,
     pub(super) trace: Vec<TraceEvent>,
     pub(super) trace_visible: bool,
     pub(super) detail_visible: bool,
     pub(super) toast: Option<Toast>,
-    pub(super) activity_frame: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,51 +34,6 @@ pub(super) enum TuiMode {
     Archive,
     Repos,
     Help,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RepoPane {
-    Catalog,
-    Selected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum RepoStatus {
-    Ready,
-    Loading {
-        message: String,
-    },
-    Applying {
-        action: RepoOperation,
-        current: usize,
-        total: usize,
-        repository: String,
-    },
-    Failed {
-        message: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RepoOperation {
-    Add,
-    Remove,
-    Refresh,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RepoSelectionState {
-    Attached,
-    PendingAdd,
-    PendingRemove,
-    PendingForceRemove,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SelectedRepositoryRow {
-    pub(super) name_with_owner: String,
-    pub(super) meta: String,
-    pub(super) state: RepoSelectionState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,26 +94,13 @@ impl TuiState {
             create_goal: String::new(),
             create_intent: 0,
             intents: Vec::new(),
-            repo_focus: RepoPane::Catalog,
-            repo_work_slug: String::new(),
-            repo_work_title: String::new(),
-            repo_available: Vec::new(),
-            repo_attached: Vec::new(),
-            repo_selected: 0,
-            repo_selected_right: 0,
-            repo_filter: String::new(),
-            repo_pending_add: BTreeSet::new(),
-            repo_pending_remove: BTreeSet::new(),
-            repo_force_remove: false,
-            repo_status: RepoStatus::Ready,
-            repo_logs: Vec::new(),
+            repo: RepoPickerState::default(),
             root: PathBuf::new(),
             current_work_path: None,
             trace: Vec::new(),
             trace_visible: false,
             detail_visible: false,
             toast: None,
-            activity_frame: 0,
         }
     }
 
@@ -348,71 +278,31 @@ impl TuiState {
         attached: Vec<AttachedRepository>,
     ) {
         self.mode = TuiMode::Repos;
-        self.repo_focus = RepoPane::Catalog;
-        self.repo_work_slug = work_slug;
-        self.repo_work_title = work_title;
-        self.repo_available = available;
-        self.repo_attached = attached;
-        self.repo_selected = 0;
-        self.repo_selected_right = 0;
-        self.repo_filter.clear();
-        self.repo_pending_add.clear();
-        self.repo_pending_remove.clear();
-        self.repo_force_remove = false;
-        self.repo_status = RepoStatus::Ready;
+        self.repo
+            .enter_context(work_slug, work_title, available, attached);
     }
 
     pub(super) fn enter_repo_loading(&mut self, work_slug: String, work_title: String) {
         self.mode = TuiMode::Repos;
-        self.repo_focus = RepoPane::Catalog;
-        self.repo_work_slug = work_slug;
-        self.repo_work_title = work_title;
-        self.repo_available.clear();
-        self.repo_attached.clear();
-        self.repo_selected = 0;
-        self.repo_selected_right = 0;
-        self.repo_filter.clear();
-        self.repo_pending_add.clear();
-        self.repo_pending_remove.clear();
-        self.repo_force_remove = false;
-        self.repo_logs.clear();
-        self.repo_status = RepoStatus::Loading {
-            message: "Loading GitHub repositories".to_string(),
-        };
-        self.activity_frame = 0;
-        self.push_repo_log(TraceKind::Run, "gh repo list started");
+        self.repo.enter_loading(work_slug, work_title);
     }
 
     pub(super) fn advance_activity_frame(&mut self) {
         if self.is_title_activity_active() {
-            self.activity_frame = self.activity_frame.wrapping_add(1);
+            self.repo.advance_activity_frame();
         }
     }
 
     pub(super) fn is_title_activity_active(&self) -> bool {
-        matches!(self.mode, TuiMode::Repos)
-            && matches!(
-                self.repo_status,
-                RepoStatus::Loading { .. } | RepoStatus::Applying { .. }
-            )
+        matches!(self.mode, TuiMode::Repos) && self.repo.is_activity_active()
     }
 
     pub(super) fn update_attached_repositories(&mut self, attached: Vec<AttachedRepository>) {
-        self.repo_attached = attached;
-        self.repo_pending_add.clear();
-        self.repo_pending_remove.clear();
-        self.repo_force_remove = false;
-        self.repo_status = RepoStatus::Ready;
-        self.clamp_repo_selection();
-        self.clamp_selected_repo_selection();
+        self.repo.update_attached(attached);
     }
 
     pub(super) fn set_repo_failed(&mut self, message: impl Into<String>) {
-        let message = message.into();
-        self.repo_status = RepoStatus::Failed {
-            message: message.clone(),
-        };
-        self.push_repo_log(TraceKind::Err, message);
+        self.repo.set_failed(message);
     }
 
     pub(super) fn start_repo_step(
@@ -422,95 +312,27 @@ impl TuiState {
         total: usize,
         repository: &str,
     ) {
-        self.repo_status = RepoStatus::Applying {
-            action,
-            current,
-            total,
-            repository: repository.to_string(),
-        };
-        self.activity_frame = 0;
-        self.push_repo_log(
-            TraceKind::Run,
-            format!(
-                "{} {current}/{total} {repository}",
-                repo_operation_verb(action)
-            ),
-        );
+        self.repo.start_step(action, current, total, repository);
     }
 
     pub(super) fn push_repo_log(&mut self, kind: TraceKind, message: impl Into<String>) {
-        self.repo_logs.push(TraceEvent {
-            kind,
-            message: message.into(),
-        });
-        if self.repo_logs.len() > 7 {
-            self.repo_logs.remove(0);
-        }
+        self.repo.push_log(kind, message);
     }
 
     pub(super) fn filtered_available_repositories(&self) -> Vec<&AvailableRepository> {
-        let query = self.repo_filter.trim().to_ascii_lowercase();
-        let mut repositories = self
-            .repo_available
-            .iter()
-            .filter(|repository| repository_matches(&repository.name_with_owner, &query))
-            .collect::<Vec<_>>();
-        repositories.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
-        repositories
+        self.repo.filtered_available()
     }
 
     pub(super) fn selected_repository_rows(&self) -> Vec<SelectedRepositoryRow> {
-        let mut rows = self
-            .repo_attached
-            .iter()
-            .map(|repository| SelectedRepositoryRow {
-                name_with_owner: repository.name_with_owner.clone(),
-                meta: repository.branch.clone(),
-                state: if self
-                    .repo_pending_remove
-                    .contains(&repository.name_with_owner)
-                {
-                    if self.repo_force_remove {
-                        RepoSelectionState::PendingForceRemove
-                    } else {
-                        RepoSelectionState::PendingRemove
-                    }
-                } else {
-                    RepoSelectionState::Attached
-                },
-            })
-            .collect::<Vec<_>>();
-
-        let attached = self.attached_repository_names();
-        for repository in &self.repo_available {
-            if self.repo_pending_add.contains(&repository.name_with_owner)
-                && !attached.contains(&repository.name_with_owner)
-            {
-                rows.push(SelectedRepositoryRow {
-                    name_with_owner: repository.name_with_owner.clone(),
-                    meta: format!("default {}", repository.default_branch),
-                    state: RepoSelectionState::PendingAdd,
-                });
-            }
-        }
-
-        rows.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
-        rows
+        self.repo.selected_rows()
     }
 
     pub(super) fn is_repository_selected(&self, name_with_owner: &str) -> bool {
-        if self.repo_pending_remove.contains(name_with_owner) {
-            return false;
-        }
-        self.repo_pending_add.contains(name_with_owner)
-            || self
-                .repo_attached
-                .iter()
-                .any(|repository| repository.name_with_owner == name_with_owner)
+        self.repo.is_selected(name_with_owner)
     }
 
     pub(super) fn pending_repo_change_count(&self) -> usize {
-        self.repo_pending_add.len() + self.repo_pending_remove.len()
+        self.repo.pending_change_count()
     }
 
     pub(super) fn filtered_indices(&self) -> Vec<usize> {
@@ -696,48 +518,27 @@ impl TuiState {
     }
 
     fn handle_repos_key(&mut self, key: KeyEvent) -> TuiAction {
-        match key.code {
-            KeyCode::Esc => {
-                self.repo_pending_add.clear();
-                self.repo_pending_remove.clear();
-                self.repo_force_remove = false;
-                self.repo_filter.clear();
+        match self.repo.handle_key(key) {
+            RepoPickerAction::None => TuiAction::None,
+            RepoPickerAction::Back => {
                 self.restore_queue_mode();
                 TuiAction::None
             }
-            KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
-                self.toggle_repo_focus();
+            RepoPickerAction::Notify(toast) => {
+                self.toast = Some(toast);
                 TuiAction::None
             }
-            KeyCode::Down => {
-                self.move_repo_selection(1);
-                TuiAction::None
-            }
-            KeyCode::Up => {
-                self.move_repo_selection(-1);
-                TuiAction::None
-            }
-            KeyCode::Backspace if !self.repo_filter.is_empty() => {
-                self.repo_filter.pop();
-                self.repo_selected = 0;
-                TuiAction::None
-            }
-            KeyCode::Char(' ') if is_plain_character(key) => {
-                self.toggle_focused_repository();
-                TuiAction::None
-            }
-            KeyCode::Char('!') if is_plain_character(key) => {
-                self.toggle_repo_force_remove();
-                TuiAction::None
-            }
-            KeyCode::Enter => self.repo_apply_action(),
-            KeyCode::Char(character) if is_plain_character(key) => {
-                self.repo_focus = RepoPane::Catalog;
-                self.repo_filter.push(character);
-                self.repo_selected = 0;
-                TuiAction::None
-            }
-            _ => TuiAction::None,
+            RepoPickerAction::Apply {
+                work_slug,
+                add,
+                remove,
+                force_remove,
+            } => TuiAction::ApplyRepoChanges {
+                work_slug,
+                add,
+                remove,
+                force_remove,
+            },
         }
     }
 
@@ -830,166 +631,6 @@ impl TuiState {
             self.selected = count - 1;
         }
     }
-
-    fn toggle_repo_focus(&mut self) {
-        self.repo_focus = match self.repo_focus {
-            RepoPane::Catalog => RepoPane::Selected,
-            RepoPane::Selected => RepoPane::Catalog,
-        };
-    }
-
-    fn move_repo_selection(&mut self, delta: isize) {
-        let count = self.current_repo_count();
-        if count == 0 {
-            self.set_current_repo_selection(0);
-            return;
-        }
-
-        let count = count as isize;
-        let selected = (self.current_repo_selection() as isize + delta).rem_euclid(count) as usize;
-        self.set_current_repo_selection(selected);
-    }
-
-    fn toggle_focused_repository(&mut self) {
-        match self.repo_focus {
-            RepoPane::Catalog => {
-                let Some(name) = self.selected_catalog_repo_name() else {
-                    return;
-                };
-                self.toggle_repository_selection(&name);
-            }
-            RepoPane::Selected => {
-                let Some(name) = self.selected_work_repo_name() else {
-                    return;
-                };
-                self.toggle_repository_selection(&name);
-            }
-        }
-        self.clamp_selected_repo_selection();
-    }
-
-    fn repo_apply_action(&mut self) -> TuiAction {
-        if self.repo_pending_add.is_empty() && self.repo_pending_remove.is_empty() {
-            return TuiAction::None;
-        }
-
-        TuiAction::ApplyRepoChanges {
-            work_slug: self.repo_work_slug.clone(),
-            add: self.repo_pending_add.iter().cloned().collect(),
-            remove: self.repo_pending_remove.iter().cloned().collect(),
-            force_remove: self.repo_force_remove && !self.repo_pending_remove.is_empty(),
-        }
-    }
-
-    fn toggle_repository_selection(&mut self, name: &str) {
-        if self.repo_pending_add.remove(name) {
-            return;
-        }
-
-        let attached = self
-            .repo_attached
-            .iter()
-            .any(|repository| repository.name_with_owner == name);
-        if attached {
-            if !self.repo_pending_remove.insert(name.to_string()) {
-                self.repo_pending_remove.remove(name);
-                if self.repo_pending_remove.is_empty() {
-                    self.repo_force_remove = false;
-                }
-            }
-            return;
-        }
-
-        if self.repo_pending_remove.remove(name) {
-            if self.repo_pending_remove.is_empty() {
-                self.repo_force_remove = false;
-            }
-            return;
-        }
-
-        self.repo_pending_add.insert(name.to_string());
-    }
-
-    fn toggle_repo_force_remove(&mut self) {
-        if self.repo_pending_remove.is_empty() {
-            self.toast = Some(Toast::error(
-                "No removals selected",
-                "Select attached repositories before arming force.",
-            ));
-            return;
-        }
-        self.repo_force_remove = !self.repo_force_remove;
-        self.push_repo_log(
-            if self.repo_force_remove {
-                TraceKind::Warn
-            } else {
-                TraceKind::Run
-            },
-            if self.repo_force_remove {
-                "force remove armed"
-            } else {
-                "force remove disarmed"
-            },
-        );
-    }
-
-    fn selected_catalog_repo_name(&self) -> Option<String> {
-        self.filtered_available_repositories()
-            .get(self.repo_selected)
-            .map(|repository| repository.name_with_owner.clone())
-    }
-
-    fn selected_work_repo_name(&self) -> Option<String> {
-        self.selected_repository_rows()
-            .get(self.repo_selected_right)
-            .map(|repository| repository.name_with_owner.clone())
-    }
-
-    fn current_repo_selection(&self) -> usize {
-        match self.repo_focus {
-            RepoPane::Catalog => self.repo_selected,
-            RepoPane::Selected => self.repo_selected_right,
-        }
-    }
-
-    fn set_current_repo_selection(&mut self, selected: usize) {
-        match self.repo_focus {
-            RepoPane::Catalog => self.repo_selected = selected,
-            RepoPane::Selected => self.repo_selected_right = selected,
-        }
-    }
-
-    fn current_repo_count(&self) -> usize {
-        match self.repo_focus {
-            RepoPane::Catalog => self.filtered_available_repositories().len(),
-            RepoPane::Selected => self.selected_repository_rows().len(),
-        }
-    }
-
-    fn clamp_repo_selection(&mut self) {
-        let count = self.current_repo_count();
-        if count == 0 {
-            self.repo_selected = 0;
-        } else if self.repo_selected >= count {
-            self.repo_selected = count - 1;
-        }
-    }
-
-    fn clamp_selected_repo_selection(&mut self) {
-        let count = self.selected_repository_rows().len();
-        if count == 0 {
-            self.repo_selected_right = 0;
-        } else if self.repo_selected_right >= count {
-            self.repo_selected_right = count - 1;
-        }
-    }
-
-    fn attached_repository_names(&self) -> BTreeSet<String> {
-        self.repo_attached
-            .iter()
-            .map(|repository| repository.name_with_owner.clone())
-            .collect()
-    }
 }
 
 impl Toast {
@@ -1017,18 +658,6 @@ fn work_matches(work: &WorkSummary, query: &str) -> bool {
         || work.goal.to_ascii_lowercase().contains(query)
 }
 
-fn repository_matches(name_with_owner: &str, query: &str) -> bool {
-    query.is_empty() || name_with_owner.to_ascii_lowercase().contains(query)
-}
-
-fn repo_operation_verb(action: RepoOperation) -> &'static str {
-    match action {
-        RepoOperation::Add => "clone",
-        RepoOperation::Remove => "remove",
-        RepoOperation::Refresh => "refresh",
-    }
-}
-
 fn filter_trace_message(filter: &str) -> String {
     if filter.is_empty() {
         "filter cleared".to_string()
@@ -1037,7 +666,7 @@ fn filter_trace_message(filter: &str) -> String {
     }
 }
 
-fn is_plain_character(key: KeyEvent) -> bool {
+pub(super) fn is_plain_character(key: KeyEvent) -> bool {
     !key.modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
 }
@@ -1052,8 +681,9 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{RepoPane, RepoStatus, Toast, TraceKind, TuiAction, TuiMode, TuiState};
+    use super::{Toast, TraceKind, TuiAction, TuiMode, TuiState};
     use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
+    use crate::tui::repo_state::{RepoPane, RepoStatus};
 
     #[test]
     fn filters_work_by_title_slug_intent_and_goal() {
@@ -1333,9 +963,9 @@ mod tests {
             TuiAction::OpenRepos("review-cache-invalidation-pr".to_string())
         );
         assert_eq!(state.mode, TuiMode::Repos);
-        assert_eq!(state.repo_focus, RepoPane::Catalog);
+        assert_eq!(state.repo.focus, RepoPane::Catalog);
         assert_eq!(
-            state.repo_status,
+            state.repo.status,
             RepoStatus::Loading {
                 message: "Loading GitHub repositories".to_string()
             }
@@ -1379,7 +1009,7 @@ mod tests {
             attached_repositories(),
         );
 
-        assert_eq!(state.repo_focus, RepoPane::Catalog);
+        assert_eq!(state.repo.focus, RepoPane::Catalog);
         state.handle_key(key(KeyCode::Char(' ')));
         state.handle_key(key(KeyCode::Down));
         state.handle_key(key(KeyCode::Char(' ')));
@@ -1404,12 +1034,12 @@ mod tests {
             available_repositories(),
             attached_repositories(),
         );
-        state.repo_focus = RepoPane::Selected;
+        state.repo.focus = RepoPane::Selected;
 
         state.handle_key(key(KeyCode::Char(' ')));
         state.handle_key(key(KeyCode::Char('!')));
 
-        assert!(state.repo_force_remove);
+        assert!(state.repo.force_remove);
         assert_eq!(
             state.handle_key(key(KeyCode::Enter)),
             TuiAction::ApplyRepoChanges {

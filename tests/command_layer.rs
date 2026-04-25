@@ -389,6 +389,43 @@ fn add_work_repositories_does_not_duplicate_existing_repository_context() {
 }
 
 #[test]
+fn add_work_repositories_persists_successes_before_later_batch_failure() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("add_work_repositories_persists_partial_success");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let previous_switch_failure = std::env::var_os("WORKON_FAKE_WT_SWITCH_FAIL_REPO");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+    std::env::set_var("WORKON_FAKE_WT_SWITCH_FAIL_REPO", "openai__broken");
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Partial add repository context");
+
+    let error = app
+        .execute(Command::AddWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string(), "openai/broken".to_string()],
+        })
+        .expect_err("second repo add should fail");
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+    restore_env("WORKON_FAKE_WT_SWITCH_FAIL_REPO", previous_switch_failure);
+
+    assert!(error.to_string().contains("Cannot switch worktree"));
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert!(metadata.contains("\"name_with_owner\": \"openai/workon\""));
+    assert!(!metadata.contains("\"name_with_owner\": \"openai/broken\""));
+
+    let agents =
+        fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    assert!(agents.contains("- openai/workon"));
+    assert!(!agents.contains("- openai/broken"));
+}
+
+#[test]
 fn remove_work_repositories_uses_worktrunk_and_updates_context_files() {
     let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
     let root = temp_root("remove_work_repositories_uses_worktrunk");
@@ -435,6 +472,49 @@ fn remove_work_repositories_uses_worktrunk_and_updates_context_files() {
     assert!(log.contains(
         "remove --no-delete-branch --foreground --format json workon/remove-repository-context"
     ));
+}
+
+#[test]
+fn remove_work_repositories_persists_successes_before_later_batch_failure() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("remove_work_repositories_persists_partial_success");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let previous_remove_failure = std::env::var_os("WORKON_FAKE_WT_REMOVE_FAIL_REPO");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Partial remove repository context");
+    app.execute(Command::AddWorkRepositories {
+        query: work.slug.clone(),
+        repositories: vec!["openai/workon".to_string(), "openai/api".to_string()],
+    })
+    .expect("repo add should succeed");
+
+    std::env::set_var("WORKON_FAKE_WT_REMOVE_FAIL_REPO", "api.git");
+    let error = app
+        .execute(Command::RemoveWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string(), "openai/api".to_string()],
+            force: false,
+        })
+        .expect_err("second repo remove should fail");
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+    restore_env("WORKON_FAKE_WT_REMOVE_FAIL_REPO", previous_remove_failure);
+
+    assert!(error.to_string().contains("Cannot remove worktree"));
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert!(!metadata.contains("\"name_with_owner\": \"openai/workon\""));
+    assert!(metadata.contains("\"name_with_owner\": \"openai/api\""));
+
+    let agents =
+        fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    assert!(!agents.contains("- openai/workon"));
+    assert!(agents.contains("- openai/api"));
 }
 
 #[test]
@@ -628,11 +708,27 @@ if [ "$3" = "remove" ]; then
       force=1
     fi
   done
+  if [ -n "$WORKON_FAKE_WT_REMOVE_FAIL_REPO" ] && [ -z "$force" ]; then
+    case "$2" in
+      *"$WORKON_FAKE_WT_REMOVE_FAIL_REPO"*)
+        printf 'Cannot remove worktree: workon/dirty-repository-context has uncommitted changes\n' >&2
+        exit 7
+        ;;
+    esac
+  fi
   if [ -n "$WORKON_FAKE_WT_REMOVE_FAIL" ] && [ -z "$force" ]; then
     printf 'Cannot remove worktree: workon/dirty-repository-context has uncommitted changes\n' >&2
     exit 7
   fi
   exit 0
+fi
+if [ -n "$WORKON_FAKE_WT_SWITCH_FAIL_REPO" ]; then
+  case "$WORKTRUNK_WORKTREE_PATH" in
+    *"$WORKON_FAKE_WT_SWITCH_FAIL_REPO"*)
+      printf 'Cannot switch worktree: repository cache is unavailable\n' >&2
+      exit 8
+      ;;
+  esac
 fi
 mkdir -p "$WORKTRUNK_WORKTREE_PATH"
 printf '{"action":"created","branch":"%s","path":"%s","created_branch":true,"base_branch":"main"}\n' "$5" "$WORKTRUNK_WORKTREE_PATH"

@@ -1,5 +1,8 @@
 mod animation;
 mod components;
+mod repo_jobs;
+mod repo_state;
+mod repo_ui;
 mod state;
 mod theme;
 mod ui;
@@ -19,7 +22,12 @@ use crate::app::{App, Command, CommandOutput};
 use crate::error::{Result, WorkonError};
 
 use self::animation::{input_poll_timeout, AnimationRuntime, AnimationSnapshot};
-use self::state::{RepoOperation, Toast, TraceKind, TuiAction, TuiMode, TuiState};
+use self::repo_jobs::{
+    run_repo_batch, RepoBatchDelegate, RepoBatchOutcome, RepoChangeRequest, RepoCommandResult,
+    RepoStep, RepoStepReport,
+};
+use self::repo_state::RepoOperation;
+use self::state::{Toast, TraceKind, TuiAction, TuiMode, TuiState};
 use self::ui::render_for_animation;
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 28;
@@ -234,26 +242,6 @@ struct RepoLoadJob {
     receiver: Receiver<Result<RepoContextData>>,
 }
 
-struct RepoChangeRequest {
-    work_slug: String,
-    add: Vec<String>,
-    remove: Vec<String>,
-    force_remove: bool,
-}
-
-#[derive(Debug, Default)]
-struct RepoBatchOutcome {
-    successes: usize,
-    failures: Vec<String>,
-    cancelled: bool,
-    skipped: usize,
-}
-
-struct RepoCommandResult {
-    result: Result<CommandOutput>,
-    cancel_requested: bool,
-}
-
 fn spawn_repo_load(app: App, work_slug: String) -> RepoLoadJob {
     let (sender, receiver) = mpsc::channel();
     let worker_slug = work_slug.clone();
@@ -280,7 +268,7 @@ fn poll_repo_load_job(job: &mut Option<RepoLoadJob>, state: &mut TuiState) {
         }),
     };
 
-    if state.mode == TuiMode::Repos && state.repo_work_slug == active_job.work_slug {
+    if state.mode == TuiMode::Repos && state.repo.work_slug == active_job.work_slug {
         apply_repo_load_result(state, result);
     }
     *job = None;
@@ -356,83 +344,35 @@ fn apply_repo_changes(
     animation: &mut AnimationRuntime,
     request: &RepoChangeRequest,
 ) -> Result<RepoBatchOutcome> {
-    let mut outcome = RepoBatchOutcome::default();
+    let mut delegate = TuiRepoBatchDelegate {
+        app,
+        terminal,
+        state,
+        animation,
+    };
+    run_repo_batch(request.clone(), &mut delegate)
+}
 
-    let total = request.add.len() + request.remove.len();
-    let mut current = 0;
-    let mut cancel_requested = false;
+struct TuiRepoBatchDelegate<'a> {
+    app: &'a App,
+    terminal: &'a mut Terminal<CrosstermBackend<Stdout>>,
+    state: &'a mut TuiState,
+    animation: &'a mut AnimationRuntime,
+}
 
-    for repository in &request.add {
-        current += 1;
-        state.start_repo_step(RepoOperation::Add, current, total, repository);
-        draw_frame(terminal, state, animation, Duration::ZERO)?;
-        let receiver = spawn_repo_command(
-            app.clone(),
-            Command::AddWorkRepositories {
-                query: request.work_slug.clone(),
-                repositories: vec![repository.clone()],
-            },
-        );
-        let command_result = wait_for_repo_command(receiver, terminal, state, animation)?;
-        cancel_requested |= command_result.cancel_requested;
-        match command_result.result {
-            Ok(_) => {
-                outcome.successes += 1;
-                state.push_repo_log(TraceKind::Sync, format!("attached {repository}"));
-            }
-            Err(error) => {
-                let failure = format!("{repository}: {error}");
-                outcome.failures.push(failure.clone());
-                state.push_repo_log(TraceKind::Err, failure);
-            }
-        }
-        draw_frame(terminal, state, animation, Duration::ZERO)?;
-        if cancel_requested {
-            outcome.cancelled = true;
-            outcome.skipped = total.saturating_sub(current);
-            return Ok(outcome);
-        }
+impl RepoBatchDelegate for TuiRepoBatchDelegate<'_> {
+    fn run_step(&mut self, step: &RepoStep) -> Result<RepoCommandResult> {
+        self.state
+            .start_repo_step(step.operation, step.current, step.total, &step.repository);
+        draw_frame(self.terminal, self.state, self.animation, Duration::ZERO)?;
+        let receiver = spawn_repo_command(self.app.clone(), step.command.clone());
+        wait_for_repo_command(receiver, self.terminal, self.state, self.animation)
     }
 
-    for repository in &request.remove {
-        current += 1;
-        state.start_repo_step(RepoOperation::Remove, current, total, repository);
-        draw_frame(terminal, state, animation, Duration::ZERO)?;
-        let receiver = spawn_repo_command(
-            app.clone(),
-            Command::RemoveWorkRepositories {
-                query: request.work_slug.clone(),
-                repositories: vec![repository.clone()],
-                force: request.force_remove,
-            },
-        );
-        let command_result = wait_for_repo_command(receiver, terminal, state, animation)?;
-        cancel_requested |= command_result.cancel_requested;
-        match command_result.result {
-            Ok(_) => {
-                outcome.successes += 1;
-                let verb = if request.force_remove {
-                    "force removed"
-                } else {
-                    "removed"
-                };
-                state.push_repo_log(TraceKind::Sync, format!("{verb} {repository}"));
-            }
-            Err(error) => {
-                let failure = format!("{repository}: {error}");
-                outcome.failures.push(failure.clone());
-                state.push_repo_log(TraceKind::Err, failure);
-            }
-        }
-        draw_frame(terminal, state, animation, Duration::ZERO)?;
-        if cancel_requested {
-            outcome.cancelled = true;
-            outcome.skipped = total.saturating_sub(current);
-            return Ok(outcome);
-        }
+    fn record_report(&mut self, report: RepoStepReport) -> Result<()> {
+        self.state.push_repo_log(report.kind, report.message);
+        draw_frame(self.terminal, self.state, self.animation, Duration::ZERO)
     }
-
-    Ok(outcome)
 }
 
 fn spawn_repo_command(app: App, command: Command) -> Receiver<Result<CommandOutput>> {
