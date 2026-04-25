@@ -8,6 +8,8 @@ AI agents are replaceable. Context is not.
 
 Workon switches folders through a small shell function. No subshell.
 
+By default, Workon stores Work in `~/.workon`. Set `WORKON_ROOT=/path/to/root` to use another root.
+
 Common development commands:
 
 ```sh
@@ -47,7 +49,7 @@ Commands are shortcuts. Natural text starts work. The engineer selects the inten
 A started unit of engineering intent. Each Work gets a folder:
 
 ```text
-.workon/work/<title>/
+~/.workon/work/<title>/
 ```
 
 The folder holds agent files, notes, outputs, repos, evidence, and artifacts. Work can be switched, resumed, changed, and closed.
@@ -90,12 +92,12 @@ Expected flow:
 ```text
 intent selected: investigate
 work created: <generated-title>
-folder created: .workon/work/<title>/
+folder created: ~/.workon/work/<title>/
 created: AGENTS.md
 created: CLAUDE.md
 goal written: original input
 instructions written: investigate, collect evidence, cite sources, keep caveats visible
-cwd changed: .workon/work/<title>/
+cwd changed: ~/.workon/work/<title>/
 ```
 
 To attach repos or change context:
@@ -175,7 +177,7 @@ Archive the best matching active Work.
 wo archive billing
 ```
 
-Workon moves the Work folder from `.workon/work/` to `.workon/archive/`.
+Workon moves the Work folder from `~/.workon/work/` to `~/.workon/archive/`.
 Archived Works no longer appear in `wo` and cannot be opened by normal Work queries.
 
 ### `wo ctx`

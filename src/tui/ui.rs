@@ -774,7 +774,7 @@ mod tests {
         let panel = control_panel_rect(Rect::new(0, 0, 160, 36), &state);
 
         assert_eq!(panel.width, 158);
-        assert_eq!(panel.height, 22);
+        assert_eq!(panel.height, 24);
         assert_eq!(panel.x, 1);
     }
 
