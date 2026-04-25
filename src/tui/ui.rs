@@ -36,7 +36,7 @@ pub(super) fn render_for_animation(frame: &mut Frame<'_>, state: &TuiState) -> R
 fn render_inner(frame: &mut Frame<'_>, state: &TuiState, mut regions: Option<&mut RenderRegions>) {
     let area = frame.area();
     let dialog = control_panel_rect(area, state);
-    let block = panel_block_with_activity("WORKON // CONTROL", true, title_activity(state));
+    let block = panel_block_with_activity(control_title(state), true, title_activity(state));
     let inner = block.inner(dialog);
     frame.render_widget(Clear, dialog);
     frame.render_widget(block, dialog);
@@ -50,15 +50,26 @@ fn render_inner(frame: &mut Frame<'_>, state: &TuiState, mut regions: Option<&mu
     render_overlay(frame, area, state, &mut regions);
 }
 
+fn control_title(state: &TuiState) -> &'static str {
+    if state.mode == TuiMode::Repos {
+        "WORKON // CONTROL // REPO"
+    } else {
+        "WORKON // CONTROL"
+    }
+}
+
 fn title_activity(state: &TuiState) -> Option<TitleActivity> {
     match &state.repo_status {
         RepoStatus::Loading { message } if state.mode == TuiMode::Repos => Some(
             TitleActivity::loading(message.clone(), state.activity_frame),
         ),
         RepoStatus::Applying {
-            action, repository, ..
+            action,
+            current,
+            total,
+            repository,
         } if state.mode == TuiMode::Repos => Some(TitleActivity::loading(
-            repo_activity_message(*action, repository),
+            repo_activity_message(*action, *current, *total, repository),
             state.activity_frame,
         )),
         _ => None,
@@ -655,34 +666,25 @@ fn render_repo_context(
     regions: &mut Option<&mut RenderRegions>,
 ) {
     mark_region(regions, AnimationTarget::WorkQueue, area);
-    let block = panel_block_with_title(repo_context_title(state), true);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
 
-    let status_height = 2;
-    let [status, body] =
-        Layout::vertical([Constraint::Length(status_height), Constraint::Fill(1)]).areas(inner);
-    render_repo_status(frame, status, state);
-
-    if body.width < 72 {
+    if area.width < 72 {
         let [catalog, selected] =
-            Layout::vertical([Constraint::Percentage(55), Constraint::Fill(1)]).areas(body);
+            Layout::vertical([Constraint::Percentage(55), Constraint::Fill(1)]).areas(area);
         render_repo_catalog_panel(frame, catalog, state);
         render_repo_selected_panel(frame, selected, state);
     } else {
         let [catalog, selected] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Fill(1)]).areas(body);
+            Layout::horizontal([Constraint::Percentage(60), Constraint::Fill(1)]).areas(area);
         render_repo_catalog_panel(frame, catalog, state);
         render_repo_selected_panel(frame, selected, state);
     }
 }
 
-fn render_repo_status(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let lines = vec![match &state.repo_status {
+fn repo_status_line(state: &TuiState) -> Option<Line<'static>> {
+    Some(match &state.repo_status {
+        RepoStatus::Ready if state.pending_repo_change_count() == 0 => return None,
         RepoStatus::Ready => {
-            if state.pending_repo_change_count() == 0 {
-                Line::from("space selects repos; ! arms force remove; enter applies changes".dim())
-            } else if state.repo_force_remove && !state.repo_pending_remove.is_empty() {
+            if state.repo_force_remove && !state.repo_pending_remove.is_empty() {
                 Line::from(vec![
                     status_badge("FORCE", theme::style_status_warn()),
                     Span::raw(" "),
@@ -692,37 +694,17 @@ fn render_repo_status(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
                     ),
                 ])
             } else {
-                Line::from(vec![
-                    status_badge("READY", theme::style_status_ok()),
-                    Span::raw(" "),
-                    Span::styled(
-                        "enter apply pending repository changes",
-                        theme::style_command(),
-                    ),
-                ])
+                return None;
             }
         }
         RepoStatus::Loading { .. } => Line::from("gh repo list --no-archived".dim()),
-        RepoStatus::Applying {
-            action,
-            current,
-            total,
-            repository,
-        } => Line::from(vec![
-            status_badge(repo_operation_label(*action), theme::style_status_run()),
-            Span::raw(" "),
-            Span::styled(format!("{current}/{total}"), theme::style_command()),
-            Span::raw(" "),
-            Span::styled(repository.clone(), theme::style_primary_text()),
-        ]),
+        RepoStatus::Applying { .. } => return None,
         RepoStatus::Failed { message } => Line::from(vec![
             status_badge("ERR", theme::style_status_error()),
             Span::raw(" "),
             Span::styled(message.clone(), theme::style_primary_text()),
         ]),
-    }];
-
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
+    })
 }
 
 fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
@@ -739,7 +721,13 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
         ),
     ]);
     let block = panel_block_with_title(title, state.repo_focus == RepoPane::Catalog);
-    let mut lines = Vec::new();
+    let mut lines = vec![Line::from(
+        "space selects repos; ! arms force remove; enter applies changes".dim(),
+    )];
+
+    if let Some(status) = repo_status_line(state) {
+        lines.push(status);
+    }
 
     if !state.repo_filter.is_empty() {
         lines.push(Line::from(vec![
@@ -800,7 +788,7 @@ fn render_repo_selected_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiStat
         (selected, Some(log))
     };
 
-    let mut lines = if rows.is_empty() {
+    let lines = if rows.is_empty() {
         vec![Line::from("No repositories selected for this Work.".dim())]
     } else {
         rows.iter()
@@ -815,20 +803,6 @@ fn render_repo_selected_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiStat
             })
             .collect::<Vec<_>>()
     };
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        key("tab"),
-        "panel ".dim(),
-        key("space"),
-        "select/remove ".dim(),
-        key("!"),
-        "force ".dim(),
-        key("enter"),
-        "apply ".dim(),
-        key("esc"),
-        "back".dim(),
-    ]));
 
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: true }),
@@ -1040,16 +1014,6 @@ fn mode_label(mode: TuiMode) -> &'static str {
     }
 }
 
-fn repo_context_title(state: &TuiState) -> Line<'static> {
-    Line::from(vec![
-        Span::raw(" "),
-        Span::styled("REPO CONTEXT", theme::style_panel_title()),
-        Span::styled(" ", theme::style_panel_title()),
-        Span::styled(state.repo_work_title.clone(), theme::style_command()),
-        Span::raw(" "),
-    ])
-}
-
 fn focus_label(focused: bool) -> &'static str {
     if focused {
         "FOCUS"
@@ -1127,19 +1091,16 @@ fn selected_repo_row(
     ])
 }
 
-fn repo_operation_label(action: RepoOperation) -> &'static str {
+fn repo_activity_message(
+    action: RepoOperation,
+    current: usize,
+    total: usize,
+    repository: &str,
+) -> String {
     match action {
-        RepoOperation::Add => "CLONE",
-        RepoOperation::Remove => "REMOVE",
-        RepoOperation::Refresh => "SYNC",
-    }
-}
-
-fn repo_activity_message(action: RepoOperation, repository: &str) -> String {
-    match action {
-        RepoOperation::Add => format!("Cloning {repository}"),
-        RepoOperation::Remove => format!("Removing {repository}"),
-        RepoOperation::Refresh => format!("Refreshing {repository}"),
+        RepoOperation::Add => format!("{current}/{total} Cloning {repository}"),
+        RepoOperation::Remove => format!("{current}/{total} Removing {repository}"),
+        RepoOperation::Refresh => format!("{current}/{total} Refreshing {repository}"),
     }
 }
 
@@ -1563,13 +1524,14 @@ mod tests {
         );
 
         let attached = render_content(&state, 120, 36);
-        assert!(attached.contains("REPO CONTEXT"));
-        assert!(attached.contains("Billing retry audit"));
+        assert!(attached.contains("WORKON // CONTROL // REPO"));
+        assert!(!attached.contains("REPO CONTEXT"));
         assert!(attached.contains("GITHUB REPOSITORIES"));
         assert!(attached.contains("SELECTED FOR WORK"));
         assert!(attached.contains("openai/workon"));
-        assert!(attached.contains("space select"));
-        assert!(attached.contains("enter apply"));
+        assert!(
+            attached.contains("space selects repos; ! arms force remove; enter applies changes")
+        );
 
         state.repo_filter = "api".to_string();
         let add = render_content(&state, 120, 36);
@@ -1590,7 +1552,7 @@ mod tests {
         let content = render_content(&state, 120, 36);
         let title = content
             .lines()
-            .find(|line| line.contains("WORKON // CONTROL"))
+            .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
 
         assert!(title.contains("Loading GitHub repositories"));
@@ -1612,11 +1574,11 @@ mod tests {
 
         let first_title = first
             .lines()
-            .find(|line| line.contains("WORKON // CONTROL"))
+            .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
         let second_title = second
             .lines()
-            .find(|line| line.contains("WORKON // CONTROL"))
+            .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
 
         assert_ne!(first_title, second_title);
@@ -1654,18 +1616,18 @@ mod tests {
 
         let first_title = first
             .lines()
-            .find(|line| line.contains("WORKON // CONTROL"))
+            .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
         let second_title = second
             .lines()
-            .find(|line| line.contains("WORKON // CONTROL"))
+            .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
 
         assert_ne!(first_title, second_title);
         assert!(first_title.contains("SYNC"));
         assert!(second_title.contains("SYNC"));
-        assert!(first_title.contains("Removing openai/workon"));
-        assert!(second_title.contains("Removing openai/workon"));
+        assert!(first_title.contains("1/1 Removing openai/workon"));
+        assert!(second_title.contains("1/1 Removing openai/workon"));
     }
 
     #[test]
@@ -1690,9 +1652,10 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("CLONE"));
         assert!(content.contains("1/2"));
         assert!(content.contains("openai/api-docs"));
+        assert!(!content.contains("CLONE"));
+        assert!(!content.contains("cancel remaining"));
         assert!(content.contains("OPERATION LOG"));
         assert!(content.contains("attached openai/api-docs"));
     }

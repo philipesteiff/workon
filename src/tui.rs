@@ -10,7 +10,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
@@ -245,6 +245,13 @@ struct RepoChangeRequest {
 struct RepoBatchOutcome {
     successes: usize,
     failures: Vec<String>,
+    cancelled: bool,
+    skipped: usize,
+}
+
+struct RepoCommandResult {
+    result: Result<CommandOutput>,
+    cancel_requested: bool,
 }
 
 fn spawn_repo_load(app: App, work_slug: String) -> RepoLoadJob {
@@ -353,6 +360,7 @@ fn apply_repo_changes(
 
     let total = request.add.len() + request.remove.len();
     let mut current = 0;
+    let mut cancel_requested = false;
 
     for repository in &request.add {
         current += 1;
@@ -365,7 +373,9 @@ fn apply_repo_changes(
                 repositories: vec![repository.clone()],
             },
         );
-        match wait_for_repo_command(receiver, terminal, state, animation)? {
+        let command_result = wait_for_repo_command(receiver, terminal, state, animation)?;
+        cancel_requested |= command_result.cancel_requested;
+        match command_result.result {
             Ok(_) => {
                 outcome.successes += 1;
                 state.push_repo_log(TraceKind::Sync, format!("attached {repository}"));
@@ -377,6 +387,11 @@ fn apply_repo_changes(
             }
         }
         draw_frame(terminal, state, animation, Duration::ZERO)?;
+        if cancel_requested {
+            outcome.cancelled = true;
+            outcome.skipped = total.saturating_sub(current);
+            return Ok(outcome);
+        }
     }
 
     for repository in &request.remove {
@@ -391,7 +406,9 @@ fn apply_repo_changes(
                 force: request.force_remove,
             },
         );
-        match wait_for_repo_command(receiver, terminal, state, animation)? {
+        let command_result = wait_for_repo_command(receiver, terminal, state, animation)?;
+        cancel_requested |= command_result.cancel_requested;
+        match command_result.result {
             Ok(_) => {
                 outcome.successes += 1;
                 let verb = if request.force_remove {
@@ -408,6 +425,11 @@ fn apply_repo_changes(
             }
         }
         draw_frame(terminal, state, animation, Duration::ZERO)?;
+        if cancel_requested {
+            outcome.cancelled = true;
+            outcome.skipped = total.saturating_sub(current);
+            return Ok(outcome);
+        }
     }
 
     Ok(outcome)
@@ -426,11 +448,28 @@ fn wait_for_repo_command(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     state: &mut TuiState,
     animation: &mut AnimationRuntime,
-) -> Result<Result<CommandOutput>> {
+) -> Result<RepoCommandResult> {
+    let mut cancel_requested = false;
     loop {
         match receiver.recv_timeout(REPO_OPERATION_ANIMATION_INTERVAL) {
-            Ok(result) => return Ok(result),
+            Ok(result) => {
+                return Ok(RepoCommandResult {
+                    result,
+                    cancel_requested,
+                })
+            }
             Err(RecvTimeoutError::Timeout) => {
+                if !cancel_requested && escape_pressed()? {
+                    cancel_requested = true;
+                    state.push_repo_log(
+                        TraceKind::Warn,
+                        "cancel requested; finishing current repository operation",
+                    );
+                    state.toast = Some(Toast::info(
+                        "Repository cancel requested",
+                        "Current repository operation will finish first.",
+                    ));
+                }
                 state.advance_activity_frame();
                 draw_frame(
                     terminal,
@@ -440,16 +479,46 @@ fn wait_for_repo_command(
                 )?;
             }
             Err(RecvTimeoutError::Disconnected) => {
-                return Ok(Err(WorkonError::RepositoryContext {
-                    message: "repository operation stopped before returning a result".to_string(),
-                }));
+                return Ok(RepoCommandResult {
+                    result: Err(WorkonError::RepositoryContext {
+                        message: "repository operation stopped before returning a result"
+                            .to_string(),
+                    }),
+                    cancel_requested,
+                });
             }
         }
     }
 }
 
+fn escape_pressed() -> Result<bool> {
+    while event::poll(Duration::ZERO)? {
+        if matches!(event::read()?, Event::Key(key) if key.code == KeyCode::Esc) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn show_repo_batch_outcome(state: &mut TuiState, outcome: RepoBatchOutcome) {
-    if outcome.failures.is_empty() {
+    if outcome.cancelled {
+        state.toast = Some(Toast::info(
+            "Repository context cancelled",
+            &format!(
+                "{} applied, {} failed, {} skipped.",
+                outcome.successes,
+                outcome.failures.len(),
+                outcome.skipped
+            ),
+        ));
+        state.push_trace(
+            TraceKind::Warn,
+            format!("repo context cancelled: {} skipped", outcome.skipped),
+        );
+        for failure in outcome.failures {
+            state.push_trace(TraceKind::Err, failure);
+        }
+    } else if outcome.failures.is_empty() {
         state.toast = Some(Toast::info(
             "Repository context updated",
             &format!("{} repository changes applied.", outcome.successes),
@@ -513,6 +582,8 @@ mod tests {
                 failures: vec![
                     "example/private-repo: Cannot remove worktree: workon/workon-improve-creation-and-intent has uncommitted changes\nrepository context command failed: wt -C /cache remove".to_string(),
                 ],
+                cancelled: false,
+                skipped: 0,
             },
         );
 
@@ -523,6 +594,25 @@ mod tests {
             "example/private-repo: Cannot remove worktree: workon/workon-improve-creation-and-intent has uncommitted changes"
         );
         assert_eq!(state.trace[0].kind, TraceKind::Err);
+    }
+
+    #[test]
+    fn repo_batch_cancel_toast_reports_skipped_repositories() {
+        let mut state = TuiState::new(work_list());
+        show_repo_batch_outcome(
+            &mut state,
+            RepoBatchOutcome {
+                successes: 1,
+                failures: Vec::new(),
+                cancelled: true,
+                skipped: 2,
+            },
+        );
+
+        let toast = state.toast.expect("cancel toast should be shown");
+        assert_eq!(toast.title, "Repository context cancelled");
+        assert_eq!(toast.message, "1 applied, 0 failed, 2 skipped.");
+        assert_eq!(state.trace[0].kind, TraceKind::Warn);
     }
 
     #[test]
