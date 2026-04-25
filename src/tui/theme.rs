@@ -3,6 +3,7 @@ use ratatui::style::{Color, Modifier, Style};
 const AMBER: Color = Color::Rgb(255, 176, 64);
 const ORANGE: Color = Color::Rgb(255, 140, 32);
 const TARGET_BG: Color = Color::Rgb(92, 58, 32);
+const READY_AMBER: Color = Color::Rgb(190, 130, 70);
 const DIM_AMBER: Color = Color::Rgb(160, 104, 48);
 const BORDER_AMBER: Color = Color::Rgb(104, 72, 40);
 const OK_AMBER: Color = Color::Rgb(220, 180, 84);
@@ -11,8 +12,20 @@ pub(super) fn style_primary_text() -> Style {
     Style::new().fg(AMBER)
 }
 
+pub(super) fn style_task_title() -> Style {
+    Style::new().fg(AMBER).add_modifier(Modifier::BOLD)
+}
+
 pub(super) fn style_muted_text() -> Style {
     Style::new().fg(DIM_AMBER)
+}
+
+pub(super) fn style_meta_key() -> Style {
+    Style::new().fg(BORDER_AMBER)
+}
+
+pub(super) fn style_meta_value() -> Style {
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_panel_title() -> Style {
@@ -73,6 +86,20 @@ pub(super) fn style_current_badge() -> Style {
         .fg(Color::Black)
         .bg(OK_AMBER)
         .add_modifier(Modifier::BOLD)
+}
+
+pub(super) fn style_current_meta_label() -> Style {
+    Style::new()
+        .fg(DIM_AMBER)
+        .add_modifier(Modifier::UNDERLINED)
+}
+
+pub(super) fn style_current_intent_value() -> Style {
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
+}
+
+pub(super) fn style_ready_badge() -> Style {
+    Style::new().fg(READY_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_active() -> Style {
