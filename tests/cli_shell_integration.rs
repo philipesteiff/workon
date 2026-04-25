@@ -287,6 +287,8 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
     let list = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
         .env("WORKON_ROOT", root.path())
+        .env("PATH", &fake_path)
+        .env("WORKON_FAKE_LOG", &log_path)
         .args(["repos", "list", "repository-context-cli-smoke"])
         .output()
         .expect("wo repos list should run");
@@ -662,6 +664,7 @@ fn fake_git_script() -> &'static str {
     r#"#!/bin/sh
 printf 'git %s\n' "$*" >> "$WORKON_FAKE_LOG"
 if [ "$1" = "-C" ]; then
+  cwd="$2"
   shift 2
 fi
 if [ "$1" = "fetch" ]; then
@@ -671,10 +674,17 @@ if [ "$1" = "branch" ] && [ "$2" = "--list" ]; then
   exit 0
 fi
 if [ "$1" = "branch" ]; then
+  if [ "$2" = "--show-current" ]; then
+    if [ -n "$cwd" ] && [ -f "$cwd/.workon-current-branch" ]; then
+      cat "$cwd/.workon-current-branch"
+    fi
+    exit 0
+  fi
   exit 0
 fi
 if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   mkdir -p "$3"
+  printf '%s\n' "$4" > "$3/.workon-current-branch"
   exit 0
 fi
 if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then

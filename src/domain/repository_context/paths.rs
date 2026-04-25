@@ -37,6 +37,14 @@ pub(crate) fn worktree_path(work: &OpenedWork, name_with_owner: &str) -> Result<
     Ok(work.path.join("repos").join(format!("{owner}__{repo}")))
 }
 
+pub(crate) fn repository_name_from_worktree_dir(folder_name: &str) -> Option<String> {
+    let (owner, repo) = folder_name.split_once("__")?;
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
+}
+
 pub(crate) fn work_branch(work: &OpenedWork) -> String {
     format!("workon/{}", work.slug)
 }
@@ -61,7 +69,9 @@ fn invalid_repository(repository: &str) -> WorkonError {
 mod tests {
     use std::path::Path;
 
-    use super::{normalize_requested_repositories, repository_cache_path};
+    use super::{
+        normalize_requested_repositories, repository_cache_path, repository_name_from_worktree_dir,
+    };
 
     #[test]
     fn normalizes_requested_repositories_without_duplicates() {
@@ -91,6 +101,18 @@ mod tests {
         assert_eq!(
             path,
             Path::new("/tmp/workon/.workon/repo-cache/github.com/openai/workon.git")
+        );
+    }
+
+    #[test]
+    fn reconstructs_repository_name_from_worktree_folder() {
+        assert_eq!(
+            repository_name_from_worktree_dir("openai__workon"),
+            Some("openai/workon".to_string())
+        );
+        assert_eq!(
+            repository_name_from_worktree_dir("not-a-worktree-name"),
+            None
         );
     }
 }

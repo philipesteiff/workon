@@ -18,8 +18,10 @@ pub(crate) fn list_available() -> Result<CommandOutput> {
 }
 
 pub(crate) fn list_attached(store: &WorkStore, query: &str) -> Result<CommandOutput> {
+    let runner = StdProcessRunner;
+    let inspector = GitWorktree::new(&runner);
     let metadata = JsonRepoMetadataStore;
-    RepositoryContextService::attached(store, &metadata, query)
+    RepositoryContextService::attached(store, &metadata, &inspector, query)
 }
 
 pub(crate) fn add(
@@ -38,6 +40,7 @@ pub(crate) fn add(
         store,
         &github,
         &cache,
+        &worktrees,
         &worktrees,
         &metadata,
         &context_files,
@@ -63,6 +66,7 @@ pub(crate) fn remove(
         store,
         &github,
         &cache,
+        &worktrees,
         &worktrees,
         &metadata,
         &context_files,

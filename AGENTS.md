@@ -75,7 +75,7 @@ How AI agents should work in this repo.
 - `src/application/shell/` owns shell-install use cases, while shell script details stay in `src/interfaces/shell/`.
 - `src/application/context_status/` owns the context status command until context editing becomes a fuller feature.
 - `src/infrastructure/` contains adapters for external systems. It may depend on domain/application contracts, but domain must not depend on it.
-- `src/infrastructure/storage/` owns Work storage, repository metadata JSON, and bare repository cache persistence.
+- `src/infrastructure/storage/` owns Work storage, minimal repository metadata JSON, and bare repository cache persistence. Do not persist live worktree fields that can be reconstructed from `<work>/repos/`.
 - `src/infrastructure/filesystem/` owns filesystem traits and standard filesystem implementations used for testable storage.
 - `src/infrastructure/process/` owns command execution abstractions for adapters that call external tools.
 - `src/infrastructure/github/` owns the `gh` CLI adapter and GitHub response parsing.
@@ -94,7 +94,7 @@ How AI agents should work in this repo.
 
 - For new behavior, start in `src/application/`, add or update domain types in `src/domain/`, add adapters in `src/infrastructure/`, then expose it through `src/interfaces/`.
 - For new CLI or TUI affordances, first verify the command already exists in `src/application/`; if it does not, add the command layer path before UI wiring.
-- For new repository-context behavior, keep GitHub discovery in `src/infrastructure/github/`, worktree operations in `src/infrastructure/git_worktree/`, metadata/cache persistence in `src/infrastructure/storage/`, and orchestration in `src/application/repository_context/`.
+- For new repository-context behavior, keep GitHub discovery in `src/infrastructure/github/`, worktree operations and inspection in `src/infrastructure/git_worktree/`, metadata/cache persistence in `src/infrastructure/storage/`, and orchestration in `src/application/repository_context/`.
 - For new Work lifecycle behavior, keep product flow in `src/application/work/`, storage mechanics in `src/infrastructure/storage/`, and naming rules in `src/domain/work/`.
 - For shared helpers, place them next to the domain or adapter that owns the concept. Use `src/shared/` only for truly cross-cutting types with clear names.
 

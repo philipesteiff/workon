@@ -331,7 +331,10 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     let metadata =
         fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
     assert!(metadata.contains("\"name_with_owner\": \"openai/workon\""));
-    assert!(metadata.contains("\"branch\": \"workon/investigate-repository-context\""));
+    assert!(metadata.contains("\"default_branch\": \"main\""));
+    assert!(metadata.contains("\"url\": \"https://github.com/openai/workon\""));
+    assert!(!metadata.contains("\"branch\""));
+    assert!(!metadata.contains("\"path\""));
 
     let agents =
         fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
@@ -345,6 +348,51 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     assert!(log.contains("branch workon/investigate-repository-context main"));
     assert!(log.contains("worktree add"));
     assert!(log.contains("repos/openai__workon"));
+}
+
+#[test]
+fn list_work_repositories_reconstructs_live_branch_from_repo_folder() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("list_work_repositories_reconstructs_live_branch");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Track live repository branch");
+    app.execute(Command::AddWorkRepositories {
+        query: work.slug.clone(),
+        repositories: vec!["openai/workon".to_string()],
+    })
+    .expect("repo add should succeed");
+    fs::write(
+        work.path
+            .join("repos/openai__workon/.workon-current-branch"),
+        "feature/user-branch\n",
+    )
+    .expect("fake branch marker should update");
+
+    let CommandOutput::WorkRepositories(list) = app
+        .execute(Command::ListWorkRepositories {
+            query: work.slug.clone(),
+        })
+        .expect("repo list should succeed")
+    else {
+        panic!("expected WorkRepositories output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert_eq!(list.repositories.len(), 1);
+    assert_eq!(list.repositories[0].name_with_owner, "openai/workon");
+    assert_eq!(list.repositories[0].branch, "feature/user-branch");
+
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert!(!metadata.contains("feature/user-branch"));
+    assert!(!metadata.contains("\"branch\""));
 }
 
 #[test]
@@ -723,6 +771,7 @@ fn fake_git_script() -> &'static str {
     r#"#!/bin/sh
 printf 'git %s\n' "$*" >> "$WORKON_FAKE_LOG"
 if [ "$1" = "-C" ]; then
+  cwd="$2"
   shift 2
 fi
 if [ "$1" = "fetch" ]; then
@@ -732,6 +781,9 @@ if [ "$1" = "branch" ] && [ "$2" = "--list" ]; then
   exit 0
 fi
 if [ "$1" = "branch" ] && [ "$2" = "--show-current" ]; then
+  if [ -n "$cwd" ] && [ -f "$cwd/.workon-current-branch" ]; then
+    cat "$cwd/.workon-current-branch"
+  fi
   exit 0
 fi
 if [ "$1" = "branch" ]; then
@@ -739,6 +791,7 @@ if [ "$1" = "branch" ]; then
 fi
 if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   path="$3"
+  branch="$4"
   if [ -n "$WORKON_FAKE_GIT_WORKTREE_ADD_FAIL_REPO" ]; then
     case "$path" in
       *"$WORKON_FAKE_GIT_WORKTREE_ADD_FAIL_REPO"*)
@@ -748,6 +801,7 @@ if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
     esac
   fi
   mkdir -p "$path"
+  printf '%s\n' "$branch" > "$path/.workon-current-branch"
   exit 0
 fi
 if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then

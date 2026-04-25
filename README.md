@@ -141,7 +141,7 @@ enter    apply pending add/remove changes
 esc      return to the Work queue
 ```
 
-The left panel lists repositories from the active `gh` account. The right panel lists repositories selected for the highlighted Work, including pending additions and removals. Loading the view shows a loader while `gh` returns repositories. Applying changes shows per-repo progress and an operation log. Adding a repo creates a Work-specific branch named `workon/<work-slug>` and attaches it as a git worktree under the Work folder.
+The left panel lists repositories from the active `gh` account. The right panel lists repositories selected for the highlighted Work, including pending additions and removals. Loading the view shows a loader while `gh` returns repositories. Applying changes shows per-repo progress and an operation log. Adding a repo creates an initial Work-specific branch named `workon/<work-slug>` and attaches it as a git worktree under the Work folder.
 
 ### `wo list`
 
@@ -203,12 +203,12 @@ Archived Works no longer appear in `wo` and cannot be opened by normal Work quer
 
 ### `wo repos`
 
-Attach GitHub repositories to a Work as Worktrunk-managed git worktrees.
+Attach GitHub repositories to a Work as git worktrees.
 
 Prerequisites:
 
 - `gh` installed and authenticated
-- `wt` installed
+- `git` installed
 
 List attached repositories:
 
@@ -232,17 +232,21 @@ wo repos remove billing openai/workon
 Add behavior:
 
 - caches the GitHub repo as a bare repo under Workon storage
-- creates or switches a branch named `workon/<work-slug>`
+- creates an initial branch named `workon/<work-slug>`
 - creates the worktree at `<work>/repos/<owner>__<repo>`
-- writes `workon.repos.json`
+- writes only durable GitHub fallback data to `workon.repos.json`
 - rewrites `AGENTS.md` and `CLAUDE.md` with the attached repo list
 
 Remove behavior:
 
-- runs `wt remove --no-delete-branch --foreground`
-- keeps the `workon/<work-slug>` branch and repo cache
+- runs `git worktree remove`
+- keeps branches and repo caches
 - updates `workon.repos.json`, `AGENTS.md`, and `CLAUDE.md`
-- fails without changing metadata when Worktrunk refuses removal
+- fails without changing metadata when Git refuses removal
+
+`wo repos list` and the TUI reconstruct live repository state from `<work>/repos/`.
+Branch names and worktree paths are read from the local git worktrees, so user branch
+changes are reflected without editing `workon.repos.json`.
 
 ### `wo ctx`
 

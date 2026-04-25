@@ -28,6 +28,13 @@ pub struct AttachedRepository {
     pub url: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepositoryAttachment {
+    pub name_with_owner: String,
+    pub default_branch: String,
+    pub url: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkRepositoryList {
     pub work: WorkSummary,

@@ -3,10 +3,11 @@ use crate::domain::repository_context::paths::{
     normalize_requested_repositories, work_branch, worktree_path,
 };
 use crate::domain::{
-    AttachedRepository, RepositoryCatalog, RepositoryContextChange, WorkRepositoryList, WorkSummary,
+    AttachedRepository, RepositoryAttachment, RepositoryCatalog, RepositoryContextChange,
+    WorkRepositoryList, WorkSummary,
 };
 use crate::infrastructure::agent_files::RepoContextFileWriter;
-use crate::infrastructure::git_worktree::WorktreeManager;
+use crate::infrastructure::git_worktree::{WorktreeInspector, WorktreeManager};
 use crate::infrastructure::github::GithubClient;
 use crate::infrastructure::storage::{RepoMetadataStore, RepositoryCache, WorkStore};
 use crate::shared::error::{Result, WorkonError};
@@ -16,6 +17,7 @@ pub(super) struct RepositoryContextService<'a> {
     github: &'a dyn GithubClient,
     cache: &'a dyn RepositoryCache,
     worktrees: &'a dyn WorktreeManager,
+    inspector: &'a dyn WorktreeInspector,
     metadata: &'a dyn RepoMetadataStore,
     context_files: &'a dyn RepoContextFileWriter,
 }
@@ -26,6 +28,7 @@ impl<'a> RepositoryContextService<'a> {
         github: &'a dyn GithubClient,
         cache: &'a dyn RepositoryCache,
         worktrees: &'a dyn WorktreeManager,
+        inspector: &'a dyn WorktreeInspector,
         metadata: &'a dyn RepoMetadataStore,
         context_files: &'a dyn RepoContextFileWriter,
     ) -> Self {
@@ -34,6 +37,7 @@ impl<'a> RepositoryContextService<'a> {
             github,
             cache,
             worktrees,
+            inspector,
             metadata,
             context_files,
         }
@@ -48,10 +52,12 @@ impl<'a> RepositoryContextService<'a> {
     pub(super) fn attached(
         store: &WorkStore,
         metadata: &dyn RepoMetadataStore,
+        inspector: &dyn WorktreeInspector,
         query: &str,
     ) -> Result<CommandOutput> {
         let work = store.open(query)?;
-        let repositories = metadata.read(&work.path)?;
+        let metadata = metadata.read(&work.path)?;
+        let repositories = inspector.scan(&work.path, &metadata)?;
         Ok(CommandOutput::WorkRepositories(WorkRepositoryList {
             work: work.into(),
             repositories,
@@ -62,7 +68,8 @@ impl<'a> RepositoryContextService<'a> {
         let work = self.store.open(query)?;
         let work_summary = WorkSummary::from(work.clone());
         let requested = normalize_requested_repositories(repositories)?;
-        let mut attached = self.metadata.read(&work.path)?;
+        let mut metadata = self.metadata.read(&work.path)?;
+        let mut attached = self.inspector.scan(&work.path, &metadata)?;
         let mut changed = Vec::new();
 
         for name_with_owner in requested {
@@ -81,16 +88,25 @@ impl<'a> RepositoryContextService<'a> {
             self.worktrees
                 .switch(&cache_path, &path, &branch, &available.default_branch)?;
 
-            let repository = AttachedRepository {
+            let attachment = RepositoryAttachment {
                 name_with_owner: available.name_with_owner,
-                branch,
-                path,
                 default_branch: available.default_branch,
                 url: available.url,
             };
-            attached.push(repository.clone());
-            attached.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
-            self.persist(&work_summary, &attached)?;
+            metadata.retain(|repo| repo.name_with_owner != attachment.name_with_owner);
+            metadata.push(attachment.clone());
+            metadata.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
+            attached = self.persist(&work_summary, &metadata)?;
+            let repository = attached
+                .iter()
+                .find(|repo| repo.name_with_owner == attachment.name_with_owner)
+                .cloned()
+                .ok_or_else(|| WorkonError::RepositoryContext {
+                    message: format!(
+                        "repository worktree was created but could not be inspected: {}",
+                        attachment.name_with_owner
+                    ),
+                })?;
             changed.push(repository);
         }
 
@@ -111,7 +127,8 @@ impl<'a> RepositoryContextService<'a> {
         let work = self.store.open(query)?;
         let work_summary = WorkSummary::from(work.clone());
         let requested = normalize_requested_repositories(repositories)?;
-        let mut attached = self.metadata.read(&work.path)?;
+        let mut metadata = self.metadata.read(&work.path)?;
+        let mut attached = self.inspector.scan(&work.path, &metadata)?;
         let mut removed = Vec::new();
 
         for name_with_owner in &requested {
@@ -130,8 +147,8 @@ impl<'a> RepositoryContextService<'a> {
             let cache_path = self.cache.path_for(&repository.name_with_owner)?;
             self.worktrees
                 .remove(&cache_path, &repository.path, force)?;
-            attached.remove(index);
-            self.persist(&work_summary, &attached)?;
+            metadata.retain(|repo| &repo.name_with_owner != name_with_owner);
+            attached = self.persist(&work_summary, &metadata)?;
             removed.push(repository);
         }
 
@@ -143,8 +160,14 @@ impl<'a> RepositoryContextService<'a> {
         ))
     }
 
-    fn persist(&self, work: &WorkSummary, repositories: &[AttachedRepository]) -> Result<()> {
-        self.metadata.write(&work.path, repositories)?;
-        self.context_files.rewrite(work, repositories)
+    fn persist(
+        &self,
+        work: &WorkSummary,
+        metadata: &[RepositoryAttachment],
+    ) -> Result<Vec<AttachedRepository>> {
+        self.metadata.write(&work.path, metadata)?;
+        let repositories = self.inspector.scan(&work.path, metadata)?;
+        self.context_files.rewrite(work, &repositories)?;
+        Ok(repositories)
     }
 }

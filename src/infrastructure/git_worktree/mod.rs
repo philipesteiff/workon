@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+use crate::domain::repository_context::paths::repository_name_from_worktree_dir;
+use crate::domain::{AttachedRepository, RepositoryAttachment};
 use crate::infrastructure::process::{ProcessRunner, RepoCommand};
 use crate::shared::error::{Result, WorkonError};
 
@@ -13,6 +16,14 @@ pub(crate) trait WorktreeManager {
         default_branch: &str,
     ) -> Result<()>;
     fn remove(&self, cache_path: &Path, worktree_path: &Path, force: bool) -> Result<()>;
+}
+
+pub(crate) trait WorktreeInspector {
+    fn scan(
+        &self,
+        work_path: &Path,
+        metadata: &[RepositoryAttachment],
+    ) -> Result<Vec<AttachedRepository>>;
 }
 
 pub(crate) struct GitWorktree<'a> {
@@ -59,6 +70,45 @@ impl<'a> GitWorktree<'a> {
             .map(|output| output.trim().to_string())
     }
 
+    fn scan_branch(&self, worktree_path: &Path) -> Option<String> {
+        let branch = self.current_branch(worktree_path).ok()?;
+        if !branch.is_empty() {
+            return Some(branch);
+        }
+
+        let revision = self
+            .runner
+            .run_checked(&RepoCommand::new("git").args([
+                "-C",
+                &worktree_path.display().to_string(),
+                "rev-parse",
+                "--short",
+                "HEAD",
+            ]))
+            .ok()?;
+        let revision = revision.trim();
+        Some(if revision.is_empty() {
+            "detached".to_string()
+        } else {
+            format!("detached {revision}")
+        })
+    }
+
+    fn origin_url(&self, worktree_path: &Path) -> Option<String> {
+        let url = self
+            .runner
+            .run_checked(&RepoCommand::new("git").args([
+                "-C",
+                &worktree_path.display().to_string(),
+                "remote",
+                "get-url",
+                "origin",
+            ]))
+            .ok()?;
+        let url = url.trim().to_string();
+        (!url.is_empty()).then_some(url)
+    }
+
     fn ensure_existing_worktree(&self, worktree_path: &Path, branch: &str) -> Result<bool> {
         if !worktree_path.exists() {
             return Ok(false);
@@ -83,6 +133,62 @@ impl<'a> GitWorktree<'a> {
                 worktree_path.display()
             ),
         })
+    }
+}
+
+impl WorktreeInspector for GitWorktree<'_> {
+    fn scan(
+        &self,
+        work_path: &Path,
+        metadata: &[RepositoryAttachment],
+    ) -> Result<Vec<AttachedRepository>> {
+        let repos_path = work_path.join("repos");
+        if !repos_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let metadata_by_name = metadata
+            .iter()
+            .map(|repository| (repository.name_with_owner.as_str(), repository))
+            .collect::<BTreeMap<_, _>>();
+        let mut repositories = Vec::new();
+
+        for entry in fs::read_dir(repos_path)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+
+            let folder_name = entry.file_name();
+            let Some(name_with_owner) =
+                repository_name_from_worktree_dir(&folder_name.to_string_lossy())
+            else {
+                continue;
+            };
+            let path = entry.path();
+            let Some(branch) = self.scan_branch(&path) else {
+                continue;
+            };
+            let metadata = metadata_by_name.get(name_with_owner.as_str()).copied();
+            let url = metadata
+                .map(|repository| repository.url.clone())
+                .or_else(|| self.origin_url(&path))
+                .unwrap_or_default();
+            let default_branch = metadata
+                .map(|repository| repository.default_branch.clone())
+                .unwrap_or_default();
+
+            repositories.push(AttachedRepository {
+                name_with_owner,
+                branch,
+                path,
+                default_branch,
+                url,
+            });
+        }
+
+        repositories.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
+        Ok(repositories)
     }
 }
 
@@ -140,10 +246,11 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use crate::domain::RepositoryAttachment;
     use crate::infrastructure::process::{ProcessRunner, RepoCommand};
     use crate::shared::error::{Result, WorkonError};
 
-    use super::{GitWorktree, WorktreeManager};
+    use super::{GitWorktree, WorktreeInspector, WorktreeManager};
 
     #[test]
     fn switch_creates_branch_and_adds_worktree_with_raw_git() {
@@ -283,6 +390,30 @@ mod tests {
         assert!(error.to_string().contains("contains modified files"));
     }
 
+    #[test]
+    fn scan_reconstructs_attached_repositories_from_repos_folder() {
+        let runner = RecordingRunner {
+            current_branch_output: "feature/manual-branch\n".to_string(),
+            ..RecordingRunner::default()
+        };
+        let git = GitWorktree::new(&runner);
+        let root = temp_root("git_worktree_scan");
+        let repo_path = root.path().join("repos/openai__workon");
+        fs::create_dir_all(&repo_path).expect("repo worktree path");
+        fs::create_dir_all(root.path().join("repos/not-a-repo")).expect("invalid folder path");
+
+        let repositories = git
+            .scan(root.path(), &[repository_attachment()])
+            .expect("scan should succeed");
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].name_with_owner, "openai/workon");
+        assert_eq!(repositories[0].branch, "feature/manual-branch");
+        assert_eq!(repositories[0].path, repo_path);
+        assert_eq!(repositories[0].default_branch, "main");
+        assert_eq!(repositories[0].url, "https://github.com/openai/workon");
+    }
+
     fn branch_list_args() -> &'static [&'static str] {
         &[
             "-C",
@@ -300,6 +431,14 @@ mod tests {
 
     fn expected_args(expected: &[&str]) -> Vec<String> {
         expected.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn repository_attachment() -> RepositoryAttachment {
+        RepositoryAttachment {
+            name_with_owner: "openai/workon".to_string(),
+            default_branch: "main".to_string(),
+            url: "https://github.com/openai/workon".to_string(),
+        }
     }
 
     #[derive(Default)]
