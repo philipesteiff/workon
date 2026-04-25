@@ -20,7 +20,6 @@ pub(super) struct AnimationRuntime {
 pub(super) struct AnimationSnapshot {
     mode: TuiMode,
     trace_visible: bool,
-    detail_visible: bool,
     toast: Option<ToastSignature>,
     list_count: usize,
     filtered_count: usize,
@@ -84,13 +83,6 @@ impl AnimationRuntime {
             }
         }
 
-        if before.detail_visible != after.detail_visible {
-            self.queue(AnimationTarget::FooterStatus);
-            if after.detail_visible {
-                self.queue(AnimationTarget::DetailPanel);
-            }
-        }
-
         if before.toast != after.toast && after.toast.is_some() {
             self.queue(AnimationTarget::Toast);
         }
@@ -141,7 +133,6 @@ impl AnimationSnapshot {
         Self {
             mode: state.mode,
             trace_visible: state.trace_visible,
-            detail_visible: state.detail_visible,
             toast: state.toast.as_ref().map(|toast| ToastSignature {
                 kind: toast.kind,
                 title: toast.title.clone(),

@@ -105,23 +105,6 @@ fn trace_panel_is_hidden_by_default_and_toggles_from_list() {
 }
 
 #[test]
-fn detail_panel_is_compact_by_default_and_toggles_globally() {
-    let mut state = TuiState::new(work_list());
-
-    assert!(!state.detail_visible);
-
-    let action = state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
-
-    assert_eq!(action, TuiAction::None);
-    assert!(state.detail_visible);
-
-    let action = state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
-
-    assert_eq!(action, TuiAction::None);
-    assert!(!state.detail_visible);
-}
-
-#[test]
 fn clears_toast_on_next_meaningful_key_press() {
     let mut state = TuiState::new(work_list());
     state.toast = Some(Toast::info(
@@ -318,6 +301,32 @@ fn repo_context_keeps_github_catalog_visible_with_attached_repositories() {
             "openai/workon".to_string(),
         ]
     );
+}
+
+#[test]
+fn repo_context_updates_work_detail_repository_index() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        attached_repositories(),
+    );
+
+    let selected = state
+        .selected_work()
+        .expect("billing work should be selected");
+    assert_eq!(state.attached_repositories_for(selected).len(), 2);
+
+    let refreshed = vec![attached_repositories()[1].clone()];
+    state.update_attached_repositories(refreshed);
+
+    let selected = state
+        .selected_work()
+        .expect("billing work should still be selected");
+    let repositories = state.attached_repositories_for(selected);
+    assert_eq!(repositories.len(), 1);
+    assert_eq!(repositories[0].name_with_owner, "openai/workon");
 }
 
 #[test]

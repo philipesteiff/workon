@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
 
 use crate::domain::work::naming::{slugify, title_from_goal};
-use crate::domain::WorkSummary;
+use crate::domain::{AttachedRepository, WorkSummary};
 
 use super::animation::{AnimationTarget, RenderRegions};
 use super::components::{
@@ -277,14 +277,13 @@ fn render_diagnostic(
     regions: &mut Option<&mut RenderRegions>,
 ) {
     mark_region(regions, AnimationTarget::DetailPanel, area);
-    let block = panel_block("WORK DETAIL", state.detail_visible);
+    let block = panel_block("WORK DETAIL", false);
 
     let Some(work) = state.selected_work() else {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(status_badge("WARN", theme::style_status_warn())),
                 Line::from("No active Work. Press /n to create Work."),
-                label_value("view", "EMPTY"),
             ])
             .block(block)
             .wrap(Wrap { trim: true }),
@@ -293,46 +292,62 @@ fn render_diagnostic(
         return;
     };
 
-    let lines = if !state.detail_visible {
-        vec![
-            work_header(state, work),
-            label_value("intent", work.intent_id.clone()),
-            label_value("folder", work_folder_label(work)),
-            label_value("work state", work_state_label(state, work)),
-            label_value("view", diagnostic_state_label(state)),
-        ]
-    } else if area.height <= 12 {
-        vec![
-            section(work_section_label(state, work)),
-            work_header(state, work),
-            label_value("intent", work.intent_id.clone()),
-            label_value("folder", work_folder_label(work)),
-            label_value("work state", work_state_label(state, work)),
-            section("Goal"),
-            Line::from(work.goal.clone()),
-        ]
-    } else {
-        vec![
-            section(work_section_label(state, work)),
-            work_header(state, work),
-            Line::from(work.slug.clone().dim()),
-            Line::from(""),
-            section("Context"),
-            label_value("intent", work.intent_id.clone()),
-            label_value("folder", work_folder_label(work)),
-            label_value("work state", work_state_label(state, work)),
-            label_value("view", diagnostic_state_label(state)),
-            Line::from(""),
-            section("Goal"),
-            Line::from(work.goal.clone()),
-            label_value("archive", archive_path_for(work).display().to_string()),
-        ]
-    };
+    let lines = detail_lines(state, work);
 
     frame.render_widget(
         Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
         area,
     );
+}
+
+fn detail_lines(state: &TuiState, work: &WorkSummary) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        work_header(state, work),
+        section("Goal"),
+        Line::from(work.goal.clone()),
+        section("Context"),
+        label_value("intent", work.intent_id.clone()),
+        label_value("folder", work_folder_label(work)),
+    ];
+    lines.extend(repository_context_lines(
+        state.attached_repositories_for(work),
+    ));
+    lines
+}
+
+fn repository_context_lines(repositories: &[AttachedRepository]) -> Vec<Line<'static>> {
+    if repositories.is_empty() {
+        return vec![label_value("repos", "none")];
+    }
+
+    let mut lines = vec![label_value(
+        "repos",
+        attached_repository_count_label(repositories.len()),
+    )];
+    for (index, repository) in repositories.iter().enumerate() {
+        lines.extend([
+            Line::from(vec![
+                Span::styled(format!("  {:02}  ", index + 1), theme::style_command()),
+                Span::styled(
+                    repository.name_with_owner.clone(),
+                    theme::style_primary_text().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("      branch ", theme::style_muted_text()),
+                Span::styled(repository.branch.clone(), theme::style_muted_text()),
+            ]),
+        ]);
+    }
+    lines
+}
+
+fn attached_repository_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 attached".to_string()
+    } else {
+        format!("{count} attached")
+    }
 }
 
 fn render_trace(
@@ -389,12 +404,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Span::styled(mode_label(state.mode), mode_style(state.mode)),
         Span::raw("  "),
     ];
-    spans.extend(footer_keys(
-        area.width,
-        state.mode,
-        state.trace_visible,
-        state.detail_visible,
-    ));
+    spans.extend(footer_keys(area.width, state.mode, state.trace_visible));
 
     if area.width >= 96 {
         if let Some(toast) = &state.toast {
@@ -410,12 +420,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     frame.render_widget(Paragraph::new(Line::from(spans)).block(top_border()), area);
 }
 
-fn footer_keys(
-    width: u16,
-    mode: TuiMode,
-    trace_visible: bool,
-    detail_visible: bool,
-) -> Vec<Span<'static>> {
+fn footer_keys(width: u16, mode: TuiMode, trace_visible: bool) -> Vec<Span<'static>> {
     match mode {
         TuiMode::List if width < 88 => vec![
             key("type"),
@@ -436,12 +441,6 @@ fn footer_keys(
             "move ".dim(),
             key("/"),
             "commands ".dim(),
-            key("C-d"),
-            if detail_visible {
-                "less ".dim()
-            } else {
-                "more ".dim()
-            },
             key("esc"),
             "clear/quit".dim(),
         ],
@@ -454,12 +453,6 @@ fn footer_keys(
             "move ".dim(),
             key("/"),
             "commands ".dim(),
-            key("C-d"),
-            if detail_visible {
-                "hide details ".dim()
-            } else {
-                "details ".dim()
-            },
             key("C-t"),
             if trace_visible {
                 "hide trace ".dim()
@@ -747,22 +740,6 @@ fn work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
     Line::from(spans)
 }
 
-fn work_section_label(state: &TuiState, work: &WorkSummary) -> &'static str {
-    if state.is_current_work(work) {
-        "CURRENT WORK"
-    } else {
-        "ACTIVE WORK"
-    }
-}
-
-fn work_state_label(state: &TuiState, work: &WorkSummary) -> &'static str {
-    if state.is_current_work(work) {
-        "CURRENT"
-    } else {
-        "ACTIVE"
-    }
-}
-
 fn help_line(key_value: &'static str, label: &'static str) -> Line<'static> {
     Line::from(vec![key(key_value), Span::raw(" "), label.dim()])
 }
@@ -793,7 +770,7 @@ fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
         .width
         .saturating_sub(CONTROL_PANEL_SIDE_MARGIN)
         .min(CONTROL_PANEL_MAX_WIDTH);
-    let base_height = if state.detail_visible { 28 } else { 24 };
+    let base_height = 28;
     let trace_extra = if state.trace_visible { 5 } else { 0 };
     let height = (base_height + trace_extra).min(area.height.saturating_sub(2));
 
@@ -838,14 +815,6 @@ fn mode_label(mode: TuiMode) -> &'static str {
         TuiMode::Archive => "ARCHIVE",
         TuiMode::Repos => "REPOS",
         TuiMode::Help => "HELP",
-    }
-}
-
-fn diagnostic_state_label(state: &TuiState) -> String {
-    if state.filter.is_empty() {
-        "ALL ACTIVE".to_string()
-    } else {
-        format!("FILTER {}", state.filter)
     }
 }
 
@@ -931,7 +900,18 @@ mod tests {
         assert!(!content.contains("slug billing-retry-audit"));
         assert!(content.contains("folder"));
         assert!(!content.contains(".workon/archive"));
-        assert!(!content.contains("Goal"));
+        assert!(content.contains("Goal"));
+        assert!(content.contains("repos"));
+        assert!(content.contains("none"));
+        assert!(
+            content.find("Goal").expect("goal section should render")
+                < content
+                    .find("Context")
+                    .expect("context section should render")
+        );
+        assert!(!content.contains("ALL ACTIVE"));
+        assert!(!content.contains("ACTIVE WORK"));
+        assert!(!content.contains("work state"));
         assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
         assert!(content.contains("@ CURRENT"));
         assert!(!content.contains(">> CURRENT"));
@@ -1029,6 +1009,7 @@ mod tests {
 
         assert!(content.contains("WORK DETAIL"));
         assert!(content.contains("ACTIVE"));
+        assert!(!content.contains("ACTIVE WORK"));
         assert!(!content.contains("TARGET"));
         assert!(!content.contains("READY"));
         assert!(!content.contains("STANDBY"));
@@ -1044,6 +1025,7 @@ mod tests {
         assert!(content.contains(">> ACTIVE"));
         assert!(!content.contains("@ CURRENT"));
         assert!(!content.contains("CURRENT WORK"));
+        assert!(!content.contains("ACTIVE WORK"));
     }
 
     #[test]
@@ -1052,7 +1034,7 @@ mod tests {
         let panel = control_panel_rect(Rect::new(0, 0, 160, 36), &state);
 
         assert_eq!(panel.width, 158);
-        assert_eq!(panel.height, 24);
+        assert_eq!(panel.height, 28);
         assert_eq!(panel.x, 1);
     }
 
@@ -1078,20 +1060,36 @@ mod tests {
     }
 
     #[test]
-    fn renders_detail_panel_only_when_toggled_visible() {
-        let mut state = TuiState::new(work_list());
+    fn renders_detail_panel_without_show_hide_toggle() {
+        let state = TuiState::new(work_list());
 
-        let compact = render_content(&state, 120, 36);
-        assert!(!compact.contains("Goal"));
-        assert!(!compact.contains(".workon/archive"));
-        assert!(compact.contains("C-d details"));
+        let content = render_content(&state, 120, 36);
 
-        state.detail_visible = true;
-        let expanded = render_content(&state, 120, 36);
+        assert!(content.contains("Goal"));
+        assert!(!content.contains(".workon/archive"));
+        assert!(!content.contains("archive        "));
+        assert!(!content.contains("C-d details"));
+        assert!(!content.contains("C-d hide details"));
+    }
 
-        assert!(expanded.contains("Goal"));
-        assert!(expanded.contains(".workon/archive"));
-        assert!(expanded.contains("C-d hide details"));
+    #[test]
+    fn renders_attached_repositories_in_work_detail_context() {
+        let state = TuiState::new(work_list()).with_attached_repositories(
+            [("billing-retry-audit".to_string(), attached_repositories())]
+                .into_iter()
+                .collect(),
+        );
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("Context"));
+        assert!(content.contains("repos          1 attached"));
+        assert!(content.contains("01  openai/workon"));
+        assert!(content.contains("branch workon/billing-retry-audit"));
+        assert!(content.contains("openai/workon"));
+        assert!(content.contains("workon/billing-retry-audit"));
+        assert!(!content.contains("repo           openai/workon workon/billing-retry-audit"));
+        assert!(!content.contains("view           ALL ACTIVE"));
     }
 
     #[test]
@@ -1415,7 +1413,7 @@ mod tests {
 
     #[test]
     fn renders_long_goal_and_path_without_losing_context_labels() {
-        let mut state = TuiState::new(WorkList {
+        let state = TuiState::new(WorkList {
             works: vec![WorkSummary {
                 title: "Long context review".to_string(),
                 slug: "long-context-review".to_string(),
@@ -1424,7 +1422,6 @@ mod tests {
                 path: PathBuf::from("/tmp/workon/.workon/work/long-context-review/with/a/deep/path/that/should/wrap"),
             }],
         });
-        state.detail_visible = true;
 
         let content = render_content(&state, 74, 30);
 
@@ -1466,7 +1463,6 @@ mod tests {
         let mut state = TuiState::new(work_list());
         state.mode = TuiMode::Search;
         state.trace_visible = true;
-        state.detail_visible = true;
         state.toast = Some(Toast::info(
             "Work created",
             "/tmp/workon/.workon/work/billing",

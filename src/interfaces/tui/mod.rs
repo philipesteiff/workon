@@ -11,6 +11,7 @@ mod state_tests;
 mod theme;
 mod ui;
 
+use std::collections::BTreeMap;
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
@@ -23,6 +24,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use crate::application::{App, Command, CommandOutput};
+use crate::domain::{AttachedRepository, WorkList};
 use crate::shared::error::{Result, WorkonError};
 
 use self::animation::{input_poll_timeout, AnimationRuntime, AnimationSnapshot};
@@ -41,9 +43,11 @@ pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {
         unreachable!("list works command returns work list");
     };
+    let attached_repositories = load_attached_repository_index(app, &work_list)?;
 
     let mut state = TuiState::new(work_list)
         .with_intents(app.available_intents())
+        .with_attached_repositories(attached_repositories)
         .with_root(root)
         .with_current_directory(std::env::current_dir().ok().as_deref());
     state.push_trace(TraceKind::Run, "list loaded");
@@ -231,8 +235,30 @@ fn reload_work_list(app: &App, state: &mut TuiState) -> Result<()> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {
         unreachable!("list works command returns work list");
     };
+    let attached_repositories = load_attached_repository_index(app, &work_list)?;
     state.set_work_list(work_list);
+    state.set_attached_repositories(attached_repositories);
     Ok(())
+}
+
+fn load_attached_repository_index(
+    app: &App,
+    work_list: &WorkList,
+) -> Result<BTreeMap<String, Vec<AttachedRepository>>> {
+    let mut repositories = BTreeMap::new();
+
+    for work in &work_list.works {
+        let CommandOutput::WorkRepositories(attached) =
+            app.execute(Command::ListWorkRepositories {
+                query: work.slug.clone(),
+            })?
+        else {
+            unreachable!("list work repositories command returns work repositories");
+        };
+        repositories.insert(work.slug.clone(), attached.repositories);
+    }
+
+    Ok(repositories)
 }
 
 struct RepoContextData {
@@ -611,7 +637,6 @@ mod tests {
         after.mode = TuiMode::Search;
         after.move_selection(1);
         after.trace_visible = true;
-        after.detail_visible = true;
         after.toast = Some(Toast::info("Work created", "/tmp/workon/.workon/work/new"));
         after.works.push(WorkSummary {
             title: "New Work".to_string(),
@@ -630,7 +655,7 @@ mod tests {
         assert!(!runtime.has_pending(AnimationTarget::Overlay));
         assert!(runtime.has_pending(AnimationTarget::WorkQueue));
         assert!(runtime.has_pending(AnimationTarget::TracePanel));
-        assert!(runtime.has_pending(AnimationTarget::DetailPanel));
+        assert!(!runtime.has_pending(AnimationTarget::DetailPanel));
         assert!(runtime.has_pending(AnimationTarget::Toast));
         assert!(runtime.has_pending(AnimationTarget::FooterStatus));
     }

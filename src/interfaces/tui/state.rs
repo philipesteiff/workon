@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
@@ -17,9 +18,9 @@ pub(super) struct TuiState {
     pub(super) repo: RepoPickerState,
     pub(super) root: PathBuf,
     pub(super) current_work_path: Option<PathBuf>,
+    pub(super) attached_repositories: BTreeMap<String, Vec<AttachedRepository>>,
     pub(super) trace: Vec<TraceEvent>,
     pub(super) trace_visible: bool,
-    pub(super) detail_visible: bool,
     pub(super) toast: Option<Toast>,
 }
 
@@ -95,9 +96,9 @@ impl TuiState {
             repo: RepoPickerState::default(),
             root: PathBuf::new(),
             current_work_path: None,
+            attached_repositories: BTreeMap::new(),
             trace: Vec::new(),
             trace_visible: false,
-            detail_visible: false,
             toast: None,
         }
     }
@@ -110,6 +111,14 @@ impl TuiState {
 
     pub(super) fn with_root(mut self, root: PathBuf) -> Self {
         self.root = root;
+        self
+    }
+
+    pub(super) fn with_attached_repositories(
+        mut self,
+        attached_repositories: BTreeMap<String, Vec<AttachedRepository>>,
+    ) -> Self {
+        self.attached_repositories = attached_repositories;
         self
     }
 
@@ -135,6 +144,13 @@ impl TuiState {
         self.clamp_selection();
     }
 
+    pub(super) fn set_attached_repositories(
+        &mut self,
+        attached_repositories: BTreeMap<String, Vec<AttachedRepository>>,
+    ) {
+        self.attached_repositories = attached_repositories;
+    }
+
     pub(super) fn filtered_works(&self) -> Vec<&WorkSummary> {
         self.filtered_indices()
             .into_iter()
@@ -153,6 +169,13 @@ impl TuiState {
         self.current_work_path
             .as_deref()
             .is_some_and(|current_path| current_path == work.path)
+    }
+
+    pub(super) fn attached_repositories_for(&self, work: &WorkSummary) -> &[AttachedRepository] {
+        self.attached_repositories
+            .get(&work.slug)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     pub(super) fn filtered_count(&self) -> usize {
@@ -176,10 +199,6 @@ impl TuiState {
 
     pub(super) fn toggle_trace(&mut self) {
         self.trace_visible = !self.trace_visible;
-    }
-
-    pub(super) fn toggle_detail(&mut self) {
-        self.detail_visible = !self.detail_visible;
     }
 
     pub(super) fn move_selection(&mut self, delta: isize) {
@@ -232,6 +251,8 @@ impl TuiState {
         attached: Vec<AttachedRepository>,
     ) {
         self.mode = TuiMode::Repos;
+        self.attached_repositories
+            .insert(work_slug.clone(), attached.clone());
         self.repo
             .enter_context(work_slug, work_title, available, attached);
     }
@@ -252,6 +273,8 @@ impl TuiState {
     }
 
     pub(super) fn update_attached_repositories(&mut self, attached: Vec<AttachedRepository>) {
+        self.attached_repositories
+            .insert(self.repo.work_slug.clone(), attached.clone());
         self.repo.update_attached(attached);
     }
 

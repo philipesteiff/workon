@@ -25,19 +25,6 @@ impl TuiState {
             return TuiAction::None;
         }
 
-        if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            self.toggle_detail();
-            self.push_trace(
-                TraceKind::Run,
-                if self.detail_visible {
-                    "detail panel expanded"
-                } else {
-                    "detail panel compact"
-                },
-            );
-            return TuiAction::None;
-        }
-
         match self.mode {
             TuiMode::List => self.handle_list_key(key),
             TuiMode::Search => self.handle_search_key(key),
