@@ -4,7 +4,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::domain::{AttachedRepository, AvailableRepository};
 
-use super::state::{is_plain_character, Toast, TraceEvent, TraceKind};
+use super::keys::is_plain_character;
+use super::state::{Toast, TraceEvent, TraceKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RepoPickerState {

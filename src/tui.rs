@@ -1,9 +1,13 @@
 mod animation;
 mod components;
+mod keymap;
+mod keys;
 mod repo_jobs;
 mod repo_state;
 mod repo_ui;
 mod state;
+#[cfg(test)]
+mod state_tests;
 mod theme;
 mod ui;
 
