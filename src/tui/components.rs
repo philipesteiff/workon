@@ -5,12 +5,19 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use super::theme;
 
 pub(super) fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
-    Block::default()
-        .title(Line::from(vec![
+    panel_block_with_title(
+        Line::from(vec![
             Span::raw(" "),
             Span::styled(title, theme::style_panel_title()),
             Span::raw(" "),
-        ]))
+        ]),
+        focused,
+    )
+}
+
+pub(super) fn panel_block_with_title(title: Line<'static>, focused: bool) -> Block<'static> {
+    Block::default()
+        .title(title)
         .borders(Borders::ALL)
         .border_style(if focused {
             theme::style_focused_border()

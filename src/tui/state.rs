@@ -148,16 +148,6 @@ impl TuiState {
         self.works.len()
     }
 
-    pub(super) fn mode_status(&self) -> &'static str {
-        match self.mode {
-            TuiMode::List => "AWAITING INPUT",
-            TuiMode::Search => "SIGNAL FILTER",
-            TuiMode::Create => "WORK INIT",
-            TuiMode::Archive => "ARCHIVE ACTIVE",
-            TuiMode::Help => "KEY INDEX",
-        }
-    }
-
     pub(super) fn push_trace(&mut self, kind: TraceKind, message: impl Into<String>) {
         self.trace.insert(
             0,

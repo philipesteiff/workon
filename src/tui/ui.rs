@@ -10,7 +10,8 @@ use crate::slug::{slugify, title_from_goal};
 
 use super::animation::{AnimationTarget, RenderRegions};
 use super::components::{
-    key, label_value, panel_block, render_popup, section, status_badge, top_border,
+    key, label_value, panel_block, panel_block_with_title, render_popup, section, status_badge,
+    top_border,
 };
 use super::state::{Toast, ToastKind, TraceKind, TuiMode, TuiState};
 use super::theme;
@@ -37,37 +38,13 @@ fn render_inner(frame: &mut Frame<'_>, state: &TuiState, mut regions: Option<&mu
     frame.render_widget(Clear, dialog);
     frame.render_widget(block, dialog);
 
-    let [header, workspace, footer] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Fill(1),
-        Constraint::Length(2),
-    ])
-    .areas(inner);
+    let [workspace, footer] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(2)]).areas(inner);
 
-    render_header(frame, header, state);
     render_workspace(frame, workspace, state, &mut regions);
     mark_region(&mut regions, AnimationTarget::FooterStatus, footer);
     render_footer(frame, footer, state);
     render_overlay(frame, area, state, &mut regions);
-}
-
-fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    if area.height == 0 {
-        return;
-    }
-
-    let status = Line::from(vec![
-        Span::styled(" MODE ", theme::style_muted_text()),
-        Span::styled(mode_label(state.mode), theme::style_command()),
-        Span::raw("   "),
-        Span::styled("SIGNAL ", theme::style_muted_text()),
-        Span::styled(state.mode_status(), mode_style(state.mode)),
-        Span::raw("   "),
-        Span::styled("WORKS ", theme::style_muted_text()),
-        Span::styled(state.total_count().to_string(), theme::style_primary_text()),
-    ]);
-
-    frame.render_widget(Paragraph::new(status), area);
 }
 
 fn render_workspace(
@@ -130,8 +107,8 @@ fn render_work_queue(
 ) {
     mark_region(regions, AnimationTarget::WorkQueue, area);
     let works = state.filtered_works();
-    let block = panel_block(
-        "WORK QUEUE",
+    let block = panel_block_with_title(
+        work_queue_title(state.total_count()),
         matches!(state.mode, TuiMode::List | TuiMode::Search),
     );
 
@@ -169,6 +146,16 @@ fn render_work_queue(
         .highlight_symbol(">>")
         .highlight_style(theme::style_selected_row_highlight());
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
+}
+
+fn work_queue_title(count: usize) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled("WORK QUEUE", theme::style_panel_title()),
+        Span::styled(" (", theme::style_panel_title()),
+        Span::styled(count.to_string(), theme::style_command()),
+        Span::styled(") ", theme::style_panel_title()),
+    ])
 }
 
 fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
@@ -891,8 +878,10 @@ mod tests {
         assert!(content.contains("WORKON // CONTROL"));
         assert!(!content.contains("SYSTEM ONLINE"));
         assert!(!content.contains("ROOT "));
-        assert!(content.contains("WORK QUEUE"));
-        assert!(content.contains("WORKS 1"));
+        assert!(content.contains("WORK QUEUE (1)"));
+        assert!(!content.contains("MODE LIST"));
+        assert!(!content.contains("SIGNAL AWAITING INPUT"));
+        assert!(!content.contains("WORKS 1"));
         assert!(!content.contains("TASKS "));
         assert!(!content.contains("WORKS 1/1"));
         assert!(!content.contains("SELECT "));
@@ -907,6 +896,11 @@ mod tests {
         assert!(!content.contains("archive"));
         assert!(!content.contains("Goal"));
         assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
+
+        let buffer = render_buffer(&state, 120, 36);
+        let queue_title_row = row_containing(&buffer, "WORK QUEUE (1)");
+        let queue_count = cell_at_text(&buffer, queue_title_row, "1");
+        assert_eq!(queue_count.fg, Color::Rgb(255, 140, 32));
     }
 
     #[test]
