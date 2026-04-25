@@ -1,92 +1,82 @@
 # AGENTS
 
-This file defines how AI agents should work in this repo.
+How AI agents should work in this repo.
 
-## Working Style
+## Principles
 
 - Be concise.
 - Prefer sharp wording over more wording.
-- Do not expand scope without asking.
-- Do not invent product complexity.
 - Make the smallest useful next step.
+- Do not expand scope or product complexity without asking.
 - Keep artifacts readable by humans first.
+- Challenge vague ideas and state trade-offs briefly.
 
-## Product Bias
+## Product Shape
 
+- Workon owns context.
+- Engineers control the flow.
+- Tools and agents consume context through adapters.
 - Start with the CLI.
-- Treat tools as adapters.
 - Treat lifecycle steps as optional moments.
 - Prefer portability before integration depth.
 
 ## Interface Architecture
 
-Non-negotiable constraint:
-
 - There is one execution path per feature.
-- All interfaces must use it: CLI, TUI, and future adapters.
-- Duplicating logic across interfaces is a design violation.
 - The command layer is the source of truth for behavior.
-- CLI and TUI can differ only in input/output presentation.
-- Business logic must live below every interface.
-- Tests should target the shared command layer first.
+- CLI, TUI, and future adapters must call the same command path.
+- CLI and TUI may differ only in input/output presentation.
 - Do not add TUI-only or CLI-only product behavior.
+- Keep shell behavior above the shared command layer.
+
+## TUI Direction
+
+- Keep the TUI compact by default.
+- Treat it as an inline command panel, not a full-screen app.
+- Preserve terminal context; avoid alternate-screen takeover unless explicitly needed.
+- Use progressive disclosure: essentials first, details on demand.
+- Keep `OPERATOR COMMAND` as the interaction source of truth.
+- Avoid duplicate chrome; every label should earn its space.
+- Use Ratatui-native blocks, lists, overlays, status rows, and key strips.
+- Keep the visual style restrained: amber terminal, sharp labels, practical density.
 
 ## Shell Navigation
 
-- Workon must not spawn a Work subshell for navigation.
+- Workon must not spawn a Work subshell.
 - Folder changes happen through a thin shell function.
 - The Rust binary returns machine signals for navigation.
 - The shell function consumes those signals and runs `cd`.
 - Keep one user shell: no stacked shells, no `exit` side effect.
 - Local development uses `just install-dev-shell`.
-- Keep shell behavior above the shared command layer; command outputs stay interface-neutral.
 
 ## Code Maintainability
 
 - Organize code by responsibility, not by interface.
 - Keep CLI and TUI thin: parse input, render output, call commands.
-- Put product behavior in the shared command layer.
-- A command should read as orchestration: validate input, load state, call services, persist changes, return a result.
+- Put product behavior below every interface.
 - Keep domain types separate from presentation types.
-- Keep adapters behind narrow interfaces: git, GitHub, Jira, Slack, Notion, editors, motors.
-- Inject filesystem, process, and network dependencies so core logic can be tested without real tools.
+- Keep adapters behind narrow interfaces.
+- Inject filesystem, process, and network dependencies.
 - Prefer short functions with one job and clear names.
-- Extract helpers when a block needs a comment to explain what it does.
 - Make state changes explicit: plan, apply, report.
-- Return typed errors from core code; format user-facing messages at the interface edge.
+- Return typed errors from core code; format messages at the interface edge.
+- Split modules before they become hard to scan.
+
+## Testing And Verification
+
 - Test the command layer first, adapters second, interface wiring last.
-- If a module becomes hard to scan, split it before adding more behavior.
-
-## Manual Verification
-
 - Every implementation must be tested through the real `wo` binary.
-- Run automated checks first: `cargo fmt --check`, `cargo test`, `cargo clippy --all-targets --all-features -- -D warnings`.
-- Build once, then test from a disposable temp directory, not the repo root.
-- Use real terminal commands and inspect real output, files, and state.
-- Cover the user-facing path changed by the implementation.
-- Report the commands run, what was expected, what happened, and any gap.
-- Do not claim completion without this verification.
+- Run `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+- Build once with `cargo build`.
+- Verify user-facing changes from a disposable temp directory, not the repo root.
+- Report commands run, expected result, actual result, and any gap.
+- Do not claim completion without verification.
 
-## Writing Rules
+## Collaboration
 
-- Use simple language.
-- Avoid filler.
-- Avoid hype.
-- Avoid long lists unless the structure earns it.
-- If a sentence does not add clarity, remove it.
-- If a concept needs many words, simplify the concept.
-
-## Collaboration Rules
-
-- Challenge vague ideas.
 - Ask when a decision changes product direction.
-- State trade-offs briefly.
 - Keep decisions visible.
 - Keep docs short enough to stay alive.
-
-## Current Shape
-
-- Workon owns context.
-- Tools plug into context.
-- Agents consume context.
-- Engineers control the flow.
+- Use simple language; avoid filler and hype.
+- Commit only when asked.
+- Keep commits narrow and named for the user-facing change.
