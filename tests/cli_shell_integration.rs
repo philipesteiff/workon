@@ -160,6 +160,7 @@ fn repos_help_prints_usage() {
         assert!(stdout.contains("wo repos add <work-query> <owner/repo>..."));
         assert!(stdout.contains("wo repos remove [--force] <work-query> <owner/repo>..."));
         assert!(stdout.contains("Highlight a Work, press /r"));
+        assert!(!stdout.contains("\n  wt\n"));
     }
 }
 
@@ -336,8 +337,8 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
     let log = fs::read_to_string(log_path).expect("tool log should exist");
     assert!(log.contains("gh repo view openai/workon"));
     assert!(log.contains("gh repo clone openai/workon"));
-    assert!(log.contains("wt -C"));
-    assert!(log.contains("remove --no-delete-branch --foreground --format json --force"));
+    assert!(log.contains("git -C"));
+    assert!(log.contains("worktree remove --force"));
 }
 
 #[test]
@@ -616,9 +617,8 @@ fn fake_repo_tools() -> TempRoot {
     let fake_bin = temp_root("fake_repo_tools");
     fs::write(fake_bin.path().join("gh"), fake_gh_script()).expect("gh fake should be written");
     fs::write(fake_bin.path().join("git"), fake_git_script()).expect("git fake should be written");
-    fs::write(fake_bin.path().join("wt"), fake_wt_script()).expect("wt fake should be written");
 
-    for name in ["gh", "git", "wt"] {
+    for name in ["gh", "git"] {
         let path = fake_bin.path().join(name);
         #[cfg(unix)]
         {
@@ -661,18 +661,30 @@ exit 2
 fn fake_git_script() -> &'static str {
     r#"#!/bin/sh
 printf 'git %s\n' "$*" >> "$WORKON_FAKE_LOG"
-exit 0
-"#
-}
-
-fn fake_wt_script() -> &'static str {
-    r#"#!/bin/sh
-printf 'WORKTRUNK_WORKTREE_PATH=%s wt %s\n' "$WORKTRUNK_WORKTREE_PATH" "$*" >> "$WORKON_FAKE_LOG"
-if [ "$3" = "remove" ]; then
+if [ "$1" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "fetch" ]; then
   exit 0
 fi
-mkdir -p "$WORKTRUNK_WORKTREE_PATH"
-printf '{"action":"created","branch":"%s","path":"%s","created_branch":true,"base_branch":"main"}\n' "$5" "$WORKTRUNK_WORKTREE_PATH"
+if [ "$1" = "branch" ] && [ "$2" = "--list" ]; then
+  exit 0
+fi
+if [ "$1" = "branch" ]; then
+  exit 0
+fi
+if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  mkdir -p "$3"
+  exit 0
+fi
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  path=
+  for arg in "$@"; do
+    path="$arg"
+  done
+  rm -rf "$path"
+  exit 0
+fi
 exit 0
 "#
 }

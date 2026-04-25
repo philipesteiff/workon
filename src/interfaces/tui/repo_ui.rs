@@ -103,7 +103,12 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
     if matches!(state.repo.status, RepoStatus::Loading { .. }) {
         lines.push(Line::from("Waiting for gh repository catalog.".dim()));
     } else if repositories.is_empty() {
-        lines.push(Line::from("No GitHub repositories match.".dim()));
+        let message = if matches!(state.repo.status, RepoStatus::Failed { .. }) {
+            "GitHub catalog unavailable; attached repos can still be removed."
+        } else {
+            "No GitHub repositories match."
+        };
+        lines.push(Line::from(message.dim()));
     } else {
         lines.extend(repositories.iter().enumerate().map(|(index, repository)| {
             catalog_repo_row(

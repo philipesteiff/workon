@@ -3,10 +3,10 @@ mod service;
 use crate::application::CommandOutput;
 use crate::domain::IntentCatalog;
 use crate::infrastructure::agent_files::AgentRepoContextFileWriter;
+use crate::infrastructure::git_worktree::GitWorktree;
 use crate::infrastructure::github::GhCli;
 use crate::infrastructure::process::StdProcessRunner;
 use crate::infrastructure::storage::{BareRepositoryCache, JsonRepoMetadataStore, WorkStore};
-use crate::infrastructure::worktrunk::Worktrunk;
 use crate::shared::error::Result;
 
 use self::service::RepositoryContextService;
@@ -31,7 +31,7 @@ pub(crate) fn add(
     let runner = StdProcessRunner;
     let github = GhCli::new(&runner);
     let cache = BareRepositoryCache::new(store.root(), &github);
-    let worktrees = Worktrunk::new(&runner);
+    let worktrees = GitWorktree::new(&runner);
     let metadata = JsonRepoMetadataStore;
     let context_files = AgentRepoContextFileWriter::new(intents);
     let service = RepositoryContextService::new(
@@ -56,7 +56,7 @@ pub(crate) fn remove(
     let runner = StdProcessRunner;
     let github = GhCli::new(&runner);
     let cache = BareRepositoryCache::new(store.root(), &github);
-    let worktrees = Worktrunk::new(&runner);
+    let worktrees = GitWorktree::new(&runner);
     let metadata = JsonRepoMetadataStore;
     let context_files = AgentRepoContextFileWriter::new(intents);
     let service = RepositoryContextService::new(

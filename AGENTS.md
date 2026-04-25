@@ -64,7 +64,7 @@ How AI agents should work in this repo.
 
 ## Package Map
 
-- `src/domain/` contains product language and rules that should not know about filesystems, processes, terminals, `gh`, or `wt`.
+- `src/domain/` contains product language and rules that should not know about filesystems, processes, terminals, `gh`, or Git worktree commands.
 - `src/domain/work/` owns Work concepts, work summaries, archive/create/open domain types, and work naming rules such as title and slug generation.
 - `src/domain/intent/` owns intent profiles and the default intent catalog.
 - `src/domain/repository_context/` owns repository context types, repository path naming, cache path policy, work branch naming, and repository name validation.
@@ -79,7 +79,7 @@ How AI agents should work in this repo.
 - `src/infrastructure/filesystem/` owns filesystem traits and standard filesystem implementations used for testable storage.
 - `src/infrastructure/process/` owns command execution abstractions for adapters that call external tools.
 - `src/infrastructure/github/` owns the `gh` CLI adapter and GitHub response parsing.
-- `src/infrastructure/worktrunk/` owns the Worktrunk `wt` adapter. Use it for worktree operations.
+- `src/infrastructure/git_worktree/` owns the raw Git worktree adapter for repository context. Use it behind the application worktree trait.
 - `src/infrastructure/agent_files/` owns rendering and rewriting `AGENTS.md` and agent-specific projections inside Work folders.
 - `src/interfaces/` contains user-facing adapters only. It should parse input, render output, and call `src/application/`.
 - `src/interfaces/cli/` owns CLI parsing, help text, prompting, and command output formatting.
@@ -94,7 +94,7 @@ How AI agents should work in this repo.
 
 - For new behavior, start in `src/application/`, add or update domain types in `src/domain/`, add adapters in `src/infrastructure/`, then expose it through `src/interfaces/`.
 - For new CLI or TUI affordances, first verify the command already exists in `src/application/`; if it does not, add the command layer path before UI wiring.
-- For new repository-context behavior, keep GitHub discovery in `src/infrastructure/github/`, worktree operations in `src/infrastructure/worktrunk/`, metadata/cache persistence in `src/infrastructure/storage/`, and orchestration in `src/application/repository_context/`.
+- For new repository-context behavior, keep GitHub discovery in `src/infrastructure/github/`, worktree operations in `src/infrastructure/git_worktree/`, metadata/cache persistence in `src/infrastructure/storage/`, and orchestration in `src/application/repository_context/`.
 - For new Work lifecycle behavior, keep product flow in `src/application/work/`, storage mechanics in `src/infrastructure/storage/`, and naming rules in `src/domain/work/`.
 - For shared helpers, place them next to the domain or adapter that owns the concept. Use `src/shared/` only for truly cross-cutting types with clear names.
 
@@ -114,7 +114,6 @@ How AI agents should work in this repo.
 - Keep decisions visible.
 - Keep docs short enough to stay alive.
 - Use simple language; avoid filler and hype.
-- Use the Worktrunk `wt` CLI for git worktree operations.
-- Do not create, switch, merge, remove, or inspect worktrees with raw `git worktree` commands unless `wt` cannot perform the needed operation.
+- Repository context worktrees use raw `git worktree` through `src/infrastructure/git_worktree/`; do not add Worktrunk as a product dependency for this path.
 - Commit only when asked.
 - Keep commits narrow and named for the user-facing change.

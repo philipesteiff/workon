@@ -80,26 +80,37 @@ pub(crate) fn render_output(
         }
         CommandOutput::WorkRepositoriesAdded(change) => {
             writeln!(writer, "repositories added: {}", change.work.title)?;
-            for repository in &change.repositories {
+            if change.repositories.is_empty() {
                 writeln!(
                     writer,
-                    "{}  {}  {}",
-                    repository.name_with_owner,
-                    repository.branch,
-                    repository.path.display()
+                    "No repository changes. Requested repositories were already attached."
                 )?;
+            } else {
+                for repository in &change.repositories {
+                    writeln!(
+                        writer,
+                        "{}  {}  {}",
+                        repository.name_with_owner,
+                        repository.branch,
+                        repository.path.display()
+                    )?;
+                }
             }
         }
         CommandOutput::WorkRepositoriesRemoved(change) => {
             writeln!(writer, "repositories removed: {}", change.work.title)?;
-            for repository in &change.repositories {
-                writeln!(
-                    writer,
-                    "{}  {}  {}",
-                    repository.name_with_owner,
-                    repository.branch,
-                    repository.path.display()
-                )?;
+            if change.repositories.is_empty() {
+                writeln!(writer, "No repository changes.")?;
+            } else {
+                for repository in &change.repositories {
+                    writeln!(
+                        writer,
+                        "{}  {}  {}",
+                        repository.name_with_owner,
+                        repository.branch,
+                        repository.path.display()
+                    )?;
+                }
             }
         }
     }
@@ -258,7 +269,6 @@ TUI:
 
 Requires:
   gh auth login
-  wt
 ",
     )?;
     Ok(())

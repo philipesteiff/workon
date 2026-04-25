@@ -239,6 +239,7 @@ struct RepoContextData {
     work: crate::domain::WorkSummary,
     available: Vec<crate::domain::AvailableRepository>,
     attached: Vec<crate::domain::AttachedRepository>,
+    catalog_error: Option<String>,
 }
 
 struct RepoLoadJob {
@@ -283,6 +284,7 @@ fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>)
         Ok(repo_context) => {
             let available_count = repo_context.available.len();
             let attached_count = repo_context.attached.len();
+            let catalog_error = repo_context.catalog_error;
             state.enter_repo_context(
                 repo_context.work.slug,
                 repo_context.work.title,
@@ -294,6 +296,17 @@ fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>)
                 format!("loaded {available_count} GitHub repos, {attached_count} selected"),
             );
             state.push_trace(TraceKind::Run, "repo context loaded");
+            if let Some(error) = catalog_error {
+                state.toast = Some(Toast::error(
+                    "GitHub catalog unavailable",
+                    "Attached repositories can still be removed.",
+                ));
+                state.push_trace(
+                    TraceKind::Warn,
+                    format!("GitHub catalog unavailable: {error}"),
+                );
+                state.set_repo_failed(format!("GitHub catalog unavailable: {error}"));
+            }
         }
         Err(error) => {
             state.toast = Some(Toast::error("Repos failed", &error.to_string()));
@@ -304,10 +317,6 @@ fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>)
 }
 
 fn load_repo_context(app: &App, work_slug: &str) -> Result<RepoContextData> {
-    let CommandOutput::RepositoryCatalog(catalog) = app.execute(Command::ListGitHubRepositories)?
-    else {
-        unreachable!("list GitHub repositories command returns repository catalog");
-    };
     let CommandOutput::WorkRepositories(attached) = app.execute(Command::ListWorkRepositories {
         query: work_slug.to_string(),
     })?
@@ -315,10 +324,17 @@ fn load_repo_context(app: &App, work_slug: &str) -> Result<RepoContextData> {
         unreachable!("list work repositories command returns work repositories");
     };
 
+    let (available, catalog_error) = match app.execute(Command::ListGitHubRepositories) {
+        Ok(CommandOutput::RepositoryCatalog(catalog)) => (catalog.repositories, None),
+        Ok(_) => unreachable!("list GitHub repositories command returns repository catalog"),
+        Err(error) => (Vec::new(), Some(error.to_string())),
+    };
+
     Ok(RepoContextData {
         work: attached.work,
-        available: catalog.repositories,
+        available,
         attached: attached.repositories,
+        catalog_error,
     })
 }
 
@@ -507,14 +523,16 @@ fn first_error_line(message: &str) -> String {
 mod tests {
     use std::time::Duration;
 
-    use crate::domain::{WorkList, WorkSummary};
+    use crate::domain::{AttachedRepository, WorkList, WorkSummary};
 
     use super::animation::{
         input_poll_timeout, AnimationRuntime, AnimationSnapshot, AnimationTarget,
         ANIMATION_FRAME_INTERVAL,
     };
     use super::state::{Toast, TraceKind, TuiMode, TuiState};
-    use super::{show_repo_batch_outcome, RepoBatchOutcome};
+    use super::{
+        apply_repo_load_result, show_repo_batch_outcome, RepoBatchOutcome, RepoContextData,
+    };
 
     #[test]
     fn repo_batch_failure_toast_shows_first_failure_reason() {
@@ -524,7 +542,7 @@ mod tests {
             RepoBatchOutcome {
                 successes: 0,
                 failures: vec![
-                    "example/private-repo: Cannot remove worktree: workon/workon-improve-creation-and-intent has uncommitted changes\nrepository context command failed: wt -C /cache remove".to_string(),
+                    "example/private-repo: contains modified files\nrepository context command failed: git -C /cache worktree remove /work/repos/repo".to_string(),
                 ],
                 cancelled: false,
                 skipped: 0,
@@ -535,9 +553,36 @@ mod tests {
         assert_eq!(toast.title, "Repository context failed");
         assert_eq!(
             toast.message,
-            "example/private-repo: Cannot remove worktree: workon/workon-improve-creation-and-intent has uncommitted changes"
+            "example/private-repo: contains modified files"
         );
         assert_eq!(state.trace[0].kind, TraceKind::Err);
+    }
+
+    #[test]
+    fn repo_load_keeps_attached_repositories_when_github_catalog_fails() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+
+        apply_repo_load_result(
+            &mut state,
+            Ok(RepoContextData {
+                work,
+                available: Vec::new(),
+                attached: attached_repositories(),
+                catalog_error: Some("gh auth required".to_string()),
+            }),
+        );
+
+        assert_eq!(state.mode, TuiMode::Repos);
+        assert_eq!(state.repo.attached.len(), 1);
+        assert_eq!(state.repo.attached[0].name_with_owner, "openai/workon");
+        assert!(state
+            .repo
+            .selected_rows()
+            .iter()
+            .any(|row| row.name_with_owner == "openai/workon"));
+        let toast = state.toast.expect("catalog failure should show a toast");
+        assert_eq!(toast.title, "GitHub catalog unavailable");
     }
 
     #[test]
@@ -675,5 +720,15 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn attached_repositories() -> Vec<AttachedRepository> {
+        vec![AttachedRepository {
+            name_with_owner: "openai/workon".to_string(),
+            branch: "workon/billing-retry-audit".to_string(),
+            path: "/tmp/workon/.workon/work/billing-retry-audit/repos/openai__workon".into(),
+            default_branch: "main".to_string(),
+            url: "https://github.com/openai/workon".to_string(),
+        }]
     }
 }

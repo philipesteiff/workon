@@ -132,11 +132,14 @@ impl RepoBatch {
         cancel_requested: bool,
     ) -> RepoStepReport {
         let report = match result {
-            Ok(_) => {
-                self.outcome.successes += 1;
+            Ok(output) => {
+                let message = step.success_message(&output);
+                if step.changed_repositories(&output) > 0 {
+                    self.outcome.successes += 1;
+                }
                 RepoStepReport {
                     kind: TraceKind::Sync,
-                    message: step.success_message(),
+                    message,
                 }
             }
             Err(error) => {
@@ -167,7 +170,11 @@ impl RepoBatch {
 }
 
 impl RepoStep {
-    fn success_message(&self) -> String {
+    fn success_message(&self, output: &CommandOutput) -> String {
+        if matches!(self.operation, RepoOperation::Add) && self.changed_repositories(output) == 0 {
+            return format!("already attached {}", self.repository);
+        }
+
         match self.operation {
             RepoOperation::Add => format!("attached {}", self.repository),
             RepoOperation::Remove if self.force_remove => {
@@ -175,6 +182,14 @@ impl RepoStep {
             }
             RepoOperation::Remove => format!("removed {}", self.repository),
             RepoOperation::Refresh => format!("refreshed {}", self.repository),
+        }
+    }
+
+    fn changed_repositories(&self, output: &CommandOutput) -> usize {
+        match output {
+            CommandOutput::WorkRepositoriesAdded(change)
+            | CommandOutput::WorkRepositoriesRemoved(change) => change.repositories.len(),
+            _ => 1,
         }
     }
 }
@@ -245,6 +260,33 @@ mod tests {
         assert_eq!(outcome.skipped, 1);
     }
 
+    #[test]
+    fn batch_reports_duplicate_add_as_already_attached_noop() {
+        let mut batch = RepoBatch::new(RepoChangeRequest {
+            work_slug: "billing".to_string(),
+            add: vec!["openai/api".to_string()],
+            remove: Vec::new(),
+            force_remove: false,
+        });
+        let step = batch.next_step().expect("add step");
+
+        let report = batch.record_result(
+            &step,
+            Ok(crate::application::CommandOutput::WorkRepositoriesAdded(
+                crate::domain::RepositoryContextChange {
+                    work: work_summary(),
+                    repositories: Vec::new(),
+                },
+            )),
+            false,
+        );
+        let outcome = batch.finish();
+
+        assert_eq!(report.message, "already attached openai/api");
+        assert_eq!(outcome.successes, 0);
+        assert!(outcome.failures.is_empty());
+    }
+
     fn request() -> RepoChangeRequest {
         RepoChangeRequest {
             work_slug: "billing".to_string(),
@@ -258,6 +300,16 @@ mod tests {
         crate::domain::ContextStatus {
             status: "ok".to_string(),
             message: "ok".to_string(),
+        }
+    }
+
+    fn work_summary() -> crate::domain::WorkSummary {
+        crate::domain::WorkSummary {
+            title: "Billing".to_string(),
+            slug: "billing".to_string(),
+            goal: "Investigate billing".to_string(),
+            intent_id: "investigate".to_string(),
+            path: "/tmp/workon/billing".into(),
         }
     }
 

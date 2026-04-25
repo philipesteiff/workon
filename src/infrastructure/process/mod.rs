@@ -6,7 +6,6 @@ use crate::shared::error::{Result, WorkonError};
 pub(crate) struct RepoCommand {
     program: String,
     args: Vec<String>,
-    env: Vec<(String, String)>,
 }
 
 impl RepoCommand {
@@ -14,17 +13,11 @@ impl RepoCommand {
         Self {
             program: program.into(),
             args: Vec::new(),
-            env: Vec::new(),
         }
     }
 
     pub(crate) fn args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.args.extend(args.into_iter().map(Into::into));
-        self
-    }
-
-    pub(crate) fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.env.push((key.into(), value.into()));
         self
     }
 
@@ -36,18 +29,8 @@ impl RepoCommand {
     }
 
     #[cfg(test)]
-    pub(crate) fn program(&self) -> &str {
-        &self.program
-    }
-
-    #[cfg(test)]
     pub(crate) fn args_slice(&self) -> &[String] {
         &self.args
-    }
-
-    #[cfg(test)]
-    pub(crate) fn env_slice(&self) -> &[(String, String)] {
-        &self.env
     }
 }
 
@@ -62,10 +45,6 @@ impl ProcessRunner for StdProcessRunner {
     fn run_checked(&self, command: &RepoCommand) -> Result<String> {
         let mut process = ProcessCommand::new(&command.program);
         process.args(&command.args);
-        for (key, value) in &command.env {
-            process.env(key, value);
-        }
-
         let output = process.output()?;
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
