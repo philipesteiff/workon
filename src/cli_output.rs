@@ -15,8 +15,10 @@ pub(crate) fn render_output(
     match output {
         CommandOutput::WorkArchived(work) => {
             writeln!(writer, "work archived: {}", work.title)?;
+            writeln!(writer, "slug: {}", work.slug)?;
             writeln!(writer, "from: {}", work.path.display())?;
             writeln!(writer, "to: {}", work.archive_path.display())?;
+            writeln!(writer, "next: wo list")?;
         }
         CommandOutput::Context(context) => {
             writeln!(writer, "context: {}", context.status)?;
@@ -33,11 +35,12 @@ pub(crate) fn render_output(
             writeln!(writer, "  source {}", script_path.display())?;
         }
         CommandOutput::WorkCreated(work) => {
-            writeln!(writer, "intent selected: {}", work.intent_id)?;
             writeln!(writer, "work created: {}", work.title)?;
+            writeln!(writer, "intent: {}", work.intent_id)?;
+            writeln!(writer, "slug: {}", work.slug)?;
             writeln!(writer, "folder created: {}", work.path.display())?;
-            writeln!(writer, "created: AGENTS.md")?;
-            writeln!(writer, "created: CLAUDE.md")?;
+            writeln!(writer, "files: AGENTS.md, CLAUDE.md")?;
+            writeln!(writer, "next: work from the folder")?;
             render_switch_signal(writer, &work.path, &work.title, root, machine)?;
         }
         CommandOutput::WorkList(list) => {
@@ -45,7 +48,9 @@ pub(crate) fn render_output(
         }
         CommandOutput::WorkOpened(work) => {
             writeln!(writer, "work opened: {}", work.title)?;
+            writeln!(writer, "slug: {}", work.slug)?;
             writeln!(writer, "path: {}", work.path.display())?;
+            writeln!(writer, "next: work from the folder")?;
             render_switch_signal(writer, &work.path, &work.title, root, machine)?;
         }
     }
@@ -55,6 +60,8 @@ pub(crate) fn render_output(
 fn render_work_list(list: &WorkList, writer: &mut dyn Write, root: &Path) -> Result<()> {
     if list.works.is_empty() {
         writeln!(writer, "No active work.")?;
+        writeln!(writer, "Next: wo --intent <intent-id> \"<goal>\"")?;
+        writeln!(writer, "Try:  wo --help")?;
         return Ok(());
     }
 
@@ -88,15 +95,24 @@ fn display_folder(path: &Path, root: &Path) -> String {
 pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
     writeln!(
         writer,
-        "wo\n\
-         wo list\n\
-         wo <work-query>\n\
-         wo archive <work-query>\n\
-         wo --intent <intent-id> \"<goal>\"\n\
-         wo ctx\n\
-         wo install-shell\n\
+        "wo - start, open, and archive work folders\n\
          \n\
-         env: WORKON_ROOT=/path/to/root overrides the default ~/.workon root"
+         Usage:\n\
+           wo                         list active work\n\
+           wo list                    list active work\n\
+           wo <work-query>            open matching work\n\
+           wo archive <work-query>    archive matching work\n\
+           wo --intent <id> \"<goal>\"  create work\n\
+           wo ctx                     print context status\n\
+           wo install-shell           install folder switching\n\
+         \n\
+         Options:\n\
+           -i, --intent <id>          intent for new work\n\
+           --machine                  emit shell switch signals\n\
+           -h, --help                 show this help\n\
+         \n\
+         Env:\n\
+           WORKON_ROOT=/path          override the default ~/.workon root"
     )?;
     Ok(())
 }

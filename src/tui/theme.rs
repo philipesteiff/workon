@@ -75,10 +75,6 @@ pub(super) fn style_current_badge() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-pub(super) fn style_active() -> Style {
-    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
-}
-
 pub(super) fn style_destructive() -> Style {
     Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
 }

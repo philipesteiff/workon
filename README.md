@@ -1,6 +1,6 @@
 # Workon
 
-Workon is a CLI for creating agent-ready context workspaces.
+Workon is a CLI and compact TUI for creating agent-ready context workspaces.
 
 Primary command: `wo`.
 
@@ -41,7 +41,7 @@ Workon prepares context. Agents use it. Engineers control it.
 intent -> work folder -> agent files -> agent session -> preserved context
 ```
 
-Commands are shortcuts. Natural text starts work. The engineer selects the intent profile.
+Commands are shortcuts. Natural text starts Work. The engineer selects the intent profile.
 
 ## Concepts
 
@@ -67,7 +67,7 @@ Workon writes instruction files into the Work folder.
 
 `AGENTS.md` is the portable source. Agent-specific files like `CLAUDE.md` are projections.
 
-They include the goal, current intent, preferred skills, preferred MCPs, attached repos, and orchestration instructions.
+They include the goal, current intent, preferred skills, preferred MCPs, attached repos, evidence hygiene, and next steps.
 
 **Context**  
 The current shape of the Work: intent, skills, MCPs, repos, notes, decisions, evidence, and outputs.
@@ -77,9 +77,9 @@ wo ctx
 wo context
 ```
 
-This is the dynamic surface for changing intent reinforcing via AGENTS.md/CLAUDE.md some skills, MCPs, also for changing repos.
+This is intended to become the context surface for changing intent, skills, MCPs, and repos.
 
-Status: TBD. The exact behavior is still being shaped.
+Status: placeholder. The command exists, but the editor behavior is not implemented yet.
 
 ## First Scenario: Investigate
 
@@ -87,26 +87,24 @@ Status: TBD. The exact behavior is still being shaped.
 wo --intent investigate "As SE, I want to answer a technical question for my manager that needs investigation across one or more repositories."
 ```
 
-Expected flow:
+Current flow:
 
 ```text
-intent selected: investigate
 work created: <generated-title>
+intent: investigate
+slug: <generated-slug>
 folder created: ~/.workon/work/<title>/
-created: AGENTS.md
-created: CLAUDE.md
-goal written: original input
-instructions written: investigate, collect evidence, cite sources, keep caveats visible
-cwd changed: ~/.workon/work/<title>/
+files: AGENTS.md, CLAUDE.md
+next: work from the folder
 ```
 
-To attach repos or change context:
+Planned context flow:
 
 ```sh
 wo ctx
 ```
 
-Expected flow:
+Future shape:
 
 ```text
 context editor opened: intent, skills, MCPs, repos
@@ -124,13 +122,13 @@ The engineer can now launch Claude, Codex, or Cursor from the Work folder with c
 
 ### `wo`
 
-Open the Work list.
+Open the compact Work list TUI.
 
 ```sh
 wo
 ```
 
-Use this to switch into existing Work without remembering exact names.
+Use this to switch into existing Work without remembering exact names. The TUI is an inline command panel, not a full-screen app.
 
 ### `wo list`
 
@@ -192,7 +190,7 @@ Archived Works no longer appear in `wo` and cannot be opened by normal Work quer
 
 ### `wo ctx`
 
-Open the context surface for the current Work.
+Show the current status of the context surface.
 
 ```sh
 wo ctx
@@ -201,9 +199,9 @@ wo context
 
 Alias: `wo context`.
 
-This is where intent, skills, MCPs, and repos can be added, removed, or changed.
+This is where intent, skills, MCPs, and repos are expected to be added, removed, or changed later.
 
-Status: TBD. The exact interface is still being shaped.
+Status: placeholder. The command is wired through the command layer, but the editor is not implemented yet.
 
 ## Principles
 

@@ -124,6 +124,112 @@ fn explicit_list_command_prints_work_summaries() {
 }
 
 #[test]
+fn help_prints_command_summary() {
+    let root = temp_root("help_prints_command_summary");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["--help"])
+        .output()
+        .expect("wo should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+    assert!(stdout.contains("wo - start, open, and archive work folders"));
+    assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work"));
+    assert!(stdout.contains("WORKON_ROOT=/path"));
+}
+
+#[test]
+fn empty_list_prints_next_step() {
+    let root = temp_root("empty_list_prints_next_step");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["list"])
+        .output()
+        .expect("wo should run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+    let expected = "\
+No active work.
+Next: wo --intent <intent-id> \"<goal>\"
+Try:  wo --help
+";
+
+    assert_eq!(stdout, expected);
+}
+
+#[test]
+fn cli_errors_are_actionable() {
+    let root = temp_root("cli_errors_are_actionable");
+
+    let missing_intent = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["Answer billing question"])
+        .output()
+        .expect("wo should run");
+
+    assert!(!missing_intent.status.success());
+    let stderr = String::from_utf8(missing_intent.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("intent required for new work"));
+    assert!(stderr.contains("Use: wo --intent <intent-id> \"<goal>\""));
+    assert!(stderr.contains("Available: investigate"));
+
+    let unknown_intent = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["--intent", "missing", "Answer billing question"])
+        .output()
+        .expect("wo should run");
+
+    assert!(!unknown_intent.status.success());
+    let stderr = String::from_utf8(unknown_intent.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("unknown intent `missing`"));
+    assert!(stderr.contains("Available: investigate"));
+
+    let not_found = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["archive", "missing-work"])
+        .output()
+        .expect("wo should run");
+
+    assert!(!not_found.status.success());
+    let stderr = String::from_utf8(not_found.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("work not found: `missing-work`"));
+    assert!(stderr.contains("Run `wo list`"));
+}
+
+#[test]
+fn ambiguous_work_error_lists_slug_commands() {
+    let root = temp_root("ambiguous_work_error_lists_slug_commands");
+    create_work(root.path(), "Answer billing question");
+    create_work(root.path(), "Investigate billing issue");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["archive", "billing"])
+        .output()
+        .expect("wo should run");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+
+    assert!(stderr.contains("work query `billing` matched multiple works"));
+    assert!(stderr.contains("Use a slug:"));
+    assert!(stderr.contains("wo answer-billing-question  # Answer billing question"));
+    assert!(stderr.contains("wo investigate-billing-issue  # Investigate billing issue"));
+}
+
+#[test]
 fn default_root_uses_home_not_current_directory() {
     let home = temp_root("default_root_uses_home_not_current_directory_home");
     let cwd = temp_root("default_root_uses_home_not_current_directory_cwd");

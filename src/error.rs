@@ -33,15 +33,21 @@ impl fmt::Display for WorkonError {
             Self::AmbiguousWork { query, matches } => {
                 let options = matches
                     .iter()
-                    .map(|work| format!("{} ({})", work.slug, work.title))
+                    .map(|work| format!("  wo {}  # {}", work.slug, work.title))
                     .collect::<Vec<_>>()
-                    .join(", ");
-                write!(formatter, "work query `{query}` is ambiguous: {options}")
+                    .join("\n");
+                write!(
+                    formatter,
+                    "work query `{query}` matched multiple works.\nUse a slug:\n{options}"
+                )
             }
-            Self::EmptyGoal => write!(formatter, "work goal cannot be empty"),
+            Self::EmptyGoal => write!(
+                formatter,
+                "work goal cannot be empty.\nUse: wo --intent <intent-id> \"<goal>\""
+            ),
             Self::IntentRequired { available } => write!(
                 formatter,
-                "intent required. available intents: {}",
+                "intent required for new work.\nUse: wo --intent <intent-id> \"<goal>\"\nAvailable: {}",
                 available.join(", ")
             ),
             Self::Io(error) => write!(formatter, "io error: {error}"),
@@ -51,10 +57,13 @@ impl fmt::Display for WorkonError {
                 available,
             } => write!(
                 formatter,
-                "unknown intent `{intent_id}`. available intents: {}",
+                "unknown intent `{intent_id}`.\nAvailable: {}\nUse: wo --intent <intent-id> \"<goal>\"",
                 available.join(", ")
             ),
-            Self::WorkNotFound { query } => write!(formatter, "work not found for `{query}`"),
+            Self::WorkNotFound { query } => write!(
+                formatter,
+                "work not found: `{query}`.\nRun `wo list` or create it with `wo --intent <intent-id> \"{query}\"`."
+            ),
         }
     }
 }

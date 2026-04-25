@@ -236,7 +236,7 @@ fn render_diagnostic(
     regions: &mut Option<&mut RenderRegions>,
 ) {
     mark_region(regions, AnimationTarget::DetailPanel, area);
-    let block = panel_block("ACTIVE SESSION", state.detail_visible);
+    let block = panel_block("SELECTED WORK", state.detail_visible);
 
     let Some(work) = state.selected_work() else {
         frame.render_widget(
@@ -252,48 +252,34 @@ fn render_diagnostic(
         return;
     };
 
-    let active_label = if state.is_active_work(work) {
-        "ACTIVE"
-    } else {
-        "STANDBY"
-    };
     let lines = if !state.detail_visible {
         vec![
-            Line::from(vec![
-                status_badge(active_label, active_style(state.is_active_work(work))),
-                Span::raw(" "),
-                Span::styled(work.title.clone(), theme::style_primary_text()),
-            ]),
+            selected_work_header(state, work),
             label_value("intent", work.intent_id.clone()),
             label_value("folder", work_folder_label(work)),
+            label_value("selection", selected_state_label(state, work)),
             label_value("STATE", diagnostic_state_label(state)),
         ]
     } else if area.height <= 12 {
         vec![
-            section("ACTIVE SESSION"),
-            Line::from(vec![
-                status_badge(active_label, active_style(state.is_active_work(work))),
-                Span::raw(" "),
-                Span::styled(work.title.clone(), theme::style_primary_text()),
-            ]),
+            section(selected_section_label(state, work)),
+            selected_work_header(state, work),
             label_value("intent", work.intent_id.clone()),
             label_value("folder", work_folder_label(work)),
+            label_value("selection", selected_state_label(state, work)),
             section("Goal"),
             Line::from(work.goal.clone()),
         ]
     } else {
         vec![
-            section("ACTIVE SESSION"),
-            Line::from(vec![
-                status_badge(active_label, active_style(state.is_active_work(work))),
-                Span::raw(" "),
-                Span::styled(work.title.clone(), theme::style_primary_text()),
-            ]),
+            section(selected_section_label(state, work)),
+            selected_work_header(state, work),
             Line::from(work.slug.clone().dim()),
             Line::from(""),
             section("Context"),
             label_value("intent", work.intent_id.clone()),
             label_value("folder", work_folder_label(work)),
+            label_value("selection", selected_state_label(state, work)),
             label_value("STATE", diagnostic_state_label(state)),
             Line::from(""),
             section("Goal"),
@@ -363,6 +349,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Span::raw("  "),
     ];
     spans.extend(footer_keys(
+        area.width,
         state.mode,
         state.trace_visible,
         state.detail_visible,
@@ -382,8 +369,43 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     frame.render_widget(Paragraph::new(Line::from(spans)).block(top_border()), area);
 }
 
-fn footer_keys(mode: TuiMode, trace_visible: bool, detail_visible: bool) -> Vec<Span<'static>> {
+fn footer_keys(
+    width: u16,
+    mode: TuiMode,
+    trace_visible: bool,
+    detail_visible: bool,
+) -> Vec<Span<'static>> {
     match mode {
+        TuiMode::List if width < 88 => vec![
+            key("enter"),
+            "open ".dim(),
+            key("n"),
+            "new ".dim(),
+            key("/"),
+            "find ".dim(),
+            key("?"),
+            "help ".dim(),
+            key("q"),
+            "quit".dim(),
+        ],
+        TuiMode::List if width < 112 => vec![
+            key("enter"),
+            "open ".dim(),
+            key("n"),
+            "new ".dim(),
+            key("/"),
+            "find ".dim(),
+            key("C-d"),
+            if detail_visible {
+                "less ".dim()
+            } else {
+                "more ".dim()
+            },
+            key("?"),
+            "help ".dim(),
+            key("q"),
+            "quit".dim(),
+        ],
         TuiMode::List => vec![
             key("enter"),
             "open ".dim(),
@@ -404,7 +426,7 @@ fn footer_keys(mode: TuiMode, trace_visible: bool, detail_visible: bool) -> Vec<
                 "trace ".dim()
             },
             key("?"),
-            "".dim(),
+            "help ".dim(),
             key("q"),
             "quit".dim(),
         ],
@@ -420,7 +442,7 @@ fn footer_keys(mode: TuiMode, trace_visible: bool, detail_visible: bool) -> Vec<
         TuiMode::Create => vec![
             key("enter"),
             "create ".dim(),
-            key("tab/down"),
+            key("tab/right"),
             "intent ".dim(),
             key("esc"),
             "cancel".dim(),
@@ -564,10 +586,10 @@ fn render_create(
         Line::from(vec![
             key("enter"),
             "create ".dim(),
-            key("tab/down"),
+            key("tab/right"),
             "intent ".dim(),
-            key("up"),
-            "previous ".dim(),
+            key("left"),
+            "prev ".dim(),
             key("esc"),
             "cancel".dim(),
         ]),
@@ -691,18 +713,69 @@ fn mark_region(regions: &mut Option<&mut RenderRegions>, target: AnimationTarget
 fn selected_intent_lines(state: &TuiState) -> Vec<Line<'static>> {
     match state.intents.get(state.create_intent) {
         Some((intent, summary)) => vec![
-            Line::from(vec![
-                status_badge("RUN", theme::style_status_run()),
-                Span::raw(" "),
-                Span::styled(intent.clone(), theme::style_command()),
-            ]),
+            label_value("selected", selected_intent_label(state, intent)),
+            label_value("available", intent_catalog_label(state)),
             Line::from(summary.clone().dim()),
         ],
-        None => vec![Line::from(vec![
-            status_badge("RUN", theme::style_status_run()),
+        None => vec![
+            label_value("selected", "1/1 investigate"),
+            label_value("available", "investigate"),
+        ],
+    }
+}
+
+fn selected_intent_label(state: &TuiState, intent: &str) -> String {
+    format!(
+        "{}/{} {}",
+        state.create_intent + 1,
+        state.intents.len(),
+        intent
+    )
+}
+
+fn intent_catalog_label(state: &TuiState) -> String {
+    if state.intents.is_empty() {
+        return "investigate".to_string();
+    }
+
+    state
+        .intents
+        .iter()
+        .map(|(intent, _)| intent.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn selected_work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
+    let mut spans = if state.is_active_work(work) {
+        vec![status_badge("CURRENT", theme::style_current_badge())]
+    } else {
+        vec![
+            status_badge("TARGET", theme::style_target_row()),
             Span::raw(" "),
-            Span::styled("investigate", theme::style_command()),
-        ])],
+            status_badge("STANDBY", theme::style_muted_text()),
+        ]
+    };
+    spans.extend([
+        Span::raw(" "),
+        Span::styled(work.title.clone(), theme::style_primary_text()),
+    ]);
+    Line::from(spans)
+}
+
+fn selected_section_label(state: &TuiState, work: &WorkSummary) -> &'static str {
+    if state.is_active_work(work) {
+        "CURRENT WORK"
+    } else {
+        "TARGET WORK"
+    }
+}
+
+fn selected_state_label(state: &TuiState, work: &WorkSummary) -> &'static str {
+    if state.is_active_work(work) {
+        "CURRENT"
+    } else {
+        "TARGET / STANDBY"
     }
 }
 
@@ -724,14 +797,6 @@ fn toast_badge(kind: ToastKind) -> Span<'static> {
     match kind {
         ToastKind::Info => status_badge("OK", theme::style_status_ok()),
         ToastKind::Error => status_badge("ERR", theme::style_status_error()),
-    }
-}
-
-fn active_style(active: bool) -> Style {
-    if active {
-        theme::style_active()
-    } else {
-        theme::style_muted_text()
     }
 }
 
@@ -879,8 +944,8 @@ mod tests {
         assert!(content.contains("TASK QUEUE"));
         assert!(!content.contains("EXECUTION TRACE"));
         assert!(content.contains("OPERATOR COMMAND"));
-        assert!(content.contains("ACTIVE SESSION"));
-        assert!(content.contains("ACTIVE"));
+        assert!(content.contains("SELECTED WORK"));
+        assert!(content.contains("CURRENT"));
         assert!(content.contains("Billing retry audit"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
@@ -907,6 +972,21 @@ mod tests {
         assert!(content.contains(">> TARGET"));
         assert!(row_has_bg(&buffer, target_row, Color::Rgb(92, 58, 32)));
         assert!(row_has_modifier(&buffer, current_row, Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn renders_selected_detail_as_target_when_not_current_work() {
+        let mut state = TuiState::new(multi_work_list()).with_active_work_path(Some(
+            std::path::Path::new("/tmp/workon/.workon/work/billing-retry-audit"),
+        ));
+        state.move_selection(1);
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("SELECTED WORK"));
+        assert!(content.contains("TARGET"));
+        assert!(content.contains("STANDBY"));
+        assert!(!content.contains("ACTIVE SESSION"));
     }
 
     #[test]
@@ -982,12 +1062,41 @@ mod tests {
 
         assert!(content.contains("TASK INIT"));
         assert!(content.contains("Type the Work goal."));
+        assert!(content.contains("selected"));
+        assert!(content.contains("1/1 investigate"));
+        assert!(content.contains("available"));
         assert!(content.contains("investigate"));
         assert!(content.contains("Answer a technical question with evidence."));
         assert!(content.contains("enter create"));
-        assert!(content.contains("tab/down intent"));
+        assert!(content.contains("tab/right intent"));
         assert!(!content.contains("SLUG PREVIEW"));
         assert!(!content.contains("Answer why billing retry alerts spiked"));
+    }
+
+    #[test]
+    fn renders_create_overlay_with_compact_available_intents() {
+        let mut state = TuiState::new(work_list()).with_intents(vec![
+            (
+                "investigate".to_string(),
+                "Answer a technical question with evidence.".to_string(),
+            ),
+            (
+                "review-pr".to_string(),
+                "Review a pull request for regressions.".to_string(),
+            ),
+            (
+                "brainstorm".to_string(),
+                "Shape options before implementation.".to_string(),
+            ),
+        ]);
+        state.mode = TuiMode::Create;
+        state.create_intent = 1;
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("2/3 review-pr"));
+        assert!(content.contains("available"));
+        assert!(content.contains("investigate | review-pr | brainstorm"));
     }
 
     #[test]

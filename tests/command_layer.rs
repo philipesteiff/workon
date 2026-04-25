@@ -35,6 +35,17 @@ fn create_work_writes_agent_files_and_metadata() {
     assert!(agents.contains("evidence-skill"));
     assert!(agents.contains("slack"));
     assert!(agents.contains("repos/"));
+    assert!(agents.contains("AGENTS.md is the source"));
+    assert!(agents.contains("Treat Preferred Skills and Preferred MCPs as suggestions"));
+    assert!(agents.contains("Record decisions and evidence"));
+    assert!(agents.contains("Before acting"));
+    assert!(agents.contains("Next"));
+    assert!(!agents.contains("This file is a projection for AGENTS"));
+
+    let claude =
+        fs::read_to_string(created.path.join("CLAUDE.md")).expect("CLAUDE.md should be readable");
+    assert!(claude.contains("AGENTS.md is the source"));
+    assert!(claude.contains("This file is a projection for CLAUDE"));
 }
 
 #[test]

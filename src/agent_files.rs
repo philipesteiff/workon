@@ -23,8 +23,18 @@ fn render_claude_instructions(goal: &str, intent: &IntentProfile) -> String {
 }
 
 fn render_agent_file(agent_name: &str, goal: &str, intent: &IntentProfile) -> String {
+    let source_note = if agent_name == "AGENTS" {
+        "AGENTS.md is the source for this Work. Agent-specific files are projections from it."
+            .to_string()
+    } else {
+        format!(
+            "AGENTS.md is the source for this Work. This file is a projection for {agent_name}."
+        )
+    };
+
     format!(
         "# Work Context for {agent_name}\n\n\
+         {source_note}\n\n\
          ## Goal\n\n\
          {goal}\n\n\
          ## Intent\n\n\
@@ -36,6 +46,15 @@ fn render_agent_file(agent_name: &str, goal: &str, intent: &IntentProfile) -> St
          {}\n\n\
          ## Repos\n\n\
          Repos attached to this work belong in `repos/`. When present, treat them as context for this goal.\n\n\
+         ## How to Work\n\n\
+         - Before acting, restate the goal, current intent, and any missing context that could change the answer.\n\
+         - Treat Preferred Skills and Preferred MCPs as suggestions. Use them when available, and say when they are missing or not useful.\n\
+         - Keep changes focused on the goal. Do not broaden product behavior without an explicit decision.\n\
+         - Record decisions and evidence in plain language so the next agent or engineer can continue.\n\n\
+         ## Next\n\n\
+         - Inspect attached repos before editing.\n\
+         - Check existing notes, evidence, and outputs in this Work folder.\n\
+         - Leave a short handoff when you stop.\n\n\
          ## Instructions\n\n\
          {}\n",
         intent.name,

@@ -392,11 +392,11 @@ impl TuiState {
                 self.close_panel();
                 TuiAction::None
             }
-            KeyCode::Tab | KeyCode::Down => {
+            KeyCode::Tab | KeyCode::Down | KeyCode::Right => {
                 self.next_intent();
                 TuiAction::None
             }
-            KeyCode::Up => {
+            KeyCode::BackTab | KeyCode::Up | KeyCode::Left => {
                 self.previous_intent();
                 TuiAction::None
             }
@@ -703,6 +703,24 @@ mod tests {
             TuiAction::Archive("billing-retry-audit".to_string())
         );
         assert_eq!(y_action, enter_action);
+    }
+
+    #[test]
+    fn create_intent_navigation_accepts_horizontal_keys() {
+        let mut state = TuiState::new(work_list()).with_intents(vec![
+            ("investigate".to_string(), "Investigate".to_string()),
+            ("review-pr".to_string(), "Review".to_string()),
+        ]);
+        state.mode = TuiMode::Create;
+
+        assert_eq!(state.handle_key(key(KeyCode::Right)), TuiAction::None);
+        assert_eq!(state.create_intent, 1);
+
+        assert_eq!(state.handle_key(key(KeyCode::Left)), TuiAction::None);
+        assert_eq!(state.create_intent, 0);
+
+        assert_eq!(state.handle_key(key(KeyCode::BackTab)), TuiAction::None);
+        assert_eq!(state.create_intent, 1);
     }
 
     fn work_list() -> WorkList {
