@@ -65,24 +65,84 @@ fn render_work_list(list: &WorkList, writer: &mut dyn Write, root: &Path) -> Res
         return Ok(());
     }
 
-    let label = if list.works.len() == 1 {
-        "active work"
-    } else {
-        "active works"
-    };
-    writeln!(writer, "{} {label}", list.works.len())?;
-    writeln!(writer)?;
-    for (index, work) in list.works.iter().enumerate() {
-        if index > 0 {
-            writeln!(writer)?;
-        }
-        writeln!(writer, "{}. {}", index + 1, work.title)?;
-        writeln!(writer, "   intent  {}", work.intent_id)?;
-        writeln!(writer, "   slug    {}", work.slug)?;
-        writeln!(writer, "   folder  {}", display_folder(&work.path, root))?;
+    let rows: Vec<WorkListRow> = list
+        .works
+        .iter()
+        .map(|work| WorkListRow {
+            title: work.title.clone(),
+            intent_id: work.intent_id.clone(),
+            slug: work.slug.clone(),
+            path: display_folder(&work.path, root),
+            goal: work.goal.clone(),
+        })
+        .collect();
+
+    let widths = WorkListColumnWidths::from_rows(&rows);
+    writeln!(
+        writer,
+        "  {:<title_width$}  {:<intent_width$}  {:<slug_width$}  {:<path_width$}  Goal",
+        "Work",
+        "Intent",
+        "Slug",
+        "Path",
+        title_width = widths.title,
+        intent_width = widths.intent_id,
+        slug_width = widths.slug,
+        path_width = widths.path,
+    )?;
+
+    for row in rows {
+        writeln!(
+            writer,
+            "  {:<title_width$}  {:<intent_width$}  {:<slug_width$}  {:<path_width$}  {}",
+            row.title,
+            row.intent_id,
+            row.slug,
+            row.path,
+            row.goal,
+            title_width = widths.title,
+            intent_width = widths.intent_id,
+            slug_width = widths.slug,
+            path_width = widths.path,
+        )?;
     }
 
     Ok(())
+}
+
+struct WorkListRow {
+    title: String,
+    intent_id: String,
+    slug: String,
+    path: String,
+    goal: String,
+}
+
+struct WorkListColumnWidths {
+    title: usize,
+    intent_id: usize,
+    slug: usize,
+    path: usize,
+}
+
+impl WorkListColumnWidths {
+    fn from_rows(rows: &[WorkListRow]) -> Self {
+        let mut widths = Self {
+            title: "Work".len(),
+            intent_id: "Intent".len(),
+            slug: "Slug".len(),
+            path: "Path".len(),
+        };
+
+        for row in rows {
+            widths.title = widths.title.max(row.title.len());
+            widths.intent_id = widths.intent_id.max(row.intent_id.len());
+            widths.slug = widths.slug.max(row.slug.len());
+            widths.path = widths.path.max(row.path.len());
+        }
+
+        widths
+    }
 }
 
 fn display_folder(path: &Path, root: &Path) -> String {

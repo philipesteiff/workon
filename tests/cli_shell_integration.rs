@@ -105,19 +105,11 @@ fn explicit_list_command_prints_work_summaries() {
     );
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
 
-    let expected = "\
-2 active works
-
-1. Investigate billing timeout
-   intent  investigate
-   slug    investigate-billing-timeout
-   folder  .workon/work/investigate-billing-timeout
-
-2. Prepare design document
-   intent  investigate
-   slug    prepare-design-document
-   folder  .workon/work/prepare-design-document
-";
+    let expected = concat!(
+        "  Work                         Intent       Slug                         Path                                      Goal\n",
+        "  Investigate billing timeout  investigate  investigate-billing-timeout  .workon/work/investigate-billing-timeout  Investigate billing timeout\n",
+        "  Prepare design document      investigate  prepare-design-document      .workon/work/prepare-design-document      Prepare design document\n",
+    );
 
     assert_eq!(stdout, expected);
     assert!(!stdout.contains("__WORKON_CD="));

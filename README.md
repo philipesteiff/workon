@@ -138,7 +138,7 @@ Print active Work directly in the terminal.
 wo list
 ```
 
-The list includes each Work title, intent, slug, and folder.
+The list prints a compact table with each Work title, intent, slug, path, and goal.
 
 ### `wo install-shell`
 
