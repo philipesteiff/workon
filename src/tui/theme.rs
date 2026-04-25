@@ -1,27 +1,33 @@
 use ratatui::style::{Color, Modifier, Style};
 
+const AMBER: Color = Color::Rgb(255, 176, 64);
+const ORANGE: Color = Color::Rgb(255, 140, 32);
+const DIM_AMBER: Color = Color::Rgb(160, 104, 48);
+const BORDER_AMBER: Color = Color::Rgb(104, 72, 40);
+const OK_AMBER: Color = Color::Rgb(220, 180, 84);
+
 pub(super) fn style_primary_text() -> Style {
-    Style::new().fg(Color::White)
+    Style::new().fg(AMBER)
 }
 
 pub(super) fn style_muted_text() -> Style {
-    Style::new().fg(Color::DarkGray)
+    Style::new().fg(DIM_AMBER)
 }
 
 pub(super) fn style_panel_title() -> Style {
-    Style::new().fg(Color::White).add_modifier(Modifier::BOLD)
+    Style::new().fg(AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_inactive_border() -> Style {
-    Style::new().fg(Color::DarkGray)
+    Style::new().fg(BORDER_AMBER)
 }
 
 pub(super) fn style_focused_border() -> Style {
-    Style::new().fg(Color::Cyan)
+    Style::new().fg(ORANGE)
 }
 
 pub(super) fn style_status_ok() -> Style {
-    Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
+    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_status_warn() -> Style {
@@ -33,25 +39,40 @@ pub(super) fn style_status_error() -> Style {
 }
 
 pub(super) fn style_status_run() -> Style {
-    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_command() -> Style {
-    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_key() -> Style {
-    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_selected() -> Style {
-    Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_active() -> Style {
-    Style::new().fg(Color::Green).add_modifier(Modifier::BOLD)
+    Style::new().fg(OK_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_destructive() -> Style {
     Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::style::Color;
+
+    use super::{style_command, style_focused_border, style_inactive_border, style_primary_text};
+
+    #[test]
+    fn uses_amber_orange_terminal_palette() {
+        assert_eq!(style_primary_text().fg, Some(Color::Rgb(255, 176, 64)));
+        assert_eq!(style_focused_border().fg, Some(Color::Rgb(255, 140, 32)));
+        assert_eq!(style_command().fg, Some(Color::Rgb(255, 140, 32)));
+        assert_eq!(style_inactive_border().fg, Some(Color::Rgb(104, 72, 40)));
+    }
 }
