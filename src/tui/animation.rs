@@ -192,16 +192,9 @@ fn effect_for(target: AnimationTarget) -> Effect {
     let dark = Color::Rgb(12, 15, 11);
 
     match target {
-        AnimationTarget::Overlay => fx::parallel(&[
-            fx::fade_from(dark, dark, (180, Interpolation::QuadOut)),
-            fx::sweep_in(
-                Motion::LeftToRight,
-                8,
-                0,
-                dark,
-                (180, Interpolation::QuadOut),
-            ),
-        ]),
+        AnimationTarget::Overlay => {
+            fx::parallel(&[fx::fade_from_fg(dark, (180, Interpolation::QuadOut))])
+        }
         AnimationTarget::Toast => fx::parallel(&[
             fx::fade_from_fg(Color::Rgb(80, 56, 32), (180, Interpolation::QuadOut)),
             fx::sweep_in(
@@ -259,5 +252,23 @@ mod tests {
         runtime.process_frame(Duration::from_millis(1_000), &mut buffer, area);
 
         assert!(!runtime.is_animating());
+    }
+
+    #[test]
+    fn overlay_animation_does_not_paint_blank_background_cells() {
+        let area = Rect::new(0, 0, 40, 10);
+        let mut runtime = AnimationRuntime::default();
+        let mut regions = RenderRegions::default();
+        let mut buffer = Buffer::empty(area);
+
+        regions.set(AnimationTarget::Overlay, area);
+        runtime.queue(AnimationTarget::Overlay);
+        runtime.prepare_frame(&regions);
+        runtime.process_frame(Duration::from_millis(1), &mut buffer, area);
+
+        assert!(buffer
+            .content()
+            .iter()
+            .all(|cell| cell.bg == ratatui::style::Color::Reset));
     }
 }
