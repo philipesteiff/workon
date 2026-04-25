@@ -692,7 +692,10 @@ fn work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
     };
     spans.extend([
         Span::raw(" "),
-        Span::styled(work.title.clone(), theme::style_primary_text()),
+        Span::styled(
+            work.title.clone(),
+            work_primary_style(state.is_current_work(work)),
+        ),
     ]);
     Line::from(spans)
 }
@@ -950,17 +953,18 @@ mod tests {
         assert_eq!(current_meta_value.bg, Color::Reset);
         assert_eq!(selected_active_badge.fg, Color::Rgb(190, 130, 70));
         assert_eq!(selected_active_badge.bg, Color::Rgb(92, 58, 32));
-        assert_eq!(selected_active_title.fg, Color::Rgb(255, 176, 64));
+        assert_eq!(selected_active_title.fg, Color::Rgb(255, 140, 32));
         assert_eq!(selected_active_title.bg, Color::Rgb(92, 58, 32));
+        assert!(selected_active_title.modifier.contains(Modifier::BOLD));
         assert_eq!(target_meta_key.fg, Color::Rgb(104, 72, 40));
-        assert_eq!(target_meta_value.fg, Color::Rgb(255, 140, 32));
+        assert_eq!(target_meta_value.fg, Color::Rgb(255, 176, 64));
         assert_eq!(target_meta_value.bg, Color::Rgb(92, 58, 32));
         assert_eq!(active_badge.fg, Color::Rgb(190, 130, 70));
-        assert_eq!(active_title.fg, Color::Rgb(255, 176, 64));
+        assert_eq!(active_title.fg, Color::Rgb(255, 140, 32));
         assert!(active_title.modifier.contains(Modifier::BOLD));
         assert_eq!(active_meta_key.fg, Color::Rgb(104, 72, 40));
-        assert_eq!(active_meta_value.fg, Color::Rgb(255, 140, 32));
-        assert!(active_meta_value.modifier.contains(Modifier::BOLD));
+        assert_eq!(active_meta_value.fg, Color::Rgb(255, 176, 64));
+        assert!(!active_meta_value.modifier.contains(Modifier::BOLD));
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub(super) fn style_primary_text() -> Style {
 }
 
 pub(super) fn style_work_title() -> Style {
-    Style::new().fg(AMBER).add_modifier(Modifier::BOLD)
+    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_muted_text() -> Style {
@@ -25,7 +25,7 @@ pub(super) fn style_meta_key() -> Style {
 }
 
 pub(super) fn style_meta_value() -> Style {
-    Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
+    Style::new().fg(AMBER)
 }
 
 pub(super) fn style_panel_title() -> Style {
@@ -100,13 +100,22 @@ pub(super) fn style_destructive() -> Style {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::style::Color;
+    use ratatui::style::{Color, Modifier};
 
-    use super::{style_command, style_focused_border, style_inactive_border, style_primary_text};
+    use super::{
+        style_command, style_current_text, style_focused_border, style_inactive_border,
+        style_meta_value, style_primary_text, style_work_title,
+    };
 
     #[test]
     fn uses_amber_orange_terminal_palette() {
         assert_eq!(style_primary_text().fg, Some(Color::Rgb(255, 176, 64)));
+        assert_eq!(style_work_title().fg, Some(Color::Rgb(255, 140, 32)));
+        assert!(style_work_title().add_modifier.contains(Modifier::BOLD));
+        assert_eq!(style_meta_value().fg, Some(Color::Rgb(255, 176, 64)));
+        assert!(!style_meta_value().add_modifier.contains(Modifier::BOLD));
+        assert_eq!(style_current_text().fg, Some(Color::Rgb(220, 180, 84)));
+        assert!(style_current_text().add_modifier.contains(Modifier::BOLD));
         assert_eq!(style_focused_border().fg, Some(Color::Rgb(255, 140, 32)));
         assert_eq!(style_command().fg, Some(Color::Rgb(255, 140, 32)));
         assert_eq!(style_inactive_border().fg, Some(Color::Rgb(104, 72, 40)));
