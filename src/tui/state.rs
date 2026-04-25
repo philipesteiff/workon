@@ -17,6 +17,7 @@ pub(super) struct TuiState {
     pub(super) root: PathBuf,
     pub(super) active_work_path: Option<PathBuf>,
     pub(super) trace: Vec<TraceEvent>,
+    pub(super) trace_visible: bool,
     pub(super) toast: Option<Toast>,
 }
 
@@ -81,6 +82,7 @@ impl TuiState {
             root: PathBuf::new(),
             active_work_path: None,
             trace: Vec::new(),
+            trace_visible: false,
             toast: None,
         }
     }
@@ -178,6 +180,10 @@ impl TuiState {
         self.trace.truncate(6);
     }
 
+    pub(super) fn toggle_trace(&mut self) {
+        self.trace_visible = !self.trace_visible;
+    }
+
     pub(super) fn move_selection(&mut self, delta: isize) {
         let count = self.filtered_indices().len();
         if count == 0 {
@@ -212,6 +218,19 @@ impl TuiState {
         }
 
         self.toast = None;
+
+        if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.toggle_trace();
+            self.push_trace(
+                TraceKind::Run,
+                if self.trace_visible {
+                    "trace panel shown"
+                } else {
+                    "trace panel hidden"
+                },
+            );
+            return TuiAction::None;
+        }
 
         match self.mode {
             TuiMode::List => self.handle_list_key(key),
@@ -596,6 +615,23 @@ mod tests {
         assert_eq!(state.trace[0].message, "event 9");
         assert_eq!(state.trace[0].kind, TraceKind::Run);
         assert_eq!(state.trace[5].message, "event 4");
+    }
+
+    #[test]
+    fn trace_panel_is_hidden_by_default_and_toggles_from_list() {
+        let mut state = TuiState::new(work_list());
+
+        assert!(!state.trace_visible);
+
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+
+        assert_eq!(action, TuiAction::None);
+        assert!(state.trace_visible);
+
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+
+        assert_eq!(action, TuiAction::None);
+        assert!(!state.trace_visible);
     }
 
     #[test]

@@ -73,7 +73,7 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         return;
     }
 
-    let trace_height = if area.height < 14 || area.width < 76 {
+    let trace_height = if !state.trace_visible || area.height < 14 || area.width < 76 {
         0
     } else if area.height < 22 {
         3
@@ -285,7 +285,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Span::styled(state.mode_status(), theme::style_muted_text()),
         Span::raw("  "),
     ];
-    spans.extend(footer_keys(state.mode));
+    spans.extend(footer_keys(state.mode, state.trace_visible));
 
     if area.width >= 96 {
         if let Some(toast) = &state.toast {
@@ -301,7 +301,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     frame.render_widget(Paragraph::new(Line::from(spans)).block(top_border()), area);
 }
 
-fn footer_keys(mode: TuiMode) -> Vec<Span<'static>> {
+fn footer_keys(mode: TuiMode, trace_visible: bool) -> Vec<Span<'static>> {
     match mode {
         TuiMode::List => vec![
             key("enter"),
@@ -310,6 +310,12 @@ fn footer_keys(mode: TuiMode) -> Vec<Span<'static>> {
             "create ".dim(),
             key("/"),
             "filter ".dim(),
+            key("ctrl-t"),
+            if trace_visible {
+                "hide trace ".dim()
+            } else {
+                "trace ".dim()
+            },
             key("?"),
             "keys ".dim(),
             key("q"),
@@ -711,7 +717,7 @@ mod tests {
         assert!(content.contains("SYSTEM ONLINE"));
         assert!(content.contains("TASK QUEUE"));
         assert!(content.contains("DIAGNOSTIC"));
-        assert!(content.contains("EXECUTION TRACE"));
+        assert!(!content.contains("EXECUTION TRACE"));
         assert!(content.contains("OPERATOR COMMAND"));
         assert!(content.contains("ACTIVE SESSION"));
         assert!(content.contains("ACTIVE"));
@@ -719,6 +725,24 @@ mod tests {
         assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
+    }
+
+    #[test]
+    fn renders_execution_trace_only_when_toggled_visible() {
+        let mut state = TuiState::new(work_list());
+        state.push_trace(crate::tui::state::TraceKind::Run, "manual trace check");
+
+        let hidden = render_content(&state, 120, 36);
+        assert!(!hidden.contains("EXECUTION TRACE"));
+        assert!(!hidden.contains("manual trace check"));
+        assert!(hidden.contains("ctrl-t trace"));
+
+        state.trace_visible = true;
+        let visible = render_content(&state, 120, 36);
+
+        assert!(visible.contains("EXECUTION TRACE"));
+        assert!(visible.contains("manual trace check"));
+        assert!(visible.contains("ctrl-t hide trace"));
     }
 
     #[test]
