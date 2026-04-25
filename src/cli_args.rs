@@ -4,19 +4,24 @@ use crate::shell_integration::development_manifest_from_env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CliRequest {
-    Command { command: Command, machine: bool },
+    Command {
+        command: Command,
+        machine: bool,
+        allow_tui: bool,
+    },
     Help,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
     if args.is_empty() {
-        return Ok(command_request(Command::ListWorks, false));
+        return Ok(list_request(false, true));
     }
 
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Ok(CliRequest::Help);
     }
 
+    let lone_option_terminator = args.len() == 1 && args[0] == "--";
     let command_args = args
         .iter()
         .filter(|arg| arg.as_str() != "--machine")
@@ -69,7 +74,11 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
 
     let input = input_parts.join(" ");
     if input.trim().is_empty() && intent_id.is_none() {
-        return Ok(command_request(Command::ListWorks, machine));
+        return Ok(list_request(machine, lone_option_terminator && !machine));
+    }
+
+    if input == "list" {
+        return Ok(list_request(machine, false));
     }
 
     if let Some(query) = input.strip_prefix("archive ") {
@@ -111,13 +120,39 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
 }
 
 fn command_request(command: Command, machine: bool) -> CliRequest {
-    CliRequest::Command { command, machine }
+    CliRequest::Command {
+        command,
+        machine,
+        allow_tui: false,
+    }
+}
+
+fn list_request(machine: bool, allow_tui: bool) -> CliRequest {
+    CliRequest::Command {
+        command: Command::ListWorks,
+        machine,
+        allow_tui,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{parse_args, CliRequest};
     use crate::app::Command;
+
+    #[test]
+    fn empty_args_allow_tui_list() {
+        let request = parse_args(Vec::new()).expect("args should parse");
+
+        assert_eq!(
+            request,
+            CliRequest::Command {
+                command: Command::ListWorks,
+                machine: false,
+                allow_tui: true,
+            }
+        );
+    }
 
     #[test]
     fn treats_double_dash_as_option_terminator() {
@@ -135,6 +170,7 @@ mod tests {
                     intent_id: None,
                 },
                 machine: false,
+                allow_tui: false,
             }
         );
     }
@@ -148,6 +184,7 @@ mod tests {
             CliRequest::Command {
                 command: Command::ListWorks,
                 machine: false,
+                allow_tui: true,
             }
         );
     }
@@ -159,6 +196,7 @@ mod tests {
             CliRequest::Command {
                 command: Command::InstallShell,
                 machine: false,
+                allow_tui: false,
             }
         );
 
@@ -171,6 +209,7 @@ mod tests {
                     manifest_path: "/repo/Cargo.toml".into(),
                 },
                 machine: false,
+                allow_tui: false,
             }
         );
         restore_env("WORKON_DEV_MANIFEST", previous);
@@ -181,6 +220,7 @@ mod tests {
             CliRequest::Command {
                 command: Command::InstallShell,
                 machine: false,
+                allow_tui: false,
             }
         );
     }
@@ -195,6 +235,7 @@ mod tests {
                     query: "billing".to_string(),
                 },
                 machine: false,
+                allow_tui: false,
             }
         );
 
@@ -210,6 +251,7 @@ mod tests {
                     query: "billing".to_string(),
                 },
                 machine: true,
+                allow_tui: false,
             }
         );
     }
@@ -220,6 +262,28 @@ mod tests {
             parse_args(vec!["archive".to_string()]).expect_err("archive without query should fail");
 
         assert_eq!(error.to_string(), "archive requires a work query");
+    }
+
+    #[test]
+    fn parses_explicit_list_command() {
+        assert_eq!(
+            parse_args(vec!["list".to_string()]).expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ListWorks,
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec!["--machine".to_string(), "list".to_string()])
+                .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ListWorks,
+                machine: true,
+                allow_tui: false,
+            }
+        );
     }
 
     fn restore_env(key: &str, value: Option<std::ffi::OsString>) {

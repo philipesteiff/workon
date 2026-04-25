@@ -85,6 +85,45 @@ fn machine_archive_does_not_emit_cd_target() {
 }
 
 #[test]
+fn explicit_list_command_prints_work_summaries() {
+    let root = temp_root("explicit_list_command_prints_work_summaries");
+    create_work(root.path(), "Investigate billing timeout");
+    create_work(root.path(), "Prepare design document");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["list"])
+        .output()
+        .expect("wo should run");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+    let expected = "\
+2 active works
+
+1. Investigate billing timeout
+   intent  investigate
+   slug    investigate-billing-timeout
+   folder  .workon/work/investigate-billing-timeout
+
+2. Prepare design document
+   intent  investigate
+   slug    prepare-design-document
+   folder  .workon/work/prepare-design-document
+";
+
+    assert_eq!(stdout, expected);
+    assert!(!stdout.contains("__WORKON_CD="));
+}
+
+#[test]
 fn default_root_uses_home_not_current_directory() {
     let home = temp_root("default_root_uses_home_not_current_directory_home");
     let cwd = temp_root("default_root_uses_home_not_current_directory_cwd");
@@ -314,6 +353,22 @@ fn install_dev_shell(home: &Path) -> PathBuf {
     );
 
     home.join(".workon/shell/zsh/wo-dev.zsh")
+}
+
+fn create_work(root: &Path, goal: &str) {
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root)
+        .env("WORKON_ROOT", root)
+        .args(["--intent", "investigate", goal])
+        .output()
+        .expect("wo should run");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 struct TempRoot {
