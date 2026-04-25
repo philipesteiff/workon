@@ -18,6 +18,7 @@ pub(super) struct TuiState {
     pub(super) active_work_path: Option<PathBuf>,
     pub(super) trace: Vec<TraceEvent>,
     pub(super) trace_visible: bool,
+    pub(super) detail_visible: bool,
     pub(super) toast: Option<Toast>,
 }
 
@@ -83,6 +84,7 @@ impl TuiState {
             active_work_path: None,
             trace: Vec::new(),
             trace_visible: false,
+            detail_visible: false,
             toast: None,
         }
     }
@@ -184,6 +186,10 @@ impl TuiState {
         self.trace_visible = !self.trace_visible;
     }
 
+    pub(super) fn toggle_detail(&mut self) {
+        self.detail_visible = !self.detail_visible;
+    }
+
     pub(super) fn move_selection(&mut self, delta: isize) {
         let count = self.filtered_indices().len();
         if count == 0 {
@@ -227,6 +233,19 @@ impl TuiState {
                     "trace panel shown"
                 } else {
                     "trace panel hidden"
+                },
+            );
+            return TuiAction::None;
+        }
+
+        if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.toggle_detail();
+            self.push_trace(
+                TraceKind::Run,
+                if self.detail_visible {
+                    "detail panel expanded"
+                } else {
+                    "detail panel compact"
                 },
             );
             return TuiAction::None;
@@ -632,6 +651,23 @@ mod tests {
 
         assert_eq!(action, TuiAction::None);
         assert!(!state.trace_visible);
+    }
+
+    #[test]
+    fn detail_panel_is_compact_by_default_and_toggles_globally() {
+        let mut state = TuiState::new(work_list());
+
+        assert!(!state.detail_visible);
+
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+
+        assert_eq!(action, TuiAction::None);
+        assert!(state.detail_visible);
+
+        let action = state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+
+        assert_eq!(action, TuiAction::None);
+        assert!(!state.detail_visible);
     }
 
     #[test]

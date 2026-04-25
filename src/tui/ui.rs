@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::{Frame, Line, Span, Stylize};
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, StatefulWidget, Wrap};
 
 use crate::domain::WorkSummary;
 use crate::slug::{slugify, title_from_goal};
@@ -16,12 +16,18 @@ use super::theme;
 
 pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
     let area = frame.area();
+    let dialog = control_panel_rect(area, state);
+    let block = panel_block("WORKON // CONTROL", true);
+    let inner = block.inner(dialog);
+    frame.render_widget(Clear, dialog);
+    frame.render_widget(block, dialog);
+
     let [header, workspace, footer] = Layout::vertical([
-        Constraint::Length(if area.height < 12 { 2 } else { 3 }),
+        Constraint::Length(if inner.height < 12 { 1 } else { 2 }),
         Constraint::Fill(1),
         Constraint::Length(2),
     ])
-    .areas(area);
+    .areas(inner);
 
     render_header(frame, header, state);
     render_workspace(frame, workspace, state);
@@ -36,8 +42,6 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
 
     let root = root_label(state);
     let top = Line::from(vec![
-        Span::styled(" WORKON // CONTROL ", theme::style_panel_title()),
-        Span::raw(" "),
         status_badge("SYSTEM ONLINE", theme::style_status_ok()),
         Span::raw(" "),
         Span::styled("ROOT ", theme::style_muted_text()),
@@ -171,10 +175,7 @@ fn task_item(work: &WorkSummary, active: bool) -> ListItem<'static> {
 }
 
 fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let block = panel_block(
-        "DIAGNOSTIC",
-        matches!(state.mode, TuiMode::Create | TuiMode::Archive),
-    );
+    let block = panel_block("ACTIVE SESSION", state.detail_visible);
 
     let Some(work) = state.selected_work() else {
         frame.render_widget(
@@ -195,7 +196,18 @@ fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     } else {
         "STANDBY"
     };
-    let lines = if area.height <= 9 {
+    let lines = if !state.detail_visible {
+        vec![
+            Line::from(vec![
+                status_badge(active_label, active_style(state.is_active_work(work))),
+                Span::raw(" "),
+                Span::styled(work.title.clone(), theme::style_primary_text()),
+            ]),
+            label_value("intent", work.intent_id.clone()),
+            label_value("folder", work_folder_label(work)),
+            label_value("STATE", diagnostic_state_label(state)),
+        ]
+    } else if area.height <= 9 {
         vec![
             section("ACTIVE SESSION"),
             Line::from(vec![
@@ -281,11 +293,13 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         status_badge("OPERATOR COMMAND", theme::style_command()),
         Span::raw(" "),
         Span::styled(mode_label(state.mode), mode_style(state.mode)),
-        Span::raw(" "),
-        Span::styled(state.mode_status(), theme::style_muted_text()),
         Span::raw("  "),
     ];
-    spans.extend(footer_keys(state.mode, state.trace_visible));
+    spans.extend(footer_keys(
+        state.mode,
+        state.trace_visible,
+        state.detail_visible,
+    ));
 
     if area.width >= 96 {
         if let Some(toast) = &state.toast {
@@ -301,23 +315,29 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     frame.render_widget(Paragraph::new(Line::from(spans)).block(top_border()), area);
 }
 
-fn footer_keys(mode: TuiMode, trace_visible: bool) -> Vec<Span<'static>> {
+fn footer_keys(mode: TuiMode, trace_visible: bool, detail_visible: bool) -> Vec<Span<'static>> {
     match mode {
         TuiMode::List => vec![
             key("enter"),
-            "switch ".dim(),
+            "open ".dim(),
             key("n"),
-            "create ".dim(),
+            "new ".dim(),
             key("/"),
-            "filter ".dim(),
-            key("ctrl-t"),
+            "find ".dim(),
+            key("C-d"),
+            if detail_visible {
+                "hide details ".dim()
+            } else {
+                "details ".dim()
+            },
+            key("C-t"),
             if trace_visible {
                 "hide trace ".dim()
             } else {
                 "trace ".dim()
             },
             key("?"),
-            "keys ".dim(),
+            "".dim(),
             key("q"),
             "quit".dim(),
         ],
@@ -606,6 +626,19 @@ fn active_style(active: bool) -> Style {
     }
 }
 
+fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
+    if area.width < 44 || area.height < 12 {
+        return area;
+    }
+
+    let width = area.width.saturating_sub(4).min(96);
+    let base_height = if state.detail_visible { 22 } else { 16 };
+    let trace_extra = if state.trace_visible { 5 } else { 0 };
+    let height = (base_height + trace_extra).min(area.height.saturating_sub(2));
+
+    centered_area(area, width, height)
+}
+
 fn mode_style(mode: TuiMode) -> Style {
     match mode {
         TuiMode::Archive => theme::style_status_warn(),
@@ -614,6 +647,25 @@ fn mode_style(mode: TuiMode) -> Style {
         }
         TuiMode::List => theme::style_status_ok(),
     }
+}
+
+fn centered_area(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let [_, center, _] = Layout::vertical([
+        Constraint::Length((area.height - height) / 2),
+        Constraint::Length(height),
+        Constraint::Fill(1),
+    ])
+    .areas(area);
+    let [_, center, _] = Layout::horizontal([
+        Constraint::Length((area.width - width) / 2),
+        Constraint::Length(width),
+        Constraint::Fill(1),
+    ])
+    .areas(center);
+
+    center
 }
 
 fn mode_label(mode: TuiMode) -> &'static str {
@@ -716,15 +768,16 @@ mod tests {
         assert!(content.contains("WORKON // CONTROL"));
         assert!(content.contains("SYSTEM ONLINE"));
         assert!(content.contains("TASK QUEUE"));
-        assert!(content.contains("DIAGNOSTIC"));
         assert!(!content.contains("EXECUTION TRACE"));
         assert!(content.contains("OPERATOR COMMAND"));
         assert!(content.contains("ACTIVE SESSION"));
         assert!(content.contains("ACTIVE"));
         assert!(content.contains("Billing retry audit"));
-        assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
+        assert!(!content.contains("archive"));
+        assert!(!content.contains("Goal"));
+        assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
     }
 
     #[test]
@@ -735,14 +788,31 @@ mod tests {
         let hidden = render_content(&state, 120, 36);
         assert!(!hidden.contains("EXECUTION TRACE"));
         assert!(!hidden.contains("manual trace check"));
-        assert!(hidden.contains("ctrl-t trace"));
+        assert!(hidden.contains("C-t trace"));
 
         state.trace_visible = true;
         let visible = render_content(&state, 120, 36);
 
         assert!(visible.contains("EXECUTION TRACE"));
         assert!(visible.contains("manual trace check"));
-        assert!(visible.contains("ctrl-t hide trace"));
+        assert!(visible.contains("C-t hide trace"));
+    }
+
+    #[test]
+    fn renders_detail_panel_only_when_toggled_visible() {
+        let mut state = TuiState::new(work_list());
+
+        let compact = render_content(&state, 120, 36);
+        assert!(!compact.contains("Goal"));
+        assert!(!compact.contains("archive"));
+        assert!(compact.contains("C-d details"));
+
+        state.detail_visible = true;
+        let expanded = render_content(&state, 120, 36);
+
+        assert!(expanded.contains("Goal"));
+        assert!(expanded.contains("archive"));
+        assert!(expanded.contains("C-d hide details"));
     }
 
     #[test]
@@ -845,13 +915,12 @@ mod tests {
         let filtered = render_content(&state, 100, 28);
 
         assert!(filtered.contains("No active Work matches \"missing\"."));
-        assert!(filtered.contains("DIAGNOSTIC"));
         assert!(filtered.contains("No Work selected. Press n to create Work."));
     }
 
     #[test]
     fn renders_long_goal_and_path_without_losing_context_labels() {
-        let state = TuiState::new(WorkList {
+        let mut state = TuiState::new(WorkList {
             works: vec![WorkSummary {
                 title: "Long context review".to_string(),
                 slug: "long-context-review".to_string(),
@@ -860,10 +929,10 @@ mod tests {
                 path: PathBuf::from("/tmp/workon/.workon/work/long-context-review/with/a/deep/path/that/should/wrap"),
             }],
         });
+        state.detail_visible = true;
 
         let content = render_content(&state, 74, 30);
 
-        assert!(content.contains("DIAGNOSTIC"));
         assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
@@ -876,9 +945,7 @@ mod tests {
 
         assert!(content.contains("WORKON // CONTROL"));
         assert!(content.contains("TASK QUEUE"));
-        assert!(content.contains("DIAGNOSTIC"));
         assert!(content.contains("OPERATOR COMMAND"));
-        assert!(content.contains("Goal"));
         assert!(content.contains("intent"));
         assert!(content.contains("folder"));
         assert!(content.contains("work/billing-retry-audit"));
@@ -906,7 +973,6 @@ mod tests {
 
             assert!(content.contains("WORKON // CONTROL"), "{width}x{height}");
             assert!(content.contains("TASK QUEUE"), "{width}x{height}");
-            assert!(content.contains("DIAGNOSTIC"), "{width}x{height}");
             assert!(content.contains("OPERATOR COMMAND"), "{width}x{height}");
         }
     }
@@ -932,5 +998,9 @@ mod tests {
             .expect("render should succeed");
 
         format!("{}", terminal.backend())
+    }
+
+    fn first_lines(content: &str, count: usize) -> String {
+        content.lines().take(count).collect::<Vec<_>>().join("\n")
     }
 }

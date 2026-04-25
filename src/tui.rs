@@ -7,12 +7,9 @@ use std::io::{self, Stdout};
 use std::path::PathBuf;
 
 use crossterm::event::{self, Event};
-use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
+use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use crate::app::{App, Command, CommandOutput};
 use crate::error::Result;
@@ -20,6 +17,8 @@ use crate::shell_integration::current_work_path;
 
 use self::state::{Toast, TraceKind, TuiAction, TuiState};
 use self::ui::render;
+
+const INLINE_VIEWPORT_HEIGHT: u16 = 22;
 
 pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {
@@ -42,10 +41,14 @@ struct TerminalSession {
 impl TerminalSession {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(io::stdout());
-        let mut terminal = Terminal::new(backend)?;
-        terminal.clear()?;
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
+            },
+        )?;
+        terminal.hide_cursor()?;
         Ok(Self { terminal })
     }
 
@@ -57,7 +60,6 @@ impl TerminalSession {
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
         let _ = self.terminal.show_cursor();
     }
 }
