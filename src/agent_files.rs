@@ -1,12 +1,21 @@
 use std::fs;
 use std::path::Path;
 
-use crate::domain::IntentProfile;
+use crate::domain::{AttachedRepository, IntentProfile};
 use crate::error::Result;
 
 pub fn write_agent_files(work_path: &Path, goal: &str, intent: &IntentProfile) -> Result<()> {
-    let portable = render_portable_instructions(goal, intent);
-    let claude = render_claude_instructions(goal, intent);
+    write_agent_files_with_repos(work_path, goal, intent, &[])
+}
+
+pub fn write_agent_files_with_repos(
+    work_path: &Path,
+    goal: &str,
+    intent: &IntentProfile,
+    repositories: &[AttachedRepository],
+) -> Result<()> {
+    let portable = render_portable_instructions(goal, intent, repositories);
+    let claude = render_claude_instructions(goal, intent, repositories);
 
     fs::write(work_path.join("AGENTS.md"), portable)?;
     fs::write(work_path.join("CLAUDE.md"), claude)?;
@@ -14,15 +23,28 @@ pub fn write_agent_files(work_path: &Path, goal: &str, intent: &IntentProfile) -
     Ok(())
 }
 
-fn render_portable_instructions(goal: &str, intent: &IntentProfile) -> String {
-    render_agent_file("AGENTS", goal, intent)
+fn render_portable_instructions(
+    goal: &str,
+    intent: &IntentProfile,
+    repositories: &[AttachedRepository],
+) -> String {
+    render_agent_file("AGENTS", goal, intent, repositories)
 }
 
-fn render_claude_instructions(goal: &str, intent: &IntentProfile) -> String {
-    render_agent_file("CLAUDE", goal, intent)
+fn render_claude_instructions(
+    goal: &str,
+    intent: &IntentProfile,
+    repositories: &[AttachedRepository],
+) -> String {
+    render_agent_file("CLAUDE", goal, intent, repositories)
 }
 
-fn render_agent_file(agent_name: &str, goal: &str, intent: &IntentProfile) -> String {
+fn render_agent_file(
+    agent_name: &str,
+    goal: &str,
+    intent: &IntentProfile,
+    repositories: &[AttachedRepository],
+) -> String {
     let source_note = if agent_name == "AGENTS" {
         "AGENTS.md is the source for this Work. Agent-specific files are projections from it."
             .to_string()
@@ -45,7 +67,7 @@ fn render_agent_file(agent_name: &str, goal: &str, intent: &IntentProfile) -> St
          ## Preferred MCPs\n\n\
          {}\n\n\
          ## Repos\n\n\
-         Repos attached to this work belong in `repos/`. When present, treat them as context for this goal.\n\n\
+         {}\n\n\
          ## How to Work\n\n\
          - Before acting, restate the goal, current intent, and any missing context that could change the answer.\n\
          - Treat Preferred Skills and Preferred MCPs as suggestions. Use them when available, and say when they are missing or not useful.\n\
@@ -61,6 +83,7 @@ fn render_agent_file(agent_name: &str, goal: &str, intent: &IntentProfile) -> St
         intent.id,
         bullet_list(&intent.skill_weights),
         bullet_list(&intent.mcp_weights),
+        repo_list(repositories),
         bullet_list(&intent.instructions)
     )
 }
@@ -75,4 +98,23 @@ fn bullet_list(items: &[String]) -> String {
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+fn repo_list(repositories: &[AttachedRepository]) -> String {
+    if repositories.is_empty() {
+        return "No GitHub repositories attached yet. Repos attached to this work belong in `repos/`. When present, treat them as context for this goal.".to_string();
+    }
+
+    repositories
+        .iter()
+        .map(|repository| {
+            format!(
+                "- {} (`{}`, branch `{}`)",
+                repository.name_with_owner,
+                repository.path.display(),
+                repository.branch
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use crate::domain::{ArchivedWork, ContextStatus, CreatedWork, OpenedWork, WorkList};
+use crate::domain::{
+    ArchivedWork, ContextStatus, CreatedWork, OpenedWork, RepositoryCatalog,
+    RepositoryContextChange, WorkList, WorkRepositoryList,
+};
 use crate::error::Result;
 use crate::feature;
 use crate::intents::IntentCatalog;
@@ -18,6 +21,10 @@ pub enum Command {
         query: String,
     },
     Context,
+    AddWorkRepositories {
+        query: String,
+        repositories: Vec<String>,
+    },
     CreateWork {
         goal: String,
         intent_id: String,
@@ -26,6 +33,10 @@ pub enum Command {
         manifest_path: PathBuf,
     },
     InstallShell,
+    ListGitHubRepositories,
+    ListWorkRepositories {
+        query: String,
+    },
     ListWorks,
     OpenOrCreate {
         input: String,
@@ -34,12 +45,17 @@ pub enum Command {
     OpenWork {
         query: String,
     },
+    RemoveWorkRepositories {
+        query: String,
+        repositories: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutput {
     WorkArchived(ArchivedWork),
     Context(ContextStatus),
+    RepositoryCatalog(RepositoryCatalog),
     ShellInstalled {
         label: String,
         script_path: PathBuf,
@@ -48,6 +64,9 @@ pub enum CommandOutput {
     WorkCreated(CreatedWork),
     WorkList(WorkList),
     WorkOpened(OpenedWork),
+    WorkRepositories(WorkRepositoryList),
+    WorkRepositoriesAdded(RepositoryContextChange),
+    WorkRepositoriesRemoved(RepositoryContextChange),
 }
 
 impl App {
@@ -60,6 +79,10 @@ impl App {
 
     pub fn execute(&self, command: Command) -> Result<CommandOutput> {
         match command {
+            Command::AddWorkRepositories {
+                query,
+                repositories,
+            } => feature::repositories::add(&self.store, &self.intents, &query, &repositories),
             Command::ArchiveWork { query } => feature::archive_work::execute(&self.store, &query),
             Command::Context => feature::context::execute(),
             Command::CreateWork { goal, intent_id } => {
@@ -69,6 +92,10 @@ impl App {
                 feature::install_shell::install_dev_shell(manifest_path)
             }
             Command::InstallShell => feature::install_shell::install_shell(),
+            Command::ListGitHubRepositories => feature::repositories::list_available(),
+            Command::ListWorkRepositories { query } => {
+                feature::repositories::list_attached(&self.store, &query)
+            }
             Command::ListWorks => feature::list_works::execute(&self.store),
             Command::OpenOrCreate { input, intent_id } => feature::open_or_create::execute(
                 &self.store,
@@ -77,6 +104,10 @@ impl App {
                 intent_id.as_deref(),
             ),
             Command::OpenWork { query } => feature::open_work::execute(&self.store, &query),
+            Command::RemoveWorkRepositories {
+                query,
+                repositories,
+            } => feature::repositories::remove(&self.store, &self.intents, &query, &repositories),
         }
     }
 

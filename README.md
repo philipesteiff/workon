@@ -130,6 +130,19 @@ wo
 
 Use this to switch into existing Work without remembering exact names. The TUI is an inline command panel, not a full-screen app.
 
+Repository context from the TUI:
+
+```text
+/r       open repository context for the highlighted Work
+tab      switch between GitHub catalog and selected repos
+type     filter repositories
+space    select or remove one or more repositories
+enter    apply pending add/remove changes
+esc      return to the Work queue
+```
+
+The left panel lists repositories from the active `gh` account. The right panel lists repositories selected for the highlighted Work, including pending additions and removals. Loading the view shows a loader while `gh` returns repositories. Applying changes shows per-repo progress and an operation log. Adding a repo creates a Work-specific branch named `workon/<work-slug>` and attaches it as a git worktree under the Work folder.
+
 ### `wo list`
 
 Print active Work directly in the terminal.
@@ -188,6 +201,49 @@ wo archive billing
 Workon moves the Work folder from `~/.workon/work/` to `~/.workon/archive/`.
 Archived Works no longer appear in `wo` and cannot be opened by normal Work queries.
 
+### `wo repos`
+
+Attach GitHub repositories to a Work as Worktrunk-managed git worktrees.
+
+Prerequisites:
+
+- `gh` installed and authenticated
+- `wt` installed
+
+List attached repositories:
+
+```sh
+wo repos list billing
+```
+
+Add one or more repositories:
+
+```sh
+wo repos add billing openai/workon
+wo repos add billing openai/workon openai/another-repo
+```
+
+Remove one or more repositories:
+
+```sh
+wo repos remove billing openai/workon
+```
+
+Add behavior:
+
+- caches the GitHub repo as a bare repo under Workon storage
+- creates or switches a branch named `workon/<work-slug>`
+- creates the worktree at `<work>/repos/<owner>__<repo>`
+- writes `workon.repos.json`
+- rewrites `AGENTS.md` and `CLAUDE.md` with the attached repo list
+
+Remove behavior:
+
+- runs `wt remove --no-delete-branch --foreground`
+- keeps the `workon/<work-slug>` branch and repo cache
+- updates `workon.repos.json`, `AGENTS.md`, and `CLAUDE.md`
+- fails without changing metadata when Worktrunk refuses removal
+
 ### `wo ctx`
 
 Show the current status of the context surface.
@@ -201,7 +257,7 @@ Alias: `wo context`.
 
 This is where intent, skills, MCPs, and repos are expected to be added, removed, or changed later.
 
-Status: placeholder. The command is wired through the command layer, but the editor is not implemented yet.
+Status: placeholder for the broader context editor. GitHub repository context is available through `wo`, `/r` in the TUI, and `wo repos ...` in the CLI.
 
 ## Principles
 

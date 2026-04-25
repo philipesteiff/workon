@@ -24,6 +24,15 @@ pub(crate) fn render_output(
             writeln!(writer, "context: {}", context.status)?;
             writeln!(writer, "{}", context.message)?;
         }
+        CommandOutput::RepositoryCatalog(catalog) => {
+            for repository in &catalog.repositories {
+                writeln!(
+                    writer,
+                    "{}  {}  {}",
+                    repository.name_with_owner, repository.default_branch, repository.url
+                )?;
+            }
+        }
         CommandOutput::ShellInstalled {
             label,
             script_path,
@@ -52,6 +61,46 @@ pub(crate) fn render_output(
             writeln!(writer, "path: {}", work.path.display())?;
             writeln!(writer, "next: work from the folder")?;
             render_switch_signal(writer, &work.path, &work.title, root, machine)?;
+        }
+        CommandOutput::WorkRepositories(list) => {
+            writeln!(writer, "repositories for work: {}", list.work.title)?;
+            if list.repositories.is_empty() {
+                writeln!(writer, "No repositories attached.")?;
+            } else {
+                for repository in &list.repositories {
+                    writeln!(
+                        writer,
+                        "{}  {}  {}",
+                        repository.name_with_owner,
+                        repository.branch,
+                        repository.path.display()
+                    )?;
+                }
+            }
+        }
+        CommandOutput::WorkRepositoriesAdded(change) => {
+            writeln!(writer, "repositories added: {}", change.work.title)?;
+            for repository in &change.repositories {
+                writeln!(
+                    writer,
+                    "{}  {}  {}",
+                    repository.name_with_owner,
+                    repository.branch,
+                    repository.path.display()
+                )?;
+            }
+        }
+        CommandOutput::WorkRepositoriesRemoved(change) => {
+            writeln!(writer, "repositories removed: {}", change.work.title)?;
+            for repository in &change.repositories {
+                writeln!(
+                    writer,
+                    "{}  {}  {}",
+                    repository.name_with_owner,
+                    repository.branch,
+                    repository.path.display()
+                )?;
+            }
         }
     }
     Ok(())
@@ -162,6 +211,13 @@ pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
            wo list                    list active work\n\
            wo <work-query>            open matching work\n\
            wo archive <work-query>    archive matching work\n\
+           wo repos list <work-query>\n\
+                                      list attached GitHub repos\n\
+           wo repos add <work> <owner/repo>...\n\
+                                      attach GitHub repos as worktrees\n\
+           wo repos remove <work> <owner/repo>...\n\
+                                      remove attached repo worktrees\n\
+           wo repos                  show GitHub repo context help\n\
            wo --intent <id> \"<goal>\"  create work\n\
            wo ctx                     print context status\n\
            wo install-shell           install folder switching\n\
@@ -173,6 +229,36 @@ pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
          \n\
          Env:\n\
            WORKON_ROOT=/path          override the default ~/.workon root"
+    )?;
+    Ok(())
+}
+
+pub(crate) fn write_repos_help(writer: &mut dyn Write) -> Result<()> {
+    writeln!(
+        writer,
+        "wo repos - attach GitHub repositories to a Work as git worktrees\n\
+         \n\
+         Usage:\n\
+           wo repos list <work-query>\n\
+               List GitHub repositories attached to the matching Work.\n\
+         \n\
+           wo repos add <work-query> <owner/repo>...\n\
+               Attach one or more GitHub repositories to the matching Work.\n\
+               Repositories are cached as bare repos, then checked out under:\n\
+               <work>/repos/<owner>__<repo>\n\
+         \n\
+           wo repos remove <work-query> <owner/repo>...\n\
+               Remove one or more attached repository worktrees.\n\
+               Branches and bare repo caches are kept.\n\
+         \n\
+         TUI:\n\
+           wo\n\
+               Highlight a Work, press /r, use the left GitHub catalog and right selected panel,\n\
+               then press enter to apply pending add/remove changes.\n\
+         \n\
+         Requires:\n\
+           gh auth login\n\
+           wt"
     )?;
     Ok(())
 }

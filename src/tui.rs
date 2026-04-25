@@ -6,7 +6,9 @@ mod ui;
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEvent};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -14,10 +16,10 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use crate::app::{App, Command, CommandOutput};
-use crate::error::Result;
+use crate::error::{Result, WorkonError};
 
 use self::animation::{input_poll_timeout, AnimationRuntime, AnimationSnapshot};
-use self::state::{Toast, TraceKind, TuiAction, TuiState};
+use self::state::{RepoOperation, Toast, TraceKind, TuiAction, TuiMode, TuiState};
 use self::ui::render_for_animation;
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 28;
@@ -98,18 +100,19 @@ fn run_loop(
 ) -> Result<Option<CommandOutput>> {
     let mut animation = AnimationRuntime::default();
     let mut last_frame = Instant::now();
+    let mut repo_load_job: Option<RepoLoadJob> = None;
 
     loop {
+        poll_repo_load_job(&mut repo_load_job, state);
         let elapsed = last_frame.elapsed();
         last_frame = Instant::now();
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let regions = render_for_animation(frame, state);
-            animation.prepare_frame(&regions);
-            animation.process_frame(elapsed, frame.buffer_mut(), area);
-        })?;
+        draw_frame(terminal, state, &mut animation, elapsed)?;
 
-        let Some(key) = read_next_key(animation.is_animating())? else {
+        let Some(key) = read_next_key(
+            animation.is_animating() || state.is_title_activity_active() || repo_load_job.is_some(),
+        )?
+        else {
+            state.advance_activity_frame();
             continue;
         };
 
@@ -158,10 +161,45 @@ fn run_loop(
                     }
                 }
             }
+            TuiAction::OpenRepos(slug) => {
+                repo_load_job = Some(spawn_repo_load(app.clone(), slug));
+            }
+            TuiAction::ApplyRepoChanges {
+                work_slug,
+                add,
+                remove,
+            } => {
+                let outcome = apply_repo_changes(
+                    app,
+                    terminal,
+                    state,
+                    &mut animation,
+                    &work_slug,
+                    add,
+                    remove,
+                )?;
+                refresh_attached_repositories(app, state, &work_slug);
+                show_repo_batch_outcome(state, outcome);
+            }
         }
         animation.observe_transition(before, AnimationSnapshot::from_state(state));
         last_frame = Instant::now();
     }
+}
+
+fn draw_frame(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    state: &TuiState,
+    animation: &mut AnimationRuntime,
+    elapsed: Duration,
+) -> Result<()> {
+    terminal.draw(|frame| {
+        let area = frame.area();
+        let regions = render_for_animation(frame, state);
+        animation.prepare_frame(&regions);
+        animation.process_frame(elapsed, frame.buffer_mut(), area);
+    })?;
+    Ok(())
 }
 
 fn read_next_key(animating: bool) -> Result<Option<KeyEvent>> {
@@ -183,6 +221,202 @@ fn reload_work_list(app: &App, state: &mut TuiState) -> Result<()> {
     };
     state.set_work_list(work_list);
     Ok(())
+}
+
+struct RepoContextData {
+    work: crate::domain::WorkSummary,
+    available: Vec<crate::domain::AvailableRepository>,
+    attached: Vec<crate::domain::AttachedRepository>,
+}
+
+struct RepoLoadJob {
+    work_slug: String,
+    receiver: Receiver<Result<RepoContextData>>,
+}
+
+#[derive(Debug, Default)]
+struct RepoBatchOutcome {
+    successes: usize,
+    failures: Vec<String>,
+}
+
+fn spawn_repo_load(app: App, work_slug: String) -> RepoLoadJob {
+    let (sender, receiver) = mpsc::channel();
+    let worker_slug = work_slug.clone();
+    thread::spawn(move || {
+        let _ = sender.send(load_repo_context(&app, &worker_slug));
+    });
+
+    RepoLoadJob {
+        work_slug,
+        receiver,
+    }
+}
+
+fn poll_repo_load_job(job: &mut Option<RepoLoadJob>, state: &mut TuiState) {
+    let Some(active_job) = job else {
+        return;
+    };
+
+    let result = match active_job.receiver.try_recv() {
+        Ok(result) => result,
+        Err(TryRecvError::Empty) => return,
+        Err(TryRecvError::Disconnected) => Err(WorkonError::RepositoryContext {
+            message: "repository loader stopped before returning a result".to_string(),
+        }),
+    };
+
+    if state.mode == TuiMode::Repos && state.repo_work_slug == active_job.work_slug {
+        apply_repo_load_result(state, result);
+    }
+    *job = None;
+}
+
+fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>) {
+    match result {
+        Ok(repo_context) => {
+            let available_count = repo_context.available.len();
+            let attached_count = repo_context.attached.len();
+            state.enter_repo_context(
+                repo_context.work.slug,
+                repo_context.work.title,
+                repo_context.available,
+                repo_context.attached,
+            );
+            state.push_repo_log(
+                TraceKind::Sync,
+                format!("loaded {available_count} GitHub repos, {attached_count} selected"),
+            );
+            state.push_trace(TraceKind::Run, "repo context loaded");
+        }
+        Err(error) => {
+            state.toast = Some(Toast::error("Repos failed", &error.to_string()));
+            state.push_trace(TraceKind::Err, format!("repos failed: {error}"));
+            state.set_repo_failed(error.to_string());
+        }
+    }
+}
+
+fn load_repo_context(app: &App, work_slug: &str) -> Result<RepoContextData> {
+    let CommandOutput::RepositoryCatalog(catalog) = app.execute(Command::ListGitHubRepositories)?
+    else {
+        unreachable!("list GitHub repositories command returns repository catalog");
+    };
+    let CommandOutput::WorkRepositories(attached) = app.execute(Command::ListWorkRepositories {
+        query: work_slug.to_string(),
+    })?
+    else {
+        unreachable!("list work repositories command returns work repositories");
+    };
+
+    Ok(RepoContextData {
+        work: attached.work,
+        available: catalog.repositories,
+        attached: attached.repositories,
+    })
+}
+
+fn refresh_attached_repositories(app: &App, state: &mut TuiState, work_slug: &str) {
+    state.start_repo_step(RepoOperation::Refresh, 1, 1, work_slug);
+    match app.execute(Command::ListWorkRepositories {
+        query: work_slug.to_string(),
+    }) {
+        Ok(CommandOutput::WorkRepositories(attached)) => {
+            let count = attached.repositories.len();
+            state.update_attached_repositories(attached.repositories);
+            state.push_repo_log(TraceKind::Sync, format!("refreshed {count} selected repos"));
+        }
+        Ok(_) => unreachable!("list work repositories command returns work repositories"),
+        Err(error) => {
+            state.toast = Some(Toast::error("Refresh failed", &error.to_string()));
+            state.push_trace(TraceKind::Err, format!("repo refresh failed: {error}"));
+            state.set_repo_failed(format!("refresh failed: {error}"));
+        }
+    }
+}
+
+fn apply_repo_changes(
+    app: &App,
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    state: &mut TuiState,
+    animation: &mut AnimationRuntime,
+    work_slug: &str,
+    add: Vec<String>,
+    remove: Vec<String>,
+) -> Result<RepoBatchOutcome> {
+    let mut outcome = RepoBatchOutcome::default();
+
+    let total = add.len() + remove.len();
+    let mut current = 0;
+
+    for repository in add {
+        current += 1;
+        state.start_repo_step(RepoOperation::Add, current, total, &repository);
+        draw_frame(terminal, state, animation, Duration::ZERO)?;
+        match app.execute(Command::AddWorkRepositories {
+            query: work_slug.to_string(),
+            repositories: vec![repository.clone()],
+        }) {
+            Ok(_) => {
+                outcome.successes += 1;
+                state.push_repo_log(TraceKind::Sync, format!("attached {repository}"));
+            }
+            Err(error) => {
+                let failure = format!("{repository}: {error}");
+                outcome.failures.push(failure.clone());
+                state.push_repo_log(TraceKind::Err, failure);
+            }
+        }
+        draw_frame(terminal, state, animation, Duration::ZERO)?;
+    }
+
+    for repository in remove {
+        current += 1;
+        state.start_repo_step(RepoOperation::Remove, current, total, &repository);
+        draw_frame(terminal, state, animation, Duration::ZERO)?;
+        match app.execute(Command::RemoveWorkRepositories {
+            query: work_slug.to_string(),
+            repositories: vec![repository.clone()],
+        }) {
+            Ok(_) => {
+                outcome.successes += 1;
+                state.push_repo_log(TraceKind::Sync, format!("removed {repository}"));
+            }
+            Err(error) => {
+                let failure = format!("{repository}: {error}");
+                outcome.failures.push(failure.clone());
+                state.push_repo_log(TraceKind::Err, failure);
+            }
+        }
+        draw_frame(terminal, state, animation, Duration::ZERO)?;
+    }
+
+    Ok(outcome)
+}
+
+fn show_repo_batch_outcome(state: &mut TuiState, outcome: RepoBatchOutcome) {
+    if outcome.failures.is_empty() {
+        state.toast = Some(Toast::info(
+            "Repository context updated",
+            &format!("{} repository changes applied.", outcome.successes),
+        ));
+        state.push_trace(
+            TraceKind::Sync,
+            format!("repo context: {} applied", outcome.successes),
+        );
+    } else {
+        state.toast = Some(Toast::error(
+            "Repository context updated",
+            &format!(
+                "{} applied, {} failed.",
+                outcome.successes,
+                outcome.failures.len()
+            ),
+        ));
+        for failure in outcome.failures {
+            state.push_trace(TraceKind::Err, failure);
+        }
+    }
 }
 
 #[cfg(test)]

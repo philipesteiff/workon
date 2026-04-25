@@ -184,6 +184,10 @@ impl<F: FileSystem> WorkStore<F> {
         })
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn unique_slug(&self, base_slug: &str) -> Result<String> {
         let base_slug = if base_slug.is_empty() {
             "work"

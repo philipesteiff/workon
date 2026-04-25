@@ -15,7 +15,8 @@ mod tui;
 pub use app::{App, Command, CommandOutput};
 pub use cli::run_cli;
 pub use domain::{
-    AmbiguousWorkMatch, ArchivedWork, ContextStatus, CreatedWork, IntentProfile, OpenedWork,
-    WorkList, WorkSummary,
+    AmbiguousWorkMatch, ArchivedWork, AttachedRepository, AvailableRepository, ContextStatus,
+    CreatedWork, IntentProfile, OpenedWork, RepositoryCatalog, RepositoryContextChange, WorkList,
+    WorkRepositoryList, WorkSummary,
 };
 pub use error::{Result, WorkonError};

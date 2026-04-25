@@ -131,7 +131,36 @@ fn help_prints_command_summary() {
 
     assert!(stdout.contains("wo - start, open, and archive work folders"));
     assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work"));
+    assert!(stdout.contains("wo repos add <work> <owner/repo>..."));
+    assert!(stdout.contains("attach GitHub repos as worktrees"));
     assert!(stdout.contains("WORKON_ROOT=/path"));
+}
+
+#[test]
+fn repos_help_prints_usage() {
+    let root = temp_root("repos_help_prints_usage");
+
+    for args in [
+        vec!["repos"],
+        vec!["repos", "--help"],
+        vec!["help", "repos"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+            .current_dir(root.path())
+            .env("WORKON_ROOT", root.path())
+            .args(args)
+            .output()
+            .expect("wo should run");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+        assert!(stdout.contains("wo repos - attach GitHub repositories"));
+        assert!(stdout.contains("wo repos list <work-query>"));
+        assert!(stdout.contains("wo repos add <work-query> <owner/repo>..."));
+        assert!(stdout.contains("wo repos remove <work-query> <owner/repo>..."));
+        assert!(stdout.contains("Highlight a Work, press /r"));
+    }
 }
 
 #[test]
@@ -219,6 +248,95 @@ fn ambiguous_work_error_lists_slug_commands() {
     assert!(stderr.contains("Use a slug:"));
     assert!(stderr.contains("wo answer-billing-question  # Answer billing question"));
     assert!(stderr.contains("wo investigate-billing-issue  # Investigate billing issue"));
+}
+
+#[test]
+fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
+    let root = temp_root("repos_add_list_and_remove_use_real_wo_binary");
+    let fake_bin = fake_repo_tools();
+    let fake_path = path_with_prepended(fake_bin.path());
+    let log_path = root.path().join("tool.log");
+    fs::write(&log_path, "").expect("tool log should initialize");
+    create_work(root.path(), "Repository context cli smoke");
+
+    let add = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .env("PATH", &fake_path)
+        .env("WORKON_FAKE_LOG", &log_path)
+        .args([
+            "repos",
+            "add",
+            "repository-context-cli-smoke",
+            "openai/workon",
+        ])
+        .output()
+        .expect("wo repos add should run");
+
+    assert!(
+        add.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&add.stdout),
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let add_stdout = String::from_utf8(add.stdout).expect("stdout should be utf8");
+    assert!(add_stdout.contains("repositories added: Repository context cli smoke"));
+    assert!(add_stdout.contains("openai/workon"));
+
+    let list = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["repos", "list", "repository-context-cli-smoke"])
+        .output()
+        .expect("wo repos list should run");
+
+    assert!(
+        list.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&list.stdout),
+        String::from_utf8_lossy(&list.stderr)
+    );
+    let list_stdout = String::from_utf8(list.stdout).expect("stdout should be utf8");
+    assert!(list_stdout.contains("repositories for work: Repository context cli smoke"));
+    assert!(list_stdout.contains("openai/workon"));
+    assert!(list_stdout.contains("workon/repository-context-cli-smoke"));
+
+    let remove = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .env("PATH", &fake_path)
+        .env("WORKON_FAKE_LOG", &log_path)
+        .args([
+            "repos",
+            "remove",
+            "repository-context-cli-smoke",
+            "openai/workon",
+        ])
+        .output()
+        .expect("wo repos remove should run");
+
+    assert!(
+        remove.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&remove.stdout),
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let remove_stdout = String::from_utf8(remove.stdout).expect("stdout should be utf8");
+    assert!(remove_stdout.contains("repositories removed: Repository context cli smoke"));
+    assert!(remove_stdout.contains("openai/workon"));
+
+    let metadata = fs::read_to_string(
+        root.path()
+            .join(".workon/work/repository-context-cli-smoke/workon.repos.json"),
+    )
+    .expect("repo metadata should exist");
+    assert!(!metadata.contains("openai/workon"));
+
+    let log = fs::read_to_string(log_path).expect("tool log should exist");
+    assert!(log.contains("gh repo view openai/workon"));
+    assert!(log.contains("gh repo clone openai/workon"));
+    assert!(log.contains("wt -C"));
+    assert!(log.contains("remove --no-delete-branch"));
 }
 
 #[test]
@@ -491,6 +609,71 @@ fn temp_root(name: &str) -> TempRoot {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp root should be created");
     TempRoot { path }
+}
+
+fn fake_repo_tools() -> TempRoot {
+    let fake_bin = temp_root("fake_repo_tools");
+    fs::write(fake_bin.path().join("gh"), fake_gh_script()).expect("gh fake should be written");
+    fs::write(fake_bin.path().join("git"), fake_git_script()).expect("git fake should be written");
+    fs::write(fake_bin.path().join("wt"), fake_wt_script()).expect("wt fake should be written");
+
+    for name in ["gh", "git", "wt"] {
+        let path = fake_bin.path().join(name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&path)
+                .expect("fake tool metadata should read")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).expect("fake tool should be executable");
+        }
+    }
+
+    fake_bin
+}
+
+fn path_with_prepended(path: &Path) -> std::ffi::OsString {
+    let mut paths = vec![path.to_path_buf()];
+    if let Some(previous) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&previous));
+    }
+    std::env::join_paths(paths).expect("PATH should join")
+}
+
+fn fake_gh_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'gh %s\n' "$*" >> "$WORKON_FAKE_LOG"
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  repo="$3"
+  printf '{"nameWithOwner":"%s","defaultBranchRef":{"name":"main"},"url":"https://github.com/%s","sshUrl":"git@github.com:%s.git"}\n' "$repo" "$repo" "$repo"
+  exit 0
+fi
+if [ "$1" = "repo" ] && [ "$2" = "clone" ]; then
+  mkdir -p "$4"
+  exit 0
+fi
+exit 2
+"#
+}
+
+fn fake_git_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'git %s\n' "$*" >> "$WORKON_FAKE_LOG"
+exit 0
+"#
+}
+
+fn fake_wt_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'WORKTRUNK_WORKTREE_PATH=%s wt %s\n' "$WORKTRUNK_WORKTREE_PATH" "$*" >> "$WORKON_FAKE_LOG"
+if [ "$3" = "remove" ]; then
+  exit 0
+fi
+mkdir -p "$WORKTRUNK_WORKTREE_PATH"
+printf '{"action":"created","branch":"%s","path":"%s","created_branch":true,"base_branch":"main"}\n' "$5" "$WORKTRUNK_WORKTREE_PATH"
+exit 0
+"#
 }
 
 fn shell_quote(path: &Path) -> String {

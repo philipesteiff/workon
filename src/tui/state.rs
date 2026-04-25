@@ -1,8 +1,9 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::domain::{WorkList, WorkSummary};
+use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TuiState {
@@ -14,12 +15,25 @@ pub(super) struct TuiState {
     pub(super) create_goal: String,
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
+    pub(super) repo_focus: RepoPane,
+    pub(super) repo_work_slug: String,
+    pub(super) repo_work_title: String,
+    pub(super) repo_available: Vec<AvailableRepository>,
+    pub(super) repo_attached: Vec<AttachedRepository>,
+    pub(super) repo_selected: usize,
+    pub(super) repo_selected_right: usize,
+    pub(super) repo_filter: String,
+    pub(super) repo_pending_add: BTreeSet<String>,
+    pub(super) repo_pending_remove: BTreeSet<String>,
+    pub(super) repo_status: RepoStatus,
+    pub(super) repo_logs: Vec<TraceEvent>,
     pub(super) root: PathBuf,
     pub(super) current_work_path: Option<PathBuf>,
     pub(super) trace: Vec<TraceEvent>,
     pub(super) trace_visible: bool,
     pub(super) detail_visible: bool,
     pub(super) toast: Option<Toast>,
+    pub(super) activity_frame: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +43,52 @@ pub(super) enum TuiMode {
     Leader,
     Create,
     Archive,
+    Repos,
     Help,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RepoPane {
+    Catalog,
+    Selected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum RepoStatus {
+    Ready,
+    Loading {
+        message: String,
+    },
+    Applying {
+        action: RepoOperation,
+        current: usize,
+        total: usize,
+        repository: String,
+    },
+    Failed {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RepoOperation {
+    Add,
+    Remove,
+    Refresh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RepoSelectionState {
+    Attached,
+    PendingAdd,
+    PendingRemove,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SelectedRepositoryRow {
+    pub(super) name_with_owner: String,
+    pub(super) meta: String,
+    pub(super) state: RepoSelectionState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +125,16 @@ pub(super) enum TuiAction {
     Quit,
     Switch(String),
     Archive(String),
-    Create { goal: String, intent_id: String },
+    Create {
+        goal: String,
+        intent_id: String,
+    },
+    OpenRepos(String),
+    ApplyRepoChanges {
+        work_slug: String,
+        add: Vec<String>,
+        remove: Vec<String>,
+    },
 }
 
 impl TuiState {
@@ -80,12 +148,25 @@ impl TuiState {
             create_goal: String::new(),
             create_intent: 0,
             intents: Vec::new(),
+            repo_focus: RepoPane::Catalog,
+            repo_work_slug: String::new(),
+            repo_work_title: String::new(),
+            repo_available: Vec::new(),
+            repo_attached: Vec::new(),
+            repo_selected: 0,
+            repo_selected_right: 0,
+            repo_filter: String::new(),
+            repo_pending_add: BTreeSet::new(),
+            repo_pending_remove: BTreeSet::new(),
+            repo_status: RepoStatus::Ready,
+            repo_logs: Vec::new(),
             root: PathBuf::new(),
             current_work_path: None,
             trace: Vec::new(),
             trace_visible: false,
             detail_visible: false,
             toast: None,
+            activity_frame: 0,
         }
     }
 
@@ -236,6 +317,7 @@ impl TuiState {
             TuiMode::Leader => self.handle_leader_key(key),
             TuiMode::Create => self.handle_create_key(key),
             TuiMode::Archive => self.handle_archive_key(key),
+            TuiMode::Repos => self.handle_repos_key(key),
             TuiMode::Help => self.handle_help_key(key),
         }
     }
@@ -252,6 +334,168 @@ impl TuiState {
     pub(super) fn clear_filter_context(&mut self) {
         self.filter.clear();
         self.pre_filter_selected_slug = None;
+    }
+
+    pub(super) fn enter_repo_context(
+        &mut self,
+        work_slug: String,
+        work_title: String,
+        available: Vec<AvailableRepository>,
+        attached: Vec<AttachedRepository>,
+    ) {
+        self.mode = TuiMode::Repos;
+        self.repo_focus = RepoPane::Catalog;
+        self.repo_work_slug = work_slug;
+        self.repo_work_title = work_title;
+        self.repo_available = available;
+        self.repo_attached = attached;
+        self.repo_selected = 0;
+        self.repo_selected_right = 0;
+        self.repo_filter.clear();
+        self.repo_pending_add.clear();
+        self.repo_pending_remove.clear();
+        self.repo_status = RepoStatus::Ready;
+    }
+
+    pub(super) fn enter_repo_loading(&mut self, work_slug: String, work_title: String) {
+        self.mode = TuiMode::Repos;
+        self.repo_focus = RepoPane::Catalog;
+        self.repo_work_slug = work_slug;
+        self.repo_work_title = work_title;
+        self.repo_available.clear();
+        self.repo_attached.clear();
+        self.repo_selected = 0;
+        self.repo_selected_right = 0;
+        self.repo_filter.clear();
+        self.repo_pending_add.clear();
+        self.repo_pending_remove.clear();
+        self.repo_logs.clear();
+        self.repo_status = RepoStatus::Loading {
+            message: "Loading GitHub repositories".to_string(),
+        };
+        self.activity_frame = 0;
+        self.push_repo_log(TraceKind::Run, "gh repo list started");
+    }
+
+    pub(super) fn advance_activity_frame(&mut self) {
+        if self.is_title_activity_active() {
+            self.activity_frame = self.activity_frame.wrapping_add(1);
+        }
+    }
+
+    pub(super) fn is_title_activity_active(&self) -> bool {
+        matches!(self.mode, TuiMode::Repos)
+            && matches!(self.repo_status, RepoStatus::Loading { .. })
+    }
+
+    pub(super) fn update_attached_repositories(&mut self, attached: Vec<AttachedRepository>) {
+        self.repo_attached = attached;
+        self.repo_pending_add.clear();
+        self.repo_pending_remove.clear();
+        self.repo_status = RepoStatus::Ready;
+        self.clamp_repo_selection();
+        self.clamp_selected_repo_selection();
+    }
+
+    pub(super) fn set_repo_failed(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.repo_status = RepoStatus::Failed {
+            message: message.clone(),
+        };
+        self.push_repo_log(TraceKind::Err, message);
+    }
+
+    pub(super) fn start_repo_step(
+        &mut self,
+        action: RepoOperation,
+        current: usize,
+        total: usize,
+        repository: &str,
+    ) {
+        self.repo_status = RepoStatus::Applying {
+            action,
+            current,
+            total,
+            repository: repository.to_string(),
+        };
+        self.push_repo_log(
+            TraceKind::Run,
+            format!(
+                "{} {current}/{total} {repository}",
+                repo_operation_verb(action)
+            ),
+        );
+    }
+
+    pub(super) fn push_repo_log(&mut self, kind: TraceKind, message: impl Into<String>) {
+        self.repo_logs.push(TraceEvent {
+            kind,
+            message: message.into(),
+        });
+        if self.repo_logs.len() > 7 {
+            self.repo_logs.remove(0);
+        }
+    }
+
+    pub(super) fn filtered_available_repositories(&self) -> Vec<&AvailableRepository> {
+        let query = self.repo_filter.trim().to_ascii_lowercase();
+        let mut repositories = self
+            .repo_available
+            .iter()
+            .filter(|repository| repository_matches(&repository.name_with_owner, &query))
+            .collect::<Vec<_>>();
+        repositories.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
+        repositories
+    }
+
+    pub(super) fn selected_repository_rows(&self) -> Vec<SelectedRepositoryRow> {
+        let mut rows = self
+            .repo_attached
+            .iter()
+            .map(|repository| SelectedRepositoryRow {
+                name_with_owner: repository.name_with_owner.clone(),
+                meta: repository.branch.clone(),
+                state: if self
+                    .repo_pending_remove
+                    .contains(&repository.name_with_owner)
+                {
+                    RepoSelectionState::PendingRemove
+                } else {
+                    RepoSelectionState::Attached
+                },
+            })
+            .collect::<Vec<_>>();
+
+        let attached = self.attached_repository_names();
+        for repository in &self.repo_available {
+            if self.repo_pending_add.contains(&repository.name_with_owner)
+                && !attached.contains(&repository.name_with_owner)
+            {
+                rows.push(SelectedRepositoryRow {
+                    name_with_owner: repository.name_with_owner.clone(),
+                    meta: format!("default {}", repository.default_branch),
+                    state: RepoSelectionState::PendingAdd,
+                });
+            }
+        }
+
+        rows.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
+        rows
+    }
+
+    pub(super) fn is_repository_selected(&self, name_with_owner: &str) -> bool {
+        if self.repo_pending_remove.contains(name_with_owner) {
+            return false;
+        }
+        self.repo_pending_add.contains(name_with_owner)
+            || self
+                .repo_attached
+                .iter()
+                .any(|repository| repository.name_with_owner == name_with_owner)
+    }
+
+    pub(super) fn pending_repo_change_count(&self) -> usize {
+        self.repo_pending_add.len() + self.repo_pending_remove.len()
     }
 
     pub(super) fn filtered_indices(&self) -> Vec<usize> {
@@ -358,6 +602,16 @@ impl TuiState {
                 }
                 TuiAction::None
             }
+            KeyCode::Char('r') if is_plain_character(key) => {
+                let Some((slug, title)) = self
+                    .selected_work()
+                    .map(|work| (work.slug.clone(), work.title.clone()))
+                else {
+                    return TuiAction::None;
+                };
+                self.enter_repo_loading(slug.clone(), title);
+                TuiAction::OpenRepos(slug)
+            }
             KeyCode::Char('?') if is_plain_character(key) => {
                 self.mode = TuiMode::Help;
                 TuiAction::None
@@ -422,6 +676,47 @@ impl TuiState {
                 .selected_work()
                 .map(|work| TuiAction::Archive(work.slug.clone()))
                 .unwrap_or(TuiAction::None),
+            _ => TuiAction::None,
+        }
+    }
+
+    fn handle_repos_key(&mut self, key: KeyEvent) -> TuiAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.repo_pending_add.clear();
+                self.repo_pending_remove.clear();
+                self.repo_filter.clear();
+                self.restore_queue_mode();
+                TuiAction::None
+            }
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Left | KeyCode::Right => {
+                self.toggle_repo_focus();
+                TuiAction::None
+            }
+            KeyCode::Down => {
+                self.move_repo_selection(1);
+                TuiAction::None
+            }
+            KeyCode::Up => {
+                self.move_repo_selection(-1);
+                TuiAction::None
+            }
+            KeyCode::Backspace if !self.repo_filter.is_empty() => {
+                self.repo_filter.pop();
+                self.repo_selected = 0;
+                TuiAction::None
+            }
+            KeyCode::Char(' ') if is_plain_character(key) => {
+                self.toggle_focused_repository();
+                TuiAction::None
+            }
+            KeyCode::Enter => self.repo_apply_action(),
+            KeyCode::Char(character) if is_plain_character(key) => {
+                self.repo_focus = RepoPane::Catalog;
+                self.repo_filter.push(character);
+                self.repo_selected = 0;
+                TuiAction::None
+            }
             _ => TuiAction::None,
         }
     }
@@ -515,6 +810,136 @@ impl TuiState {
             self.selected = count - 1;
         }
     }
+
+    fn toggle_repo_focus(&mut self) {
+        self.repo_focus = match self.repo_focus {
+            RepoPane::Catalog => RepoPane::Selected,
+            RepoPane::Selected => RepoPane::Catalog,
+        };
+    }
+
+    fn move_repo_selection(&mut self, delta: isize) {
+        let count = self.current_repo_count();
+        if count == 0 {
+            self.set_current_repo_selection(0);
+            return;
+        }
+
+        let count = count as isize;
+        let selected = (self.current_repo_selection() as isize + delta).rem_euclid(count) as usize;
+        self.set_current_repo_selection(selected);
+    }
+
+    fn toggle_focused_repository(&mut self) {
+        match self.repo_focus {
+            RepoPane::Catalog => {
+                let Some(name) = self.selected_catalog_repo_name() else {
+                    return;
+                };
+                self.toggle_repository_selection(&name);
+            }
+            RepoPane::Selected => {
+                let Some(name) = self.selected_work_repo_name() else {
+                    return;
+                };
+                self.toggle_repository_selection(&name);
+            }
+        }
+        self.clamp_selected_repo_selection();
+    }
+
+    fn repo_apply_action(&mut self) -> TuiAction {
+        if self.repo_pending_add.is_empty() && self.repo_pending_remove.is_empty() {
+            return TuiAction::None;
+        }
+
+        TuiAction::ApplyRepoChanges {
+            work_slug: self.repo_work_slug.clone(),
+            add: self.repo_pending_add.iter().cloned().collect(),
+            remove: self.repo_pending_remove.iter().cloned().collect(),
+        }
+    }
+
+    fn toggle_repository_selection(&mut self, name: &str) {
+        if self.repo_pending_add.remove(name) {
+            return;
+        }
+
+        let attached = self
+            .repo_attached
+            .iter()
+            .any(|repository| repository.name_with_owner == name);
+        if attached {
+            if !self.repo_pending_remove.insert(name.to_string()) {
+                self.repo_pending_remove.remove(name);
+            }
+            return;
+        }
+
+        if self.repo_pending_remove.remove(name) {
+            return;
+        }
+
+        self.repo_pending_add.insert(name.to_string());
+    }
+
+    fn selected_catalog_repo_name(&self) -> Option<String> {
+        self.filtered_available_repositories()
+            .get(self.repo_selected)
+            .map(|repository| repository.name_with_owner.clone())
+    }
+
+    fn selected_work_repo_name(&self) -> Option<String> {
+        self.selected_repository_rows()
+            .get(self.repo_selected_right)
+            .map(|repository| repository.name_with_owner.clone())
+    }
+
+    fn current_repo_selection(&self) -> usize {
+        match self.repo_focus {
+            RepoPane::Catalog => self.repo_selected,
+            RepoPane::Selected => self.repo_selected_right,
+        }
+    }
+
+    fn set_current_repo_selection(&mut self, selected: usize) {
+        match self.repo_focus {
+            RepoPane::Catalog => self.repo_selected = selected,
+            RepoPane::Selected => self.repo_selected_right = selected,
+        }
+    }
+
+    fn current_repo_count(&self) -> usize {
+        match self.repo_focus {
+            RepoPane::Catalog => self.filtered_available_repositories().len(),
+            RepoPane::Selected => self.selected_repository_rows().len(),
+        }
+    }
+
+    fn clamp_repo_selection(&mut self) {
+        let count = self.current_repo_count();
+        if count == 0 {
+            self.repo_selected = 0;
+        } else if self.repo_selected >= count {
+            self.repo_selected = count - 1;
+        }
+    }
+
+    fn clamp_selected_repo_selection(&mut self) {
+        let count = self.selected_repository_rows().len();
+        if count == 0 {
+            self.repo_selected_right = 0;
+        } else if self.repo_selected_right >= count {
+            self.repo_selected_right = count - 1;
+        }
+    }
+
+    fn attached_repository_names(&self) -> BTreeSet<String> {
+        self.repo_attached
+            .iter()
+            .map(|repository| repository.name_with_owner.clone())
+            .collect()
+    }
 }
 
 impl Toast {
@@ -542,6 +967,18 @@ fn work_matches(work: &WorkSummary, query: &str) -> bool {
         || work.goal.to_ascii_lowercase().contains(query)
 }
 
+fn repository_matches(name_with_owner: &str, query: &str) -> bool {
+    query.is_empty() || name_with_owner.to_ascii_lowercase().contains(query)
+}
+
+fn repo_operation_verb(action: RepoOperation) -> &'static str {
+    match action {
+        RepoOperation::Add => "clone",
+        RepoOperation::Remove => "remove",
+        RepoOperation::Refresh => "refresh",
+    }
+}
+
 fn filter_trace_message(filter: &str) -> String {
     if filter.is_empty() {
         "filter cleared".to_string()
@@ -565,8 +1002,8 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{Toast, TraceKind, TuiAction, TuiMode, TuiState};
-    use crate::domain::{WorkList, WorkSummary};
+    use super::{RepoPane, RepoStatus, Toast, TraceKind, TuiAction, TuiMode, TuiState};
+    use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
 
     #[test]
     fn filters_work_by_title_slug_intent_and_goal() {
@@ -834,6 +1271,80 @@ mod tests {
     }
 
     #[test]
+    fn slash_leader_opens_repo_context_for_highlighted_work() {
+        let mut state = TuiState::new(work_list());
+        state.move_selection(1);
+
+        state.handle_key(key(KeyCode::Char('/')));
+        let action = state.handle_key(key(KeyCode::Char('r')));
+
+        assert_eq!(
+            action,
+            TuiAction::OpenRepos("review-cache-invalidation-pr".to_string())
+        );
+        assert_eq!(state.mode, TuiMode::Repos);
+        assert_eq!(state.repo_focus, RepoPane::Catalog);
+        assert_eq!(
+            state.repo_status,
+            RepoStatus::Loading {
+                message: "Loading GitHub repositories".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn repo_context_keeps_github_catalog_visible_with_attached_repositories() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            attached_repositories(),
+        );
+
+        assert_eq!(state.mode, TuiMode::Repos);
+        let names = state
+            .filtered_available_repositories()
+            .into_iter()
+            .map(|repository| repository.name_with_owner.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "openai/api".to_string(),
+                "openai/api-docs".to_string(),
+                "openai/workon".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn repo_context_applies_pending_adds_and_removes_from_two_panel_picker() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            attached_repositories(),
+        );
+
+        assert_eq!(state.repo_focus, RepoPane::Catalog);
+        state.handle_key(key(KeyCode::Char(' ')));
+        state.handle_key(key(KeyCode::Down));
+        state.handle_key(key(KeyCode::Char(' ')));
+
+        assert_eq!(
+            state.handle_key(key(KeyCode::Enter)),
+            TuiAction::ApplyRepoChanges {
+                work_slug: "billing-retry-audit".to_string(),
+                add: vec!["openai/api-docs".to_string()],
+                remove: vec!["openai/api".to_string()],
+            }
+        );
+    }
+
+    #[test]
     fn slash_leader_can_insert_literal_slash_and_cancel() {
         let mut state = TuiState::new(work_list());
         state.handle_key(key(KeyCode::Char('b')));
@@ -1024,5 +1535,51 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn available_repositories() -> Vec<AvailableRepository> {
+        vec![
+            AvailableRepository {
+                name_with_owner: "openai/api".to_string(),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/api".to_string(),
+                ssh_url: "git@github.com:openai/api.git".to_string(),
+            },
+            AvailableRepository {
+                name_with_owner: "openai/workon".to_string(),
+                default_branch: "trunk".to_string(),
+                url: "https://github.com/openai/workon".to_string(),
+                ssh_url: "git@github.com:openai/workon.git".to_string(),
+            },
+            AvailableRepository {
+                name_with_owner: "openai/api-docs".to_string(),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/api-docs".to_string(),
+                ssh_url: "git@github.com:openai/api-docs.git".to_string(),
+            },
+        ]
+    }
+
+    fn attached_repositories() -> Vec<AttachedRepository> {
+        vec![
+            AttachedRepository {
+                name_with_owner: "openai/api".to_string(),
+                branch: "workon/billing-retry-audit".to_string(),
+                path: PathBuf::from(
+                    "/tmp/workon/.workon/work/billing-retry-audit/repos/openai__api",
+                ),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/api".to_string(),
+            },
+            AttachedRepository {
+                name_with_owner: "openai/workon".to_string(),
+                branch: "workon/billing-retry-audit".to_string(),
+                path: PathBuf::from(
+                    "/tmp/workon/.workon/work/billing-retry-audit/repos/openai__workon",
+                ),
+                default_branch: "trunk".to_string(),
+                url: "https://github.com/openai/workon".to_string(),
+            },
+        ]
     }
 }

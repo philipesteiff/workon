@@ -291,6 +291,189 @@ fn install_dev_shell_is_a_command_layer_feature() {
     assert!(script.contains("just()"));
 }
 
+#[test]
+fn add_work_repositories_uses_gh_and_worktrunk_then_updates_context_files() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("add_work_repositories_uses_gh_and_worktrunk");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Investigate repository context");
+
+    let CommandOutput::WorkRepositoriesAdded(change) = app
+        .execute(Command::AddWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+        })
+        .expect("repo add should succeed")
+    else {
+        panic!("expected WorkRepositoriesAdded output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert_eq!(change.work.slug, work.slug);
+    assert_eq!(change.repositories.len(), 1);
+    assert_eq!(change.repositories[0].name_with_owner, "openai/workon");
+    assert_eq!(
+        change.repositories[0].branch,
+        "workon/investigate-repository-context"
+    );
+    assert!(change.repositories[0]
+        .path
+        .ends_with("repos/openai__workon"));
+    assert!(work.path.join("repos/openai__workon").is_dir());
+
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert!(metadata.contains("\"name_with_owner\": \"openai/workon\""));
+    assert!(metadata.contains("\"branch\": \"workon/investigate-repository-context\""));
+
+    let agents =
+        fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    assert!(agents.contains("- openai/workon"));
+    assert!(agents.contains("repos/openai__workon"));
+
+    let log = fs::read_to_string(root.path().join("tool.log")).expect("tool log should exist");
+    assert!(log.contains("gh repo view openai/workon"));
+    assert!(log.contains("gh repo clone openai/workon"));
+    assert!(log.contains("wt -C"));
+    assert!(log.contains("switch --create workon/investigate-repository-context"));
+    assert!(log.contains("WORKTRUNK_WORKTREE_PATH="));
+    assert!(log.contains("repos/openai__workon"));
+}
+
+#[test]
+fn add_work_repositories_does_not_duplicate_existing_repository_context() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("add_work_repositories_does_not_duplicate");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Investigate duplicate repo context");
+    app.execute(Command::AddWorkRepositories {
+        query: work.slug.clone(),
+        repositories: vec!["openai/workon".to_string()],
+    })
+    .expect("first repo add should succeed");
+
+    let CommandOutput::WorkRepositoriesAdded(change) = app
+        .execute(Command::AddWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+        })
+        .expect("duplicate repo add should succeed")
+    else {
+        panic!("expected WorkRepositoriesAdded output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert_eq!(change.repositories.len(), 1);
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert_eq!(
+        metadata
+            .matches("\"name_with_owner\": \"openai/workon\"")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn remove_work_repositories_uses_worktrunk_and_updates_context_files() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("remove_work_repositories_uses_worktrunk");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Remove repository context");
+    app.execute(Command::AddWorkRepositories {
+        query: work.slug.clone(),
+        repositories: vec!["openai/workon".to_string()],
+    })
+    .expect("repo add should succeed");
+
+    let CommandOutput::WorkRepositoriesRemoved(change) = app
+        .execute(Command::RemoveWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+        })
+        .expect("repo remove should succeed")
+    else {
+        panic!("expected WorkRepositoriesRemoved output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert_eq!(change.repositories.len(), 1);
+    assert_eq!(change.repositories[0].name_with_owner, "openai/workon");
+
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert!(!metadata.contains("openai/workon"));
+
+    let agents =
+        fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    assert!(!agents.contains("- openai/workon"));
+    assert!(agents.contains("No GitHub repositories attached yet."));
+
+    let log = fs::read_to_string(root.path().join("tool.log")).expect("tool log should exist");
+    assert!(log.contains(
+        "remove --no-delete-branch --foreground --format json workon/remove-repository-context"
+    ));
+}
+
+#[test]
+fn remove_work_repositories_keeps_metadata_when_worktrunk_fails() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("remove_work_repositories_keeps_metadata_on_failure");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let previous_remove_failure = std::env::var_os("WORKON_FAKE_WT_REMOVE_FAIL");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Dirty repository context");
+    app.execute(Command::AddWorkRepositories {
+        query: work.slug.clone(),
+        repositories: vec!["openai/workon".to_string()],
+    })
+    .expect("repo add should succeed");
+
+    std::env::set_var("WORKON_FAKE_WT_REMOVE_FAIL", "1");
+    let error = app
+        .execute(Command::RemoveWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+        })
+        .expect_err("repo remove should fail");
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+    restore_env("WORKON_FAKE_WT_REMOVE_FAIL", previous_remove_failure);
+
+    assert!(error
+        .to_string()
+        .contains("repository context command failed"));
+    let metadata =
+        fs::read_to_string(work.path.join("workon.repos.json")).expect("metadata should exist");
+    assert!(metadata.contains("openai/workon"));
+}
+
 fn create_investigate(app: &App, goal: &str) -> workon::CreatedWork {
     let CommandOutput::WorkCreated(work) = app
         .execute(Command::CreateWork {
@@ -333,4 +516,81 @@ fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
         Some(value) => std::env::set_var(key, value),
         None => std::env::remove_var(key),
     }
+}
+
+fn prepend_path(path: &Path) -> Option<std::ffi::OsString> {
+    let previous = std::env::var_os("PATH");
+    let mut paths = vec![path.to_path_buf()];
+    if let Some(previous) = previous.as_ref() {
+        paths.extend(std::env::split_paths(previous));
+    }
+    let next = std::env::join_paths(paths).expect("PATH should join");
+    std::env::set_var("PATH", next);
+    previous
+}
+
+fn fake_repo_tools(root: &Path) -> TempRoot {
+    let fake_bin = temp_root("fake_repo_tools");
+    fs::write(fake_bin.path().join("gh"), fake_gh_script()).expect("gh fake should be written");
+    fs::write(fake_bin.path().join("git"), fake_git_script()).expect("git fake should be written");
+    fs::write(fake_bin.path().join("wt"), fake_wt_script()).expect("wt fake should be written");
+
+    for name in ["gh", "git", "wt"] {
+        let path = fake_bin.path().join(name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&path)
+                .expect("fake tool metadata should read")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).expect("fake tool should be executable");
+        }
+    }
+
+    fs::write(root.join("tool.log"), "").expect("tool log should be initialized");
+    fake_bin
+}
+
+fn fake_gh_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'gh %s\n' "$*" >> "$WORKON_FAKE_LOG"
+if [ "$1" = "repo" ] && [ "$2" = "view" ]; then
+  repo="$3"
+  printf '{"nameWithOwner":"%s","defaultBranchRef":{"name":"main"},"url":"https://github.com/%s","sshUrl":"git@github.com:%s.git"}\n' "$repo" "$repo" "$repo"
+  exit 0
+fi
+if [ "$1" = "repo" ] && [ "$2" = "clone" ]; then
+  mkdir -p "$4"
+  exit 0
+fi
+if [ "$1" = "repo" ] && [ "$2" = "list" ]; then
+  printf '[{"nameWithOwner":"openai/workon","defaultBranchRef":{"name":"main"},"url":"https://github.com/openai/workon","sshUrl":"git@github.com:openai/workon.git"}]\n'
+  exit 0
+fi
+exit 2
+"#
+}
+
+fn fake_git_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'git %s\n' "$*" >> "$WORKON_FAKE_LOG"
+exit 0
+"#
+}
+
+fn fake_wt_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'WORKTRUNK_WORKTREE_PATH=%s wt %s\n' "$WORKTRUNK_WORKTREE_PATH" "$*" >> "$WORKON_FAKE_LOG"
+if [ "$3" = "remove" ]; then
+  if [ -n "$WORKON_FAKE_WT_REMOVE_FAIL" ]; then
+    printf 'dirty worktree\n' >&2
+    exit 7
+  fi
+  exit 0
+fi
+mkdir -p "$WORKTRUNK_WORKTREE_PATH"
+printf '{"action":"created","branch":"%s","path":"%s","created_branch":true,"base_branch":"main"}\n' "$5" "$WORKTRUNK_WORKTREE_PATH"
+exit 0
+"#
 }

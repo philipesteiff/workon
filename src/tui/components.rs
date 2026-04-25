@@ -5,14 +5,57 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use super::theme;
 
 pub(super) fn panel_block(title: &'static str, focused: bool) -> Block<'static> {
-    panel_block_with_title(
-        Line::from(vec![
+    panel_block_with_activity(title, focused, None)
+}
+
+pub(super) fn panel_block_with_activity(
+    title: &'static str,
+    focused: bool,
+    activity: Option<TitleActivity>,
+) -> Block<'static> {
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled(title, theme::style_panel_title()),
+    ];
+    if let Some(activity) = activity {
+        spans.extend([
             Span::raw(" "),
-            Span::styled(title, theme::style_panel_title()),
+            Span::styled(activity.frame_label(), theme::style_command()),
             Span::raw(" "),
-        ]),
-        focused,
-    )
+            Span::styled(activity.label, theme::style_command()),
+        ]);
+    }
+    spans.push(Span::raw(" "));
+    panel_block_with_title(Line::from(spans), focused)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TitleActivity {
+    label: String,
+    frame: usize,
+}
+
+impl TitleActivity {
+    pub(super) fn loading(label: impl Into<String>, frame: usize) -> Self {
+        Self {
+            label: label.into(),
+            frame,
+        }
+    }
+
+    fn frame_label(&self) -> &'static str {
+        const FRAMES: [&str; 8] = [
+            "SYNC :: .  .  .  . ",
+            "SYNC :: .. .  .  . ",
+            "SYNC :: ...   .  . ",
+            "SYNC :: ....     . ",
+            "SYNC :: .  ....    ",
+            "SYNC :: .  .  ...  ",
+            "SYNC :: .  .  .  ..",
+            "SYNC :: .  .  .  . ",
+        ];
+        FRAMES[self.frame % FRAMES.len()]
+    }
 }
 
 pub(super) fn panel_block_with_title(title: Line<'static>, focused: bool) -> Block<'static> {

@@ -18,6 +18,13 @@ pub enum WorkonError {
     MissingArgument {
         message: String,
     },
+    ProcessFailed {
+        command: String,
+        stderr: String,
+    },
+    RepositoryContext {
+        message: String,
+    },
     UnknownIntent {
         intent_id: String,
         available: Vec<String>,
@@ -52,6 +59,18 @@ impl fmt::Display for WorkonError {
             ),
             Self::Io(error) => write!(formatter, "io error: {error}"),
             Self::MissingArgument { message } => write!(formatter, "{message}"),
+            Self::ProcessFailed { command, stderr } => {
+                let stderr = stderr.trim();
+                if stderr.is_empty() {
+                    write!(formatter, "repository context command failed: {command}")
+                } else {
+                    write!(
+                        formatter,
+                        "repository context command failed: {command}\n{stderr}"
+                    )
+                }
+            }
+            Self::RepositoryContext { message } => write!(formatter, "{message}"),
             Self::UnknownIntent {
                 intent_id,
                 available,

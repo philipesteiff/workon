@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::app::{App, Command, CommandOutput};
 use crate::cli_args::{parse_args, CliRequest};
-use crate::cli_output::{render_output, write_help};
+use crate::cli_output::{render_output, write_help, write_repos_help};
 use crate::error::{Result, WorkonError};
 use crate::shell_integration::{is_shell_hook_active, workon_root};
 
@@ -39,6 +39,11 @@ fn run(
 
     if let CliRequest::Help = request {
         write_help(stdout)?;
+        return Ok(0);
+    }
+
+    if let CliRequest::ReposHelp = request {
+        write_repos_help(stdout)?;
         return Ok(0);
     }
 

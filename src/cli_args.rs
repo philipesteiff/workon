@@ -10,11 +10,16 @@ pub(crate) enum CliRequest {
         allow_tui: bool,
     },
     Help,
+    ReposHelp,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
     if args.is_empty() {
         return Ok(list_request(false, true));
+    }
+
+    if is_repos_help_request(&args) {
+        return Ok(CliRequest::ReposHelp);
     }
 
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -77,6 +82,14 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
         return Ok(list_request(machine, lone_option_terminator && !machine));
     }
 
+    if input_parts == ["repos"] {
+        return Ok(CliRequest::ReposHelp);
+    }
+
+    if input_parts.first().is_some_and(|part| part == "repos") {
+        return parse_repos_command(&input_parts, machine);
+    }
+
     if input == "list" {
         return Ok(list_request(machine, false));
     }
@@ -119,6 +132,19 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
     ))
 }
 
+fn is_repos_help_request(args: &[String]) -> bool {
+    matches!(
+        args,
+        [command] if command == "repos"
+    ) || matches!(
+        args,
+        [command, help] if command == "repos" && (help == "--help" || help == "-h" || help == "help")
+    ) || matches!(
+        args,
+        [help, topic] if help == "help" && topic == "repos"
+    )
+}
+
 fn command_request(command: Command, machine: bool) -> CliRequest {
     CliRequest::Command {
         command,
@@ -132,6 +158,68 @@ fn list_request(machine: bool, allow_tui: bool) -> CliRequest {
         command: Command::ListWorks,
         machine,
         allow_tui,
+    }
+}
+
+fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliRequest> {
+    match input_parts.get(1).map(String::as_str) {
+        Some("list") => {
+            let query = input_parts[2..].join(" ");
+            if query.trim().is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos list requires a work query".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::ListWorkRepositories { query },
+                machine,
+            ))
+        }
+        Some("add") => {
+            let Some(query) = input_parts.get(2) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos add requires a work query and at least one repository"
+                        .to_string(),
+                });
+            };
+            let repositories = input_parts[3..].to_vec();
+            if repositories.is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos add requires at least one repository".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::AddWorkRepositories {
+                    query: query.clone(),
+                    repositories,
+                },
+                machine,
+            ))
+        }
+        Some("remove") => {
+            let Some(query) = input_parts.get(2) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos remove requires a work query and at least one repository"
+                        .to_string(),
+                });
+            };
+            let repositories = input_parts[3..].to_vec();
+            if repositories.is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos remove requires at least one repository".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::RemoveWorkRepositories {
+                    query: query.clone(),
+                    repositories,
+                },
+                machine,
+            ))
+        }
+        _ => Err(WorkonError::MissingArgument {
+            message: "repos requires list, add, or remove".to_string(),
+        }),
     }
 }
 
@@ -284,6 +372,23 @@ mod tests {
                 allow_tui: false,
             }
         );
+    }
+
+    #[test]
+    fn parses_repository_help_requests() {
+        for args in [
+            vec!["repos".to_string()],
+            vec!["repos".to_string(), "--help".to_string()],
+            vec!["repos".to_string(), "-h".to_string()],
+            vec!["repos".to_string(), "help".to_string()],
+            vec!["help".to_string(), "repos".to_string()],
+            vec!["--machine".to_string(), "repos".to_string()],
+        ] {
+            assert_eq!(
+                parse_args(args).expect("args should parse"),
+                CliRequest::ReposHelp
+            );
+        }
     }
 
     fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
