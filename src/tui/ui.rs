@@ -167,19 +167,16 @@ fn render_work_queue(
     let list = List::new(items)
         .block(block)
         .highlight_symbol(">>")
-        .highlight_style(theme::style_target_highlight());
+        .highlight_style(theme::style_selected_row_highlight());
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
 
 fn work_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'static> {
     let mut status = Vec::new();
-    if selected {
-        status.push(status_badge("TARGET", theme::style_target_row()));
-    }
     status.push(if active {
         status_badge("CURRENT", theme::style_current_badge())
     } else {
-        status_badge("READY", theme::style_ready_badge())
+        status_badge("ACTIVE", theme::style_active_badge())
     });
     let primary_style = work_primary_style(active);
     let secondary_style = work_secondary_style(active);
@@ -234,14 +231,14 @@ fn render_diagnostic(
     regions: &mut Option<&mut RenderRegions>,
 ) {
     mark_region(regions, AnimationTarget::DetailPanel, area);
-    let block = panel_block("SELECTED WORK", state.detail_visible);
+    let block = panel_block("WORK DETAIL", state.detail_visible);
 
     let Some(work) = state.selected_work() else {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(status_badge("WARN", theme::style_status_warn())),
-                Line::from("No Work selected. Press n to create Work."),
-                label_value("STATE", "NO SIGNAL"),
+                Line::from("No active Work. Press n to create Work."),
+                label_value("view", "EMPTY"),
             ])
             .block(block)
             .wrap(Wrap { trim: true }),
@@ -252,33 +249,33 @@ fn render_diagnostic(
 
     let lines = if !state.detail_visible {
         vec![
-            selected_work_header(state, work),
+            work_header(state, work),
             label_value("intent", work.intent_id.clone()),
             label_value("folder", work_folder_label(work)),
-            label_value("selection", selected_state_label(state, work)),
-            label_value("STATE", diagnostic_state_label(state)),
+            label_value("work state", work_state_label(state, work)),
+            label_value("view", diagnostic_state_label(state)),
         ]
     } else if area.height <= 12 {
         vec![
-            section(selected_section_label(state, work)),
-            selected_work_header(state, work),
+            section(work_section_label(state, work)),
+            work_header(state, work),
             label_value("intent", work.intent_id.clone()),
             label_value("folder", work_folder_label(work)),
-            label_value("selection", selected_state_label(state, work)),
+            label_value("work state", work_state_label(state, work)),
             section("Goal"),
             Line::from(work.goal.clone()),
         ]
     } else {
         vec![
-            section(selected_section_label(state, work)),
-            selected_work_header(state, work),
+            section(work_section_label(state, work)),
+            work_header(state, work),
             Line::from(work.slug.clone().dim()),
             Line::from(""),
             section("Context"),
             label_value("intent", work.intent_id.clone()),
             label_value("folder", work_folder_label(work)),
-            label_value("selection", selected_state_label(state, work)),
-            label_value("STATE", diagnostic_state_label(state)),
+            label_value("work state", work_state_label(state, work)),
+            label_value("view", diagnostic_state_label(state)),
             Line::from(""),
             section("Goal"),
             Line::from(work.goal.clone()),
@@ -436,7 +433,6 @@ fn footer_keys(
             key("j/k"),
             "move".dim(),
         ],
-        TuiMode::Command => vec![key("enter"), "run ".dim(), key("esc"), "cancel".dim()],
         TuiMode::Create => vec![
             key("enter"),
             "create ".dim(),
@@ -463,7 +459,6 @@ fn render_overlay(
 ) {
     match state.mode {
         TuiMode::Search => render_search(frame, area, state, regions),
-        TuiMode::Command => render_command(frame, area, state, regions),
         TuiMode::Create => render_create(frame, area, state, regions),
         TuiMode::Archive => render_archive(frame, area, state, regions),
         TuiMode::Help => render_help(frame, area, regions),
@@ -509,39 +504,6 @@ fn render_search(
         frame,
         popup,
         "SIGNAL FILTER",
-        lines,
-        theme::style_focused_border(),
-    );
-}
-
-fn render_command(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &TuiState,
-    regions: &mut Option<&mut RenderRegions>,
-) {
-    let popup = top_popup(72, 6, area);
-    mark_region(regions, AnimationTarget::Overlay, popup);
-    let command = if state.command.is_empty() {
-        " ".to_string()
-    } else {
-        state.command.clone()
-    };
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(": ", theme::style_command()),
-            Span::styled(
-                command,
-                theme::style_primary_text().add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        label_value("commands", "list, create, switch, archive"),
-        Line::from(vec![key("enter"), "run ".dim(), key("esc"), "cancel".dim()]),
-    ];
-    render_popup(
-        frame,
-        popup,
-        "OPERATOR COMMAND",
         lines,
         theme::style_focused_border(),
     );
@@ -616,7 +578,7 @@ fn render_archive(
     let lines = vec![
         Line::from(vec![
             status_badge("WARN", theme::style_status_warn()),
-            Span::raw(" Archive "),
+            Span::raw(" Archive active Work "),
             Span::styled(
                 work.title.clone(),
                 theme::style_primary_text().add_modifier(Modifier::BOLD),
@@ -641,7 +603,7 @@ fn render_archive(
     render_popup(
         frame,
         popup,
-        "ARCHIVE CONFIRM",
+        "ARCHIVE ACTIVE WORK",
         lines,
         theme::style_destructive(),
     );
@@ -654,13 +616,10 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, regions: &mut Option<&mut Rend
         help_line("j/down", "next Work"),
         help_line("k/up", "previous Work"),
         help_line("/", "signal filter"),
-        help_line("enter", "switch to selected Work"),
+        help_line("enter", "switch to highlighted Work"),
         help_line("n", "work init"),
-        help_line("a", "archive selected Work"),
-        help_line(":", "operator command"),
+        help_line("a", "archive highlighted Work"),
         help_line("esc", "close panel"),
-        Line::from(""),
-        Line::from("Commands: list, create, switch, archive".dim()),
     ];
     render_popup(
         frame,
@@ -744,15 +703,11 @@ fn intent_catalog_label(state: &TuiState) -> String {
         .join(" | ")
 }
 
-fn selected_work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
+fn work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
     let mut spans = if state.is_active_work(work) {
         vec![status_badge("CURRENT", theme::style_current_badge())]
     } else {
-        vec![
-            status_badge("TARGET", theme::style_target_row()),
-            Span::raw(" "),
-            status_badge("STANDBY", theme::style_muted_text()),
-        ]
+        vec![status_badge("ACTIVE", theme::style_active_badge())]
     };
     spans.extend([
         Span::raw(" "),
@@ -761,19 +716,19 @@ fn selected_work_header(state: &TuiState, work: &WorkSummary) -> Line<'static> {
     Line::from(spans)
 }
 
-fn selected_section_label(state: &TuiState, work: &WorkSummary) -> &'static str {
+fn work_section_label(state: &TuiState, work: &WorkSummary) -> &'static str {
     if state.is_active_work(work) {
         "CURRENT WORK"
     } else {
-        "TARGET WORK"
+        "ACTIVE WORK"
     }
 }
 
-fn selected_state_label(state: &TuiState, work: &WorkSummary) -> &'static str {
+fn work_state_label(state: &TuiState, work: &WorkSummary) -> &'static str {
     if state.is_active_work(work) {
         "CURRENT"
     } else {
-        "TARGET / STANDBY"
+        "ACTIVE"
     }
 }
 
@@ -817,9 +772,7 @@ fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
 fn mode_style(mode: TuiMode) -> Style {
     match mode {
         TuiMode::Archive => theme::style_status_warn(),
-        TuiMode::Command | TuiMode::Create | TuiMode::Search | TuiMode::Help => {
-            theme::style_command()
-        }
+        TuiMode::Create | TuiMode::Search | TuiMode::Help => theme::style_command(),
         TuiMode::List => theme::style_status_ok(),
     }
 }
@@ -847,7 +800,6 @@ fn mode_label(mode: TuiMode) -> &'static str {
     match mode {
         TuiMode::List => "LIST",
         TuiMode::Search => "FILTER",
-        TuiMode::Command => "COMMAND",
         TuiMode::Create => "CREATE",
         TuiMode::Archive => "ARCHIVE",
         TuiMode::Help => "HELP",
@@ -856,7 +808,7 @@ fn mode_label(mode: TuiMode) -> &'static str {
 
 fn diagnostic_state_label(state: &TuiState) -> String {
     if state.filter.is_empty() {
-        "READY".to_string()
+        "ALL ACTIVE".to_string()
     } else {
         format!("FILTER {}", state.filter)
     }
@@ -930,7 +882,7 @@ mod tests {
     use crate::tui::state::{Toast, TuiMode, TuiState};
 
     #[test]
-    fn renders_work_list_and_selected_detail() {
+    fn renders_work_list_and_detail() {
         let state = TuiState::new(work_list()).with_active_work_path(Some(std::path::Path::new(
             "/tmp/workon/.workon/work/billing-retry-audit",
         )));
@@ -946,7 +898,7 @@ mod tests {
         assert!(!content.contains("SELECT "));
         assert!(!content.contains("EXECUTION TRACE"));
         assert!(content.contains("OPERATOR COMMAND"));
-        assert!(content.contains("SELECTED WORK"));
+        assert!(content.contains("WORK DETAIL"));
         assert!(content.contains("CURRENT"));
         assert!(content.contains("Billing retry audit"));
         assert!(content.contains("intent investigate"));
@@ -958,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_active_and_highlighted_queue_rows_as_distinct_signals() {
+    fn renders_active_and_current_queue_rows_as_distinct_work_states() {
         let mut state = TuiState::new(multi_work_list()).with_active_work_path(Some(
             std::path::Path::new("/tmp/workon/.workon/work/billing-retry-audit"),
         ));
@@ -967,51 +919,53 @@ mod tests {
         let content = render_content(&state, 120, 36);
         let buffer = render_buffer(&state, 120, 36);
         let current_row = row_containing(&buffer, "CURRENT");
-        let target_row = row_containing(&buffer, ">> TARGET");
-        let ready_row = row_containing(&buffer, "Context command sketch");
-        let ready_meta_row = row_containing(&buffer, "intent brainstorm");
+        let active_row = row_containing(&buffer, ">> ACTIVE");
+        let other_active_row = row_containing(&buffer, "Context command sketch");
+        let other_active_meta_row = row_containing(&buffer, "intent brainstorm");
 
         assert!(content.contains("CURRENT"));
+        assert!(content.contains("ACTIVE"));
         assert!(content.contains("Billing retry audit"));
         assert!(content.contains("Review cache invalidation PR"));
         assert!(content.contains("Context command sketch"));
-        assert!(content.contains(">> TARGET"));
+        assert!(content.contains(">> ACTIVE"));
+        assert!(!content.contains("TARGET"));
+        assert!(!content.contains("READY"));
+        assert!(!content.contains("STANDBY"));
         assert!(content.contains("intent review-pr"));
         assert!(content.contains("intent brainstorm"));
         assert!(!content.contains("slug review-cache"));
         assert!(!content.contains("slug context-command"));
-        assert!(row_has_bg(&buffer, target_row, Color::Rgb(92, 58, 32)));
+        assert!(row_has_bg(&buffer, active_row, Color::Rgb(92, 58, 32)));
         assert!(row_has_modifier(&buffer, current_row, Modifier::UNDERLINED));
 
-        let target_label = cell_at_text(&buffer, target_row, "TARGET");
-        let target_ready_badge = cell_at_text(&buffer, target_row, "READY");
-        let target_title = cell_at_text(&buffer, target_row, "Review cache invalidation PR");
+        let selected_active_badge = cell_at_text(&buffer, active_row, "ACTIVE");
+        let selected_active_title =
+            cell_at_text(&buffer, active_row, "Review cache invalidation PR");
         let target_meta_row = row_containing(&buffer, "intent review-pr");
         let target_meta_key = cell_at_text(&buffer, target_meta_row, "intent ");
         let target_meta_value = cell_at_text(&buffer, target_meta_row, "review-pr");
-        let ready_badge = cell_at_text(&buffer, ready_row, "READY");
-        let ready_title = cell_at_text(&buffer, ready_row, "Context command sketch");
-        let ready_meta_key = cell_at_text(&buffer, ready_meta_row, "intent ");
-        let ready_meta_value = cell_at_text(&buffer, ready_meta_row, "brainstorm");
-        assert_eq!(target_label.fg, Color::Rgb(255, 176, 64));
-        assert_eq!(target_label.bg, Color::Rgb(92, 58, 32));
-        assert_eq!(target_ready_badge.fg, Color::Rgb(190, 130, 70));
-        assert_eq!(target_ready_badge.bg, Color::Rgb(92, 58, 32));
-        assert_eq!(target_title.fg, Color::Rgb(255, 176, 64));
-        assert_eq!(target_title.bg, Color::Rgb(92, 58, 32));
+        let active_badge = cell_at_text(&buffer, other_active_row, "ACTIVE");
+        let active_title = cell_at_text(&buffer, other_active_row, "Context command sketch");
+        let active_meta_key = cell_at_text(&buffer, other_active_meta_row, "intent ");
+        let active_meta_value = cell_at_text(&buffer, other_active_meta_row, "brainstorm");
+        assert_eq!(selected_active_badge.fg, Color::Rgb(190, 130, 70));
+        assert_eq!(selected_active_badge.bg, Color::Rgb(92, 58, 32));
+        assert_eq!(selected_active_title.fg, Color::Rgb(255, 176, 64));
+        assert_eq!(selected_active_title.bg, Color::Rgb(92, 58, 32));
         assert_eq!(target_meta_key.fg, Color::Rgb(104, 72, 40));
         assert_eq!(target_meta_value.fg, Color::Rgb(255, 140, 32));
         assert_eq!(target_meta_value.bg, Color::Rgb(92, 58, 32));
-        assert_eq!(ready_badge.fg, Color::Rgb(190, 130, 70));
-        assert_eq!(ready_title.fg, Color::Rgb(255, 176, 64));
-        assert!(ready_title.modifier.contains(Modifier::BOLD));
-        assert_eq!(ready_meta_key.fg, Color::Rgb(104, 72, 40));
-        assert_eq!(ready_meta_value.fg, Color::Rgb(255, 140, 32));
-        assert!(ready_meta_value.modifier.contains(Modifier::BOLD));
+        assert_eq!(active_badge.fg, Color::Rgb(190, 130, 70));
+        assert_eq!(active_title.fg, Color::Rgb(255, 176, 64));
+        assert!(active_title.modifier.contains(Modifier::BOLD));
+        assert_eq!(active_meta_key.fg, Color::Rgb(104, 72, 40));
+        assert_eq!(active_meta_value.fg, Color::Rgb(255, 140, 32));
+        assert!(active_meta_value.modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn renders_selected_detail_as_target_when_not_current_work() {
+    fn renders_detail_as_active_when_not_current_work() {
         let mut state = TuiState::new(multi_work_list()).with_active_work_path(Some(
             std::path::Path::new("/tmp/workon/.workon/work/billing-retry-audit"),
         ));
@@ -1019,10 +973,11 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("SELECTED WORK"));
-        assert!(content.contains("TARGET"));
-        assert!(content.contains("STANDBY"));
-        assert!(!content.contains("ACTIVE SESSION"));
+        assert!(content.contains("WORK DETAIL"));
+        assert!(content.contains("ACTIVE"));
+        assert!(!content.contains("TARGET"));
+        assert!(!content.contains("READY"));
+        assert!(!content.contains("STANDBY"));
     }
 
     #[test]
@@ -1159,9 +1114,9 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("ARCHIVE CONFIRM"));
+        assert!(content.contains("ARCHIVE ACTIVE WORK"));
         assert!(content.contains("WARN"));
-        assert!(content.contains("Archive Billing retry audit?"));
+        assert!(content.contains("Archive active Work Billing retry audit?"));
         assert!(content.contains("Hidden from Active Work."));
         assert!(content.contains("y/enter archive"));
         assert!(content.contains("esc/n cancel"));
@@ -1188,8 +1143,8 @@ mod tests {
 
         assert!(content.contains("KEY INDEX"));
         assert!(content.contains("j/down"));
-        assert!(content.contains("operator command"));
-        assert!(content.contains("Commands: list, create, switch, archive"));
+        assert!(!content.contains("operator command"));
+        assert!(!content.contains("Commands: list, create, switch, archive"));
     }
 
     #[test]
@@ -1202,7 +1157,7 @@ mod tests {
         let filtered = render_content(&state, 100, 28);
 
         assert!(filtered.contains("No active Work matches \"missing\"."));
-        assert!(filtered.contains("No Work selected. Press n to create Work."));
+        assert!(filtered.contains("No active Work. Press n to create Work."));
     }
 
     #[test]

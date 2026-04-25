@@ -2,8 +2,8 @@ use ratatui::style::{Color, Modifier, Style};
 
 const AMBER: Color = Color::Rgb(255, 176, 64);
 const ORANGE: Color = Color::Rgb(255, 140, 32);
-const TARGET_BG: Color = Color::Rgb(92, 58, 32);
-const READY_AMBER: Color = Color::Rgb(190, 130, 70);
+const SELECTED_ROW_BG: Color = Color::Rgb(92, 58, 32);
+const ACTIVE_AMBER: Color = Color::Rgb(190, 130, 70);
 const DIM_AMBER: Color = Color::Rgb(160, 104, 48);
 const BORDER_AMBER: Color = Color::Rgb(104, 72, 40);
 const OK_AMBER: Color = Color::Rgb(220, 180, 84);
@@ -64,15 +64,10 @@ pub(super) fn style_key() -> Style {
     Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
-pub(super) fn style_target_row() -> Style {
+pub(super) fn style_selected_row_highlight() -> Style {
     Style::new()
-        .fg(AMBER)
-        .bg(TARGET_BG)
+        .bg(SELECTED_ROW_BG)
         .add_modifier(Modifier::BOLD)
-}
-
-pub(super) fn style_target_highlight() -> Style {
-    Style::new().bg(TARGET_BG).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_current_text() -> Style {
@@ -98,8 +93,8 @@ pub(super) fn style_current_intent_value() -> Style {
     Style::new().fg(ORANGE).add_modifier(Modifier::BOLD)
 }
 
-pub(super) fn style_ready_badge() -> Style {
-    Style::new().fg(READY_AMBER).add_modifier(Modifier::BOLD)
+pub(super) fn style_active_badge() -> Style {
+    Style::new().fg(ACTIVE_AMBER).add_modifier(Modifier::BOLD)
 }
 
 pub(super) fn style_destructive() -> Style {

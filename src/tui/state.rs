@@ -10,7 +10,6 @@ pub(super) struct TuiState {
     pub(super) selected: usize,
     pub(super) mode: TuiMode,
     pub(super) filter: String,
-    pub(super) command: String,
     pub(super) create_goal: String,
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
@@ -26,7 +25,6 @@ pub(super) struct TuiState {
 pub(super) enum TuiMode {
     List,
     Search,
-    Command,
     Create,
     Archive,
     Help,
@@ -76,7 +74,6 @@ impl TuiState {
             selected: 0,
             mode: TuiMode::List,
             filter: String::new(),
-            command: String::new(),
             create_goal: String::new(),
             create_intent: 0,
             intents: Vec::new(),
@@ -155,9 +152,8 @@ impl TuiState {
         match self.mode {
             TuiMode::List => "AWAITING INPUT",
             TuiMode::Search => "SIGNAL FILTER",
-            TuiMode::Command => "OPERATOR COMMAND",
             TuiMode::Create => "WORK INIT",
-            TuiMode::Archive => "ARCHIVE CONFIRM",
+            TuiMode::Archive => "ARCHIVE ACTIVE",
             TuiMode::Help => "KEY INDEX",
         }
     }
@@ -245,7 +241,6 @@ impl TuiState {
         match self.mode {
             TuiMode::List => self.handle_list_key(key),
             TuiMode::Search => self.handle_search_key(key),
-            TuiMode::Command => self.handle_command_key(key),
             TuiMode::Create => self.handle_create_key(key),
             TuiMode::Archive => self.handle_archive_key(key),
             TuiMode::Help => self.handle_help_key(key),
@@ -254,7 +249,6 @@ impl TuiState {
 
     pub(super) fn close_panel(&mut self) {
         self.mode = TuiMode::List;
-        self.command.clear();
     }
 
     pub(super) fn reset_create_form(&mut self) {
@@ -297,12 +291,7 @@ impl TuiState {
                 self.push_trace(TraceKind::Signal, "filter ready");
                 TuiAction::None
             }
-            KeyCode::Char(':') => {
-                self.command.clear();
-                self.mode = TuiMode::Command;
-                self.push_trace(TraceKind::Run, "operator command ready");
-                TuiAction::None
-            }
+            KeyCode::Char(':') => TuiAction::None,
             KeyCode::Char('n') => {
                 self.mode = TuiMode::Create;
                 self.push_trace(TraceKind::Run, "work init ready");
@@ -358,25 +347,6 @@ impl TuiState {
         }
     }
 
-    fn handle_command_key(&mut self, key: KeyEvent) -> TuiAction {
-        match key.code {
-            KeyCode::Esc => {
-                self.close_panel();
-                TuiAction::None
-            }
-            KeyCode::Enter => self.run_command(),
-            KeyCode::Backspace => {
-                self.command.pop();
-                TuiAction::None
-            }
-            KeyCode::Char(character) if is_plain_character(key) => {
-                self.command.push(character);
-                TuiAction::None
-            }
-            _ => TuiAction::None,
-        }
-    }
-
     fn handle_create_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
             KeyCode::Esc => {
@@ -426,42 +396,6 @@ impl TuiState {
                 TuiAction::None
             }
             _ => TuiAction::None,
-        }
-    }
-
-    fn run_command(&mut self) -> TuiAction {
-        let command = self.command.trim().to_ascii_lowercase();
-        self.command.clear();
-
-        match command.as_str() {
-            "" | "list" => {
-                self.close_panel();
-                TuiAction::None
-            }
-            "create" | "new" => {
-                self.mode = TuiMode::Create;
-                TuiAction::None
-            }
-            "switch" | "open" => {
-                self.close_panel();
-                self.selected_work()
-                    .map(|work| TuiAction::Switch(work.slug.clone()))
-                    .unwrap_or(TuiAction::None)
-            }
-            "archive" => {
-                if self.selected_work().is_some() {
-                    self.mode = TuiMode::Archive;
-                } else {
-                    self.close_panel();
-                }
-                TuiAction::None
-            }
-            _ => {
-                self.toast = Some(Toast::error("Unknown command", &command));
-                self.push_trace(TraceKind::Err, format!("unknown command {command}"));
-                self.close_panel();
-                TuiAction::None
-            }
         }
     }
 
@@ -676,6 +610,17 @@ mod tests {
             state.selected_work().map(|work| work.slug.as_str()),
             Some("review-cache-invalidation-pr")
         );
+    }
+
+    #[test]
+    fn colon_does_not_open_operator_command() {
+        let mut state = TuiState::new(work_list());
+
+        let action = state.handle_key(key(KeyCode::Char(':')));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.mode, TuiMode::List);
+        assert!(state.trace.is_empty());
     }
 
     #[test]
