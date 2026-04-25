@@ -173,7 +173,7 @@ fn render_task_queue(
     let list = List::new(items)
         .block(block)
         .highlight_symbol(">>")
-        .highlight_style(theme::style_target_row());
+        .highlight_style(theme::style_target_highlight());
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
 }
 
@@ -187,8 +187,8 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     } else {
         status_badge("READY", theme::style_ready_badge())
     });
-    let primary_style = task_primary_style(active, selected);
-    let secondary_style = task_secondary_style(active, selected);
+    let primary_style = task_primary_style(active);
+    let secondary_style = task_secondary_style(active);
     status.extend([
         Span::raw(" "),
         Span::styled(work.title.clone(), primary_style),
@@ -198,10 +198,7 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
         Line::from(status),
         Line::from(vec![
             Span::styled("intent ", secondary_style),
-            Span::styled(
-                work.intent_id.clone(),
-                task_meta_value_style(active, selected),
-            ),
+            Span::styled(work.intent_id.clone(), task_meta_value_style(active)),
         ]),
     ]);
 
@@ -212,30 +209,24 @@ fn task_item(work: &WorkSummary, active: bool, selected: bool) -> ListItem<'stat
     }
 }
 
-fn task_primary_style(active: bool, selected: bool) -> Style {
-    if selected {
-        theme::style_target_row()
-    } else if active {
+fn task_primary_style(active: bool) -> Style {
+    if active {
         theme::style_current_text()
     } else {
         theme::style_task_title()
     }
 }
 
-fn task_secondary_style(active: bool, selected: bool) -> Style {
-    if selected {
-        theme::style_target_row()
-    } else if active {
+fn task_secondary_style(active: bool) -> Style {
+    if active {
         theme::style_current_meta_label()
     } else {
         theme::style_meta_key()
     }
 }
 
-fn task_meta_value_style(active: bool, selected: bool) -> Style {
-    if selected {
-        theme::style_target_row()
-    } else if active {
+fn task_meta_value_style(active: bool) -> Style {
+    if active {
         theme::style_current_intent_value()
     } else {
         theme::style_meta_value()
@@ -995,12 +986,24 @@ mod tests {
         assert!(row_has_modifier(&buffer, current_row, Modifier::UNDERLINED));
 
         let target_label = cell_at_text(&buffer, target_row, "TARGET");
+        let target_ready_badge = cell_at_text(&buffer, target_row, "READY");
+        let target_title = cell_at_text(&buffer, target_row, "Review cache invalidation PR");
+        let target_meta_row = row_containing(&buffer, "intent review-pr");
+        let target_meta_key = cell_at_text(&buffer, target_meta_row, "intent ");
+        let target_meta_value = cell_at_text(&buffer, target_meta_row, "review-pr");
         let ready_badge = cell_at_text(&buffer, ready_row, "READY");
         let ready_title = cell_at_text(&buffer, ready_row, "Context command sketch");
         let ready_meta_key = cell_at_text(&buffer, ready_meta_row, "intent ");
         let ready_meta_value = cell_at_text(&buffer, ready_meta_row, "brainstorm");
         assert_eq!(target_label.fg, Color::Rgb(255, 176, 64));
         assert_eq!(target_label.bg, Color::Rgb(92, 58, 32));
+        assert_eq!(target_ready_badge.fg, Color::Rgb(190, 130, 70));
+        assert_eq!(target_ready_badge.bg, Color::Rgb(92, 58, 32));
+        assert_eq!(target_title.fg, Color::Rgb(255, 176, 64));
+        assert_eq!(target_title.bg, Color::Rgb(92, 58, 32));
+        assert_eq!(target_meta_key.fg, Color::Rgb(104, 72, 40));
+        assert_eq!(target_meta_value.fg, Color::Rgb(255, 140, 32));
+        assert_eq!(target_meta_value.bg, Color::Rgb(92, 58, 32));
         assert_eq!(ready_badge.fg, Color::Rgb(190, 130, 70));
         assert_eq!(ready_title.fg, Color::Rgb(255, 176, 64));
         assert!(ready_title.modifier.contains(Modifier::BOLD));

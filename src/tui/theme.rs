@@ -75,6 +75,10 @@ pub(super) fn style_target_row() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub(super) fn style_target_highlight() -> Style {
+    Style::new().bg(TARGET_BG).add_modifier(Modifier::BOLD)
+}
+
 pub(super) fn style_current_text() -> Style {
     Style::new()
         .fg(OK_AMBER)
