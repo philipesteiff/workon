@@ -1,3 +1,4 @@
+mod animation;
 mod components;
 mod state;
 mod theme;
@@ -5,8 +6,9 @@ mod ui;
 
 use std::io::{self, Stdout};
 use std::path::PathBuf;
+use std::time::Instant;
 
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyEvent};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
@@ -15,8 +17,9 @@ use crate::app::{App, Command, CommandOutput};
 use crate::error::Result;
 use crate::shell_integration::current_work_path;
 
+use self::animation::{input_poll_timeout, AnimationRuntime, AnimationSnapshot};
 use self::state::{Toast, TraceKind, TuiAction, TuiState};
-use self::ui::render;
+use self::ui::render_for_animation;
 
 const INLINE_VIEWPORT_HEIGHT: u16 = 28;
 
@@ -70,13 +73,24 @@ fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     state: &mut TuiState,
 ) -> Result<Option<CommandOutput>> {
-    loop {
-        terminal.draw(|frame| render(frame, state))?;
+    let mut animation = AnimationRuntime::default();
+    let mut last_frame = Instant::now();
 
-        let Event::Key(key) = event::read()? else {
+    loop {
+        let elapsed = last_frame.elapsed();
+        last_frame = Instant::now();
+        terminal.draw(|frame| {
+            let area = frame.area();
+            let regions = render_for_animation(frame, state);
+            animation.prepare_frame(&regions);
+            animation.process_frame(elapsed, frame.buffer_mut(), area);
+        })?;
+
+        let Some(key) = read_next_key(animation.is_animating())? else {
             continue;
         };
 
+        let before = AnimationSnapshot::from_state(state);
         match state.handle_key(key) {
             TuiAction::None => {}
             TuiAction::Quit => return Ok(None),
@@ -122,7 +136,22 @@ fn run_loop(
                 }
             }
         }
+        animation.observe_transition(before, AnimationSnapshot::from_state(state));
+        last_frame = Instant::now();
     }
+}
+
+fn read_next_key(animating: bool) -> Result<Option<KeyEvent>> {
+    if let Some(timeout) = input_poll_timeout(animating) {
+        if !event::poll(timeout)? {
+            return Ok(None);
+        }
+    }
+
+    Ok(match event::read()? {
+        Event::Key(key) => Some(key),
+        _ => None,
+    })
 }
 
 fn reload_work_list(app: &App, state: &mut TuiState) -> Result<()> {
@@ -131,4 +160,93 @@ fn reload_work_list(app: &App, state: &mut TuiState) -> Result<()> {
     };
     state.set_work_list(work_list);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use crate::domain::{WorkList, WorkSummary};
+
+    use super::animation::{
+        input_poll_timeout, AnimationRuntime, AnimationSnapshot, AnimationTarget,
+        ANIMATION_FRAME_INTERVAL,
+    };
+    use super::state::{Toast, TuiMode, TuiState};
+
+    #[test]
+    fn animation_runtime_enqueues_targets_for_visible_state_transitions() {
+        let before = TuiState::new(work_list());
+        let mut after = before.clone();
+        after.mode = TuiMode::Search;
+        after.move_selection(1);
+        after.trace_visible = true;
+        after.detail_visible = true;
+        after.toast = Some(Toast::info("Work created", "/tmp/workon/.workon/work/new"));
+        after.works.push(WorkSummary {
+            title: "New task".to_string(),
+            slug: "new-task".to_string(),
+            goal: "Create a new animated task.".to_string(),
+            intent_id: "investigate".to_string(),
+            path: "/tmp/workon/.workon/work/new-task".into(),
+        });
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&after),
+        );
+
+        assert!(runtime.has_pending(AnimationTarget::Overlay));
+        assert!(runtime.has_pending(AnimationTarget::TaskQueue));
+        assert!(runtime.has_pending(AnimationTarget::TracePanel));
+        assert!(runtime.has_pending(AnimationTarget::DetailPanel));
+        assert!(runtime.has_pending(AnimationTarget::Toast));
+        assert!(runtime.has_pending(AnimationTarget::FooterStatus));
+    }
+
+    #[test]
+    fn animation_runtime_keeps_list_navigation_instant() {
+        let before = TuiState::new(work_list());
+        let mut after = before.clone();
+        after.move_selection(1);
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&after),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::TaskQueue));
+    }
+
+    #[test]
+    fn animation_poll_timeout_blocks_when_idle_and_ticks_when_active() {
+        assert_eq!(input_poll_timeout(false), None);
+        assert_eq!(
+            input_poll_timeout(true),
+            Some(Duration::from_millis(ANIMATION_FRAME_INTERVAL))
+        );
+    }
+
+    fn work_list() -> WorkList {
+        WorkList {
+            works: vec![
+                WorkSummary {
+                    title: "Billing retry audit".to_string(),
+                    slug: "billing-retry-audit".to_string(),
+                    goal: "Find why billing retry alerts spiked.".to_string(),
+                    intent_id: "investigate".to_string(),
+                    path: "/tmp/workon/.workon/work/billing-retry-audit".into(),
+                },
+                WorkSummary {
+                    title: "Review cache invalidation PR".to_string(),
+                    slug: "review-cache-invalidation-pr".to_string(),
+                    goal: "Review cache invalidation changes.".to_string(),
+                    intent_id: "review-pr".to_string(),
+                    path: "/tmp/workon/.workon/work/review-cache-invalidation-pr".into(),
+                },
+            ],
+        }
+    }
 }

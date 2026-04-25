@@ -10,3 +10,4 @@ path = "src/main.rs"
 [dependencies]
 crossterm = "0.29"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
+tachyonfx = { version = "0.25", default-features = false, features = ["std", "std-duration"] }

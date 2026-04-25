@@ -78,5 +78,7 @@ How AI agents should work in this repo.
 - Keep decisions visible.
 - Keep docs short enough to stay alive.
 - Use simple language; avoid filler and hype.
+- Use the Worktrunk `wt` CLI for git worktree operations.
+- Do not create, switch, merge, remove, or inspect worktrees with raw `git worktree` commands unless `wt` cannot perform the needed operation.
 - Commit only when asked.
 - Keep commits narrow and named for the user-facing change.

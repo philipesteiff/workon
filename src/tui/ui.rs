@@ -8,6 +8,7 @@ use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph, StatefulWidg
 use crate::domain::WorkSummary;
 use crate::slug::{slugify, title_from_goal};
 
+use super::animation::{AnimationTarget, RenderRegions};
 use super::components::{
     key, label_value, panel_block, render_popup, section, status_badge, top_border,
 };
@@ -17,7 +18,18 @@ use super::theme;
 const CONTROL_PANEL_MAX_WIDTH: u16 = 160;
 const CONTROL_PANEL_SIDE_MARGIN: u16 = 2;
 
+#[cfg(test)]
 pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
+    render_inner(frame, state, None);
+}
+
+pub(super) fn render_for_animation(frame: &mut Frame<'_>, state: &TuiState) -> RenderRegions {
+    let mut regions = RenderRegions::default();
+    render_inner(frame, state, Some(&mut regions));
+    regions
+}
+
+fn render_inner(frame: &mut Frame<'_>, state: &TuiState, mut regions: Option<&mut RenderRegions>) {
     let area = frame.area();
     let dialog = control_panel_rect(area, state);
     let block = panel_block("WORKON // CONTROL", true);
@@ -33,9 +45,10 @@ pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
     .areas(inner);
 
     render_header(frame, header, state);
-    render_workspace(frame, workspace, state);
+    render_workspace(frame, workspace, state, &mut regions);
+    mark_region(&mut regions, AnimationTarget::FooterStatus, footer);
     render_footer(frame, footer, state);
-    render_overlay(frame, area, state);
+    render_overlay(frame, area, state, &mut regions);
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
@@ -63,7 +76,12 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     frame.render_widget(Paragraph::new(status), area);
 }
 
-fn render_workspace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_workspace(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     if area.height == 0 {
         return;
     }
@@ -84,28 +102,39 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         (main, Some(trace))
     };
 
-    render_main_panels(frame, main, state);
+    render_main_panels(frame, main, state, regions);
 
     if let Some(trace) = trace {
-        render_trace(frame, trace, state);
+        render_trace(frame, trace, state, regions);
     }
 }
 
-fn render_main_panels(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_main_panels(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     if area.width < 86 {
         let [queue, diagnostic] =
             Layout::vertical([Constraint::Percentage(50), Constraint::Fill(1)]).areas(area);
-        render_task_queue(frame, queue, state);
-        render_diagnostic(frame, diagnostic, state);
+        render_task_queue(frame, queue, state, regions);
+        render_diagnostic(frame, diagnostic, state, regions);
     } else {
         let [queue, diagnostic] =
             Layout::horizontal([Constraint::Percentage(44), Constraint::Fill(1)]).areas(area);
-        render_task_queue(frame, queue, state);
-        render_diagnostic(frame, diagnostic, state);
+        render_task_queue(frame, queue, state, regions);
+        render_diagnostic(frame, diagnostic, state, regions);
     }
 }
 
-fn render_task_queue(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_task_queue(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
+    mark_region(regions, AnimationTarget::TaskQueue, area);
     let works = state.filtered_works();
     let block = panel_block(
         "TASK QUEUE",
@@ -200,7 +229,13 @@ fn task_secondary_style(active: bool, selected: bool) -> Style {
     }
 }
 
-fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_diagnostic(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
+    mark_region(regions, AnimationTarget::DetailPanel, area);
     let block = panel_block("ACTIVE SESSION", state.detail_visible);
 
     let Some(work) = state.selected_work() else {
@@ -273,7 +308,13 @@ fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     );
 }
 
-fn render_trace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_trace(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
+    mark_region(regions, AnimationTarget::TracePanel, area);
     let block = panel_block("EXECUTION TRACE", false);
     let mut lines = if state.trace.is_empty() {
         vec![
@@ -394,23 +435,34 @@ fn footer_keys(mode: TuiMode, trace_visible: bool, detail_visible: bool) -> Vec<
     }
 }
 
-fn render_overlay(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_overlay(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     match state.mode {
-        TuiMode::Search => render_search(frame, area, state),
-        TuiMode::Command => render_command(frame, area, state),
-        TuiMode::Create => render_create(frame, area, state),
-        TuiMode::Archive => render_archive(frame, area, state),
-        TuiMode::Help => render_help(frame, area),
+        TuiMode::Search => render_search(frame, area, state, regions),
+        TuiMode::Command => render_command(frame, area, state, regions),
+        TuiMode::Create => render_create(frame, area, state, regions),
+        TuiMode::Archive => render_archive(frame, area, state, regions),
+        TuiMode::Help => render_help(frame, area, regions),
         TuiMode::List => {}
     }
 
     if let Some(toast) = &state.toast {
-        render_toast(frame, area, toast);
+        render_toast(frame, area, toast, regions);
     }
 }
 
-fn render_search(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_search(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     let popup = top_popup(72, 7, area);
+    mark_region(regions, AnimationTarget::Overlay, popup);
     let query = if state.filter.is_empty() {
         " ".to_string()
     } else {
@@ -442,8 +494,14 @@ fn render_search(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     );
 }
 
-fn render_command(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_command(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     let popup = top_popup(72, 6, area);
+    mark_region(regions, AnimationTarget::Overlay, popup);
     let command = if state.command.is_empty() {
         " ".to_string()
     } else {
@@ -469,8 +527,14 @@ fn render_command(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     );
 }
 
-fn render_create(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_create(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     let popup = centered_rect(78, 56, area);
+    mark_region(regions, AnimationTarget::Overlay, popup);
     let mut lines = vec![
         section("TASK INTAKE"),
         label_value("Goal", ""),
@@ -517,8 +581,14 @@ fn render_create(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     );
 }
 
-fn render_archive(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_archive(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     let popup = centered_rect(74, 64, area);
+    mark_region(regions, AnimationTarget::Overlay, popup);
     let Some(work) = state.selected_work() else {
         return;
     };
@@ -557,8 +627,9 @@ fn render_archive(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     );
 }
 
-fn render_help(frame: &mut Frame<'_>, area: Rect) {
+fn render_help(frame: &mut Frame<'_>, area: Rect, regions: &mut Option<&mut RenderRegions>) {
     let popup = centered_rect(66, 52, area);
+    mark_region(regions, AnimationTarget::Overlay, popup);
     let lines = vec![
         help_line("j/down", "next Work"),
         help_line("k/up", "previous Work"),
@@ -580,7 +651,12 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
     );
 }
 
-fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
+fn render_toast(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    toast: &Toast,
+    regions: &mut Option<&mut RenderRegions>,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -590,6 +666,7 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
     let x = area.x + area.width.saturating_sub(width + 2);
     let y = area.y + area.height.saturating_sub(height + 2);
     let popup = Rect::new(x, y, width, height);
+    mark_region(regions, AnimationTarget::Toast, popup);
     let style = match toast.kind {
         ToastKind::Info => theme::style_status_ok(),
         ToastKind::Error => theme::style_status_error(),
@@ -603,6 +680,12 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
         Line::from(toast.message.clone().dim()),
     ];
     render_popup(frame, popup, "LAST EVENT", lines, style);
+}
+
+fn mark_region(regions: &mut Option<&mut RenderRegions>, target: AnimationTarget, area: Rect) {
+    if let Some(regions) = regions.as_deref_mut() {
+        regions.set(target, area);
+    }
 }
 
 fn selected_intent_lines(state: &TuiState) -> Vec<Line<'static>> {
@@ -778,8 +861,9 @@ mod tests {
     use ratatui::style::{Color, Modifier};
     use ratatui::Terminal;
 
-    use super::{control_panel_rect, render};
+    use super::{control_panel_rect, render, render_for_animation};
     use crate::domain::{WorkList, WorkSummary};
+    use crate::tui::animation::AnimationTarget;
     use crate::tui::state::{Toast, TuiMode, TuiState};
 
     #[test]
@@ -1022,6 +1106,29 @@ mod tests {
     }
 
     #[test]
+    fn animated_render_records_regions_without_changing_static_output() {
+        let mut state = TuiState::new(work_list());
+        state.mode = TuiMode::Search;
+        state.trace_visible = true;
+        state.detail_visible = true;
+        state.toast = Some(Toast::info(
+            "Work created",
+            "/tmp/workon/.workon/work/billing",
+        ));
+
+        let static_content = render_content(&state, 120, 36);
+        let (animated_content, regions) = render_content_for_animation(&state, 120, 36);
+
+        assert_eq!(animated_content, static_content);
+        assert!(regions.has_region(AnimationTarget::TaskQueue));
+        assert!(regions.has_region(AnimationTarget::DetailPanel));
+        assert!(regions.has_region(AnimationTarget::TracePanel));
+        assert!(regions.has_region(AnimationTarget::FooterStatus));
+        assert!(regions.has_region(AnimationTarget::Overlay));
+        assert!(regions.has_region(AnimationTarget::Toast));
+    }
+
+    #[test]
     fn renders_mission_control_vocabulary_at_common_sizes() {
         for (width, height) in [(120, 36), (100, 28), (80, 24), (74, 30)] {
             let content = render_content(&TuiState::new(work_list()), width, height);
@@ -1075,6 +1182,27 @@ mod tests {
             .expect("render should succeed");
 
         format!("{}", terminal.backend())
+    }
+
+    fn render_content_for_animation(
+        state: &TuiState,
+        width: u16,
+        height: u16,
+    ) -> (String, crate::tui::animation::RenderRegions) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height))
+            .expect("test terminal should initialize");
+        let mut regions = None;
+
+        terminal
+            .draw(|frame| {
+                regions = Some(render_for_animation(frame, state));
+            })
+            .expect("render should succeed");
+
+        (
+            format!("{}", terminal.backend()),
+            regions.expect("animated render should collect regions"),
+        )
     }
 
     fn render_buffer(state: &TuiState, width: u16, height: u16) -> Buffer {
