@@ -145,6 +145,8 @@ impl TuiState {
             return TuiAction::None;
         }
 
+        self.toast = None;
+
         match self.mode {
             TuiMode::List => self.handle_list_key(key),
             TuiMode::Search => self.handle_search_key(key),
@@ -439,7 +441,9 @@ fn is_plain_character(key: KeyEvent) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use super::TuiState;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{Toast, TuiAction, TuiMode, TuiState};
     use crate::domain::{WorkList, WorkSummary};
 
     #[test]
@@ -484,6 +488,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn clears_toast_on_next_meaningful_key_press() {
+        let mut state = TuiState::new(work_list());
+        state.toast = Some(Toast::info(
+            "Work created",
+            "/tmp/workon/.workon/work/billing",
+        ));
+
+        let action = state.handle_key(key(KeyCode::Char('j')));
+
+        assert_eq!(action, TuiAction::None);
+        assert_eq!(state.toast, None);
+        assert_eq!(
+            state.selected_work().map(|work| work.slug.as_str()),
+            Some("review-cache-invalidation-pr")
+        );
+    }
+
+    #[test]
+    fn archive_confirm_accepts_enter_and_y() {
+        let mut enter_state = TuiState::new(work_list());
+        enter_state.mode = TuiMode::Archive;
+        let enter_action = enter_state.handle_key(key(KeyCode::Enter));
+
+        let mut y_state = TuiState::new(work_list());
+        y_state.mode = TuiMode::Archive;
+        let y_action = y_state.handle_key(key(KeyCode::Char('y')));
+
+        assert_eq!(
+            enter_action,
+            TuiAction::Archive("billing-retry-audit".to_string())
+        );
+        assert_eq!(y_action, enter_action);
+    }
+
     fn work_list() -> WorkList {
         WorkList {
             works: vec![
@@ -511,5 +550,9 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
     }
 }
