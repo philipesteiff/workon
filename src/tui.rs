@@ -18,7 +18,7 @@ use crate::shell_integration::current_work_path;
 use self::state::{Toast, TraceKind, TuiAction, TuiState};
 use self::ui::render;
 
-const INLINE_VIEWPORT_HEIGHT: u16 = 22;
+const INLINE_VIEWPORT_HEIGHT: u16 = 28;
 
 pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {

@@ -9,10 +9,13 @@ use crate::domain::WorkSummary;
 use crate::slug::{slugify, title_from_goal};
 
 use super::components::{
-    bottom_border, key, label_value, panel_block, render_popup, section, status_badge, top_border,
+    key, label_value, panel_block, render_popup, section, status_badge, top_border,
 };
 use super::state::{Toast, ToastKind, TraceKind, TuiMode, TuiState};
 use super::theme;
+
+const CONTROL_PANEL_MAX_WIDTH: u16 = 160;
+const CONTROL_PANEL_SIDE_MARGIN: u16 = 2;
 
 pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
     let area = frame.area();
@@ -23,7 +26,7 @@ pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
     frame.render_widget(block, dialog);
 
     let [header, workspace, footer] = Layout::vertical([
-        Constraint::Length(if inner.height < 12 { 1 } else { 2 }),
+        Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(2),
     ])
@@ -40,14 +43,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         return;
     }
 
-    let root = root_label(state);
-    let top = Line::from(vec![
-        status_badge("SYSTEM ONLINE", theme::style_status_ok()),
-        Span::raw(" "),
-        Span::styled("ROOT ", theme::style_muted_text()),
-        Span::styled(root, theme::style_primary_text()),
-    ]);
-    let bottom = Line::from(vec![
+    let status = Line::from(vec![
         Span::styled(" MODE ", theme::style_muted_text()),
         Span::styled(mode_label(state.mode), theme::style_command()),
         Span::raw("   "),
@@ -64,12 +60,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Span::styled(state.selected_position_label(), theme::style_selected()),
     ]);
 
-    let lines = if area.height < 3 {
-        vec![top]
-    } else {
-        vec![top, bottom]
-    };
-    frame.render_widget(Paragraph::new(lines).block(bottom_border()), area);
+    frame.render_widget(Paragraph::new(status), area);
 }
 
 fn render_workspace(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
@@ -207,7 +198,7 @@ fn render_diagnostic(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
             label_value("folder", work_folder_label(work)),
             label_value("STATE", diagnostic_state_label(state)),
         ]
-    } else if area.height <= 9 {
+    } else if area.height <= 12 {
         vec![
             section("ACTIVE SESSION"),
             Line::from(vec![
@@ -631,8 +622,11 @@ fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
         return area;
     }
 
-    let width = area.width.saturating_sub(4).min(96);
-    let base_height = if state.detail_visible { 22 } else { 16 };
+    let width = area
+        .width
+        .saturating_sub(CONTROL_PANEL_SIDE_MARGIN)
+        .min(CONTROL_PANEL_MAX_WIDTH);
+    let base_height = if state.detail_visible { 28 } else { 24 };
     let trace_extra = if state.trace_visible { 5 } else { 0 };
     let height = (base_height + trace_extra).min(area.height.saturating_sub(2));
 
@@ -684,14 +678,6 @@ fn diagnostic_state_label(state: &TuiState) -> String {
         "READY".to_string()
     } else {
         format!("FILTER {}", state.filter)
-    }
-}
-
-fn root_label(state: &TuiState) -> String {
-    if state.root.as_os_str().is_empty() {
-        ".workon".to_string()
-    } else {
-        state.root.join(".workon").display().to_string()
     }
 }
 
@@ -752,9 +738,10 @@ mod tests {
     use std::path::PathBuf;
 
     use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
     use ratatui::Terminal;
 
-    use super::render;
+    use super::{control_panel_rect, render};
     use crate::domain::{WorkList, WorkSummary};
     use crate::tui::state::{Toast, TuiMode, TuiState};
 
@@ -766,7 +753,8 @@ mod tests {
         let content = render_content(&state, 120, 36);
 
         assert!(content.contains("WORKON // CONTROL"));
-        assert!(content.contains("SYSTEM ONLINE"));
+        assert!(!content.contains("SYSTEM ONLINE"));
+        assert!(!content.contains("ROOT "));
         assert!(content.contains("TASK QUEUE"));
         assert!(!content.contains("EXECUTION TRACE"));
         assert!(content.contains("OPERATOR COMMAND"));
@@ -778,6 +766,16 @@ mod tests {
         assert!(!content.contains("archive"));
         assert!(!content.contains("Goal"));
         assert!(!first_lines(&content, 4).contains("WORKON // CONTROL"));
+    }
+
+    #[test]
+    fn uses_more_horizontal_room_on_wide_terminals() {
+        let state = TuiState::new(work_list());
+        let panel = control_panel_rect(Rect::new(0, 0, 160, 36), &state);
+
+        assert_eq!(panel.width, 158);
+        assert_eq!(panel.height, 22);
+        assert_eq!(panel.x, 1);
     }
 
     #[test]

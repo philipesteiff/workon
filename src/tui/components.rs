@@ -19,12 +19,6 @@ pub(super) fn panel_block(title: &'static str, focused: bool) -> Block<'static> 
         })
 }
 
-pub(super) fn bottom_border() -> Block<'static> {
-    Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(theme::style_inactive_border())
-}
-
 pub(super) fn top_border() -> Block<'static> {
     Block::default()
         .borders(Borders::TOP)
