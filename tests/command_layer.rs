@@ -320,6 +320,88 @@ fn add_repository_workspaces_accepts_multiple_paths() {
 }
 
 #[test]
+fn remove_repository_workspace_blocks_active_work_repositories_in_that_workspace() {
+    let root = temp_root("remove_repo_workspace_blocks_active_work");
+    let app = App::new(root.path().to_path_buf());
+    let repo_workspace = configure_repo_workspace(&app, root.path());
+    let repo_target = repo_workspace.join("active-work/workon");
+    let work = create_investigate(&app, "Active work");
+    write_repo_metadata(&work.path, &repo_target);
+
+    let error = app
+        .execute(Command::RemoveRepositoryWorkspace {
+            path: repo_workspace.clone(),
+        })
+        .expect_err("active work repo should block workspace removal");
+
+    assert!(matches!(error, WorkonError::RepositoryContext { .. }));
+    assert!(error.to_string().contains("cannot remove repo workspace"));
+    assert!(error.to_string().contains("active-work"));
+    assert!(error.to_string().contains("openai/workon"));
+
+    let CommandOutput::RepositoryWorkspaces(list) = app
+        .execute(Command::ListRepositoryWorkspaces)
+        .expect("workspace list should still be readable")
+    else {
+        panic!("expected RepositoryWorkspaces output");
+    };
+    let canonical = fs::canonicalize(repo_workspace).expect("workspace should exist");
+    assert_eq!(list.workspaces.len(), 1);
+    assert_eq!(list.workspaces[0].path, canonical);
+}
+
+#[test]
+fn remove_repository_workspace_ignores_archived_work_repositories() {
+    let root = temp_root("remove_repo_workspace_ignores_archive");
+    let app = App::new(root.path().to_path_buf());
+    let repo_workspace = configure_repo_workspace(&app, root.path());
+    let repo_target = repo_workspace.join("archived-work/workon");
+    let work = create_investigate(&app, "Archived work");
+    write_repo_metadata(&work.path, &repo_target);
+    app.execute(Command::ArchiveWork {
+        query: work.slug.clone(),
+    })
+    .expect("work should archive");
+
+    let CommandOutput::RepositoryWorkspaces(list) = app
+        .execute(Command::RemoveRepositoryWorkspace {
+            path: repo_workspace,
+        })
+        .expect("archived work should not block workspace removal")
+    else {
+        panic!("expected RepositoryWorkspaces output");
+    };
+
+    assert!(list.workspaces.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn remove_repository_workspace_blocks_legacy_symlinked_repository() {
+    let root = temp_root("remove_repo_workspace_blocks_legacy_symlink");
+    let app = App::new(root.path().to_path_buf());
+    let repo_workspace = configure_repo_workspace(&app, root.path());
+    let repo_target = repo_workspace.join("legacy-work/workon");
+    fs::create_dir_all(&repo_target).expect("repo target should exist");
+    let work = create_investigate(&app, "Legacy work");
+    let repos = work.path.join("repos");
+    fs::create_dir_all(&repos).expect("repos folder should exist");
+    std::os::unix::fs::symlink(&repo_target, repos.join("workon"))
+        .expect("legacy repo symlink should exist");
+    write_legacy_repo_metadata(&work.path);
+
+    let error = app
+        .execute(Command::RemoveRepositoryWorkspace {
+            path: repo_workspace,
+        })
+        .expect_err("legacy symlinked repo should block workspace removal");
+
+    assert!(error.to_string().contains("cannot remove repo workspace"));
+    assert!(error.to_string().contains("legacy-work"));
+    assert!(error.to_string().contains("openai/workon"));
+}
+
+#[test]
 fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
     let root = temp_root("add_work_repositories_uses_gh_and_git_worktree");
@@ -718,6 +800,46 @@ fn configure_repo_workspace(app: &App, root: &Path) -> PathBuf {
     })
     .expect("repo workspace should be configured");
     path
+}
+
+fn write_repo_metadata(work_path: &Path, target_path: &Path) {
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).expect("repo target parent should exist");
+    }
+    fs::create_dir_all(target_path).expect("repo target should exist");
+    fs::write(
+        work_path.join("workon.repos.json"),
+        format!(
+            r#"[
+  {{
+    "name_with_owner": "openai/workon",
+    "default_branch": "main",
+    "url": "https://github.com/openai/workon",
+    "alias": "workon",
+    "target_path": "{}"
+  }}
+]
+"#,
+            target_path.display()
+        ),
+    )
+    .expect("repo metadata should write");
+}
+
+fn write_legacy_repo_metadata(work_path: &Path) {
+    fs::write(
+        work_path.join("workon.repos.json"),
+        r#"[
+  {
+    "name_with_owner": "openai/workon",
+    "default_branch": "main",
+    "url": "https://github.com/openai/workon",
+    "alias": "workon"
+  }
+]
+"#,
+    )
+    .expect("legacy repo metadata should write");
 }
 
 struct TempRoot {

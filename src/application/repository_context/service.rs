@@ -109,14 +109,44 @@ impl<'a> RepositoryContextService<'a> {
     }
 
     pub(super) fn remove_workspace(
+        store: &WorkStore,
         workspaces: &dyn RepoWorkspaceStore,
+        metadata: &dyn RepoMetadataStore,
         path: &Path,
     ) -> Result<CommandOutput> {
         let path = normalize_existing_or_input_path(path)?;
         let mut existing = workspaces.read()?;
+        Self::ensure_workspace_unused_by_active_work(store, metadata, &path)?;
         existing.retain(|workspace| workspace.path != path);
         workspaces.write(&existing)?;
         Self::workspaces(workspaces)
+    }
+
+    fn ensure_workspace_unused_by_active_work(
+        store: &WorkStore,
+        metadata: &dyn RepoMetadataStore,
+        workspace_path: &Path,
+    ) -> Result<()> {
+        let workspace_path = normalize_existing_or_input_path(workspace_path)?;
+        for work in store.list()?.works {
+            for repository in metadata.read(&work.path)? {
+                let Some(target_path) = repository_target_path(&work.path, &repository)? else {
+                    continue;
+                };
+                if path_contains(&workspace_path, &target_path) {
+                    return Err(WorkonError::RepositoryContext {
+                        message: format!(
+                            "cannot remove repo workspace {}; active Work {} uses {} at {}",
+                            workspace_path.display(),
+                            work.slug,
+                            repository.name_with_owner,
+                            target_path.display()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn discover(
@@ -407,6 +437,44 @@ fn link_alias(path: &Path) -> Result<String> {
         .ok_or_else(|| WorkonError::RepositoryContext {
             message: format!("repository link has no valid alias: {}", path.display()),
         })
+}
+
+fn repository_target_path(
+    work_path: &Path,
+    repository: &RepositoryAttachment,
+) -> Result<Option<PathBuf>> {
+    if !repository.target_path.as_os_str().is_empty() {
+        return Ok(Some(normalize_existing_or_input_path(
+            &repository.target_path,
+        )?));
+    }
+
+    let alias = if repository.alias.is_empty() {
+        repository_alias(&repository.name_with_owner)?
+    } else {
+        repository.alias.clone()
+    };
+    let link_path = work_path.join("repos").join(alias);
+    if !link_path.exists() {
+        return Ok(None);
+    }
+    let target_path = fs_canonicalize(&link_path).or_else(|_| symlink_target(&link_path))?;
+    Ok(Some(normalize_existing_or_input_path(&target_path)?))
+}
+
+fn symlink_target(path: &Path) -> Result<PathBuf> {
+    let target = std::fs::read_link(path)?;
+    if target.is_absolute() {
+        return Ok(target);
+    }
+    Ok(path
+        .parent()
+        .map(|parent| parent.join(&target))
+        .unwrap_or(target))
+}
+
+fn path_contains(parent: &Path, child: &Path) -> bool {
+    child == parent || child.starts_with(parent)
 }
 
 #[cfg(test)]

@@ -39,7 +39,8 @@ pub(crate) fn add_workspaces(store: &WorkStore, paths: &[PathBuf]) -> Result<Com
 
 pub(crate) fn remove_workspace(store: &WorkStore, path: &Path) -> Result<CommandOutput> {
     let workspaces = JsonRepoWorkspaceStore::new(store.root());
-    RepositoryContextService::remove_workspace(&workspaces, path)
+    let metadata = JsonRepoMetadataStore;
+    RepositoryContextService::remove_workspace(store, &workspaces, &metadata, path)
 }
 
 pub(crate) fn discover(store: &WorkStore, query: &str) -> Result<CommandOutput> {
