@@ -4,7 +4,10 @@ pub mod repository_context;
 pub mod work;
 
 pub use agent_context::ContextStatus;
-pub use intent::{IntentCatalog, IntentProfile};
+pub use intent::{
+    IntentCatalog, IntentList, IntentProfile, IntentProfileChange, IntentSource, IntentSummary,
+    WorkIntentSwitch,
+};
 pub use repository_context::{
     AttachedRepository, AvailableRepository, RepositoryAttachment, RepositoryCandidate,
     RepositoryCandidateList, RepositoryCatalog, RepositoryContextChange, RepositoryWorkspace,

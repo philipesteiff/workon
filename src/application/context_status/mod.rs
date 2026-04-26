@@ -4,9 +4,9 @@ use crate::shared::error::Result;
 
 pub(crate) fn execute() -> Result<CommandOutput> {
     Ok(CommandOutput::Context(ContextStatus {
-        status: "TBD".to_string(),
+        status: "available".to_string(),
         message:
-            "Context editing will change intent, skills, MCPs, and repos for the current work."
+            "Intent switching and repository context are available. skills and MCPs remain intent-profile fields."
                 .to_string(),
     }))
 }

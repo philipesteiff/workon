@@ -3,7 +3,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use crate::application::CommandOutput;
-use crate::domain::WorkList;
+use crate::domain::{IntentProfileChange, IntentSource, WorkList};
 use crate::shared::error::Result;
 
 pub(crate) fn render_output(
@@ -23,6 +23,38 @@ pub(crate) fn render_output(
         CommandOutput::Context(context) => {
             writeln!(writer, "context: {}", context.status)?;
             writeln!(writer, "{}", context.message)?;
+        }
+        CommandOutput::IntentArchived(change) => {
+            writeln!(writer, "intent archived: {}", change.intent.id)?;
+            writeln!(writer, "next: wo intent list")?;
+        }
+        CommandOutput::IntentCreated(change) => {
+            writeln!(writer, "intent created: {}", change.intent.id)?;
+            render_intent_profile(writer, change)?;
+        }
+        CommandOutput::IntentDuplicated(change) => {
+            writeln!(writer, "intent duplicated: {}", change.intent.id)?;
+            render_intent_profile(writer, change)?;
+        }
+        CommandOutput::IntentList(list) => {
+            writeln!(writer, "intents:")?;
+            for intent in &list.intents {
+                writeln!(
+                    writer,
+                    "{}  {}  {}  {}",
+                    intent.id,
+                    source_label(intent.source),
+                    intent.name,
+                    intent.summary
+                )?;
+            }
+        }
+        CommandOutput::IntentShown(change) => {
+            render_intent_profile(writer, change)?;
+        }
+        CommandOutput::IntentUpdated(change) => {
+            writeln!(writer, "intent updated: {}", change.intent.id)?;
+            render_intent_profile(writer, change)?;
         }
         CommandOutput::RepositoryCatalog(catalog) => {
             for repository in &catalog.repositories {
@@ -147,8 +179,48 @@ pub(crate) fn render_output(
                 }
             }
         }
+        CommandOutput::WorkIntentSwitched(change) => {
+            writeln!(writer, "work intent switched: {}", change.work.title)?;
+            writeln!(writer, "from: {}", change.previous_intent_id)?;
+            writeln!(writer, "to: {}", change.intent.id)?;
+            writeln!(writer, "files: AGENTS.md, CLAUDE.md")?;
+        }
     }
     Ok(())
+}
+
+fn render_intent_profile(writer: &mut dyn Write, change: &IntentProfileChange) -> Result<()> {
+    writeln!(writer, "id: {}", change.intent.id)?;
+    writeln!(writer, "source: {}", source_label(change.source))?;
+    writeln!(writer, "name: {}", change.intent.name)?;
+    writeln!(writer, "summary: {}", change.intent.summary)?;
+    writeln!(
+        writer,
+        "skills: {}",
+        list_label(&change.intent.skill_weights)
+    )?;
+    writeln!(writer, "mcps: {}", list_label(&change.intent.mcp_weights))?;
+    writeln!(
+        writer,
+        "instructions: {}",
+        list_label(&change.intent.instructions)
+    )?;
+    Ok(())
+}
+
+fn source_label(source: IntentSource) -> &'static str {
+    match source {
+        IntentSource::BuiltIn => "built-in",
+        IntentSource::Custom => "custom",
+    }
+}
+
+fn list_label(values: &[String]) -> String {
+    if values.is_empty() {
+        "none".to_string()
+    } else {
+        values.join(" | ")
+    }
 }
 
 fn render_work_list(list: &WorkList, writer: &mut dyn Write, root: &Path) -> Result<()> {
@@ -255,6 +327,13 @@ Usage:
   wo list                    list active work
   wo <work-query>            open matching work
   wo archive <work-query>    archive matching work
+  wo intent list             list reusable intent profiles
+  wo intent switch <work> <intent>
+                             switch current intent for matching Work
+  wo intent new <id> --name <name> --summary <summary>
+                             create a reusable custom intent
+  wo intent edit <id>        update a custom intent
+  wo intent                  show intent workflow help
   wo repos list <work-query>
                              list attached repositories
   wo repos discover <work-query>
@@ -281,6 +360,50 @@ Options:
 
 Env:
   WORKON_ROOT=/path          override the default ~/.workon root
+",
+    )?;
+    Ok(())
+}
+
+pub(crate) fn write_intent_help(writer: &mut dyn Write) -> Result<()> {
+    writer.write_all(
+        b"wo intent - define and switch reusable Work intentions
+
+Usage:
+  wo intent list
+      List built-in and custom intent profiles.
+
+  wo intent show <intent-id>
+      Show one intent profile.
+
+  wo intent switch <work-query> <intent-id>
+      Set the current intent for the matching Work and rewrite agent files.
+
+  wo intent new <intent-id> --name <name> --summary <summary>
+      Create a custom reusable intent.
+
+  wo intent edit <intent-id> [--name <name>] [--summary <summary>]
+      Edit a custom intent. Built-in intents are read-only.
+
+  wo intent duplicate <source-intent-id> <new-intent-id> [--name <name>]
+      Copy a built-in or custom intent into an editable custom intent.
+
+  wo intent archive <intent-id>
+      Hide a custom intent from the active catalog. Built-ins cannot be archived.
+
+List fields:
+  --skill <skill>            Add one preferred skill. Repeat as needed.
+  --mcp <mcp>                Add one preferred MCP. Repeat as needed.
+  --instruction <text>       Add one instruction. Repeat as needed.
+
+Edit clearing:
+  --clear-skills
+  --clear-mcps
+  --clear-instructions
+
+TUI:
+  wo
+      Highlight a Work, press /i, filter intents, then press enter to switch.
 ",
     )?;
     Ok(())

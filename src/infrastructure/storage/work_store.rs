@@ -133,6 +133,17 @@ impl<F: FileSystem> WorkStore<F> {
         })
     }
 
+    pub fn update_intent(&self, query: &str, intent_id: &str) -> Result<(String, WorkSummary)> {
+        let mut work: WorkSummary = self.open(query)?.into();
+        let previous_intent_id = work.intent_id.clone();
+        work.intent_id = intent_id.to_string();
+
+        self.fs
+            .write(&work.path.join(META_FILE), &serialize_summary(&work))?;
+
+        Ok((previous_intent_id, work))
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -178,12 +189,20 @@ impl<F: FileSystem> WorkStore<F> {
 }
 
 fn serialize_work(work: &CreatedWork) -> String {
+    serialize_fields(&work.title, &work.slug, &work.goal, &work.intent_id)
+}
+
+fn serialize_summary(work: &WorkSummary) -> String {
+    serialize_fields(&work.title, &work.slug, &work.goal, &work.intent_id)
+}
+
+fn serialize_fields(title: &str, slug: &str, goal: &str, intent_id: &str) -> String {
     format!(
         "title={}\nslug={}\ngoal={}\nintent_id={}\n",
-        encode(&work.title),
-        encode(&work.slug),
-        encode(&work.goal),
-        encode(&work.intent_id)
+        encode(title),
+        encode(slug),
+        encode(goal),
+        encode(intent_id)
     )
 }
 

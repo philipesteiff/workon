@@ -66,6 +66,11 @@ fn render_workspace(
         return;
     }
 
+    if state.mode == TuiMode::Intents {
+        render_intent_context(frame, area, state, regions);
+        return;
+    }
+
     let trace_height = if !state.trace_visible || area.height < 14 || area.width < 76 {
         0
     } else if area.height < 22 {
@@ -334,6 +339,123 @@ fn attached_repository_count_label(count: usize) -> String {
     }
 }
 
+fn render_intent_context(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &TuiState,
+    regions: &mut Option<&mut RenderRegions>,
+) {
+    mark_region(regions, AnimationTarget::WorkQueue, area);
+    let [catalog, detail] = if area.width < 86 {
+        Layout::vertical([Constraint::Percentage(54), Constraint::Fill(1)]).areas(area)
+    } else {
+        Layout::horizontal([Constraint::Percentage(48), Constraint::Fill(1)]).areas(area)
+    };
+    render_intent_catalog(frame, catalog, state);
+    render_intent_detail(frame, detail, state);
+}
+
+fn render_intent_catalog(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let indices = state.filtered_intent_indices();
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled("INTENTS", theme::style_panel_title()),
+        Span::raw(" "),
+        Span::styled(indices.len().to_string(), theme::style_command()),
+        Span::raw(" "),
+        if state.intent_filter.is_empty() {
+            Span::raw("")
+        } else {
+            Span::styled(
+                format!("find {}", state.intent_filter),
+                theme::style_command(),
+            )
+        },
+    ]);
+    let block = panel_block_with_title(title, true);
+    if indices.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![Line::from("No intents match the filter.".dim())]).block(block),
+            area,
+        );
+        return;
+    }
+
+    let selected = state.selected_intent.min(indices.len().saturating_sub(1));
+    let items = indices
+        .iter()
+        .enumerate()
+        .filter_map(|(row, index)| state.intents.get(*index).map(|intent| (row, intent)))
+        .map(|(row, (id, summary))| {
+            let current = id == &state.intent_current_id;
+            let selected = row == selected;
+            let anchor = if current {
+                "@"
+            } else if selected {
+                ">>"
+            } else {
+                "  "
+            };
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(anchor.to_string(), theme::style_command()),
+                    Span::raw(" "),
+                    if current {
+                        status_badge("CURRENT", theme::style_current_badge())
+                    } else {
+                        status_badge("READY", theme::style_active_badge())
+                    },
+                    Span::raw(" "),
+                    Span::styled(id.clone(), theme::style_primary_text()),
+                ]),
+                Line::from(vec![
+                    Span::raw("     "),
+                    Span::styled(summary.clone(), theme::style_muted_text()),
+                ]),
+            ])
+        })
+        .collect::<Vec<_>>();
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(selected));
+    let list = List::new(items)
+        .block(block)
+        .highlight_symbol("")
+        .highlight_style(theme::style_selected_row_highlight());
+    StatefulWidget::render(list, area, frame.buffer_mut(), &mut list_state);
+}
+
+fn render_intent_detail(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let block = panel_block("INTENT DETAIL", false);
+    let mut lines = vec![
+        section("WORK"),
+        label_value("work", state.intent_work_title.clone()),
+        label_value("current", state.intent_current_id.clone()),
+        section("SELECTED"),
+    ];
+
+    if let Some((id, summary)) = state.selected_intent_summary() {
+        lines.extend([
+            label_value("intent", id),
+            Line::from(summary),
+            Line::from(""),
+            Line::from(vec![
+                key("enter"),
+                "switch current Work intent ".dim(),
+                key("esc"),
+                "back".dim(),
+            ]),
+        ]);
+    } else {
+        lines.push(Line::from("No selected intent.".dim()));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
 fn render_trace(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -463,6 +585,8 @@ fn footer_keys(
             "new ".dim(),
             key("/a"),
             "archive ".dim(),
+            key("/i"),
+            "intent ".dim(),
             key("/r"),
             "repos ".dim(),
             key("/?"),
@@ -485,6 +609,16 @@ fn footer_keys(
             "archive ".dim(),
             key("esc/n"),
             "cancel".dim(),
+        ],
+        TuiMode::Intents => vec![
+            key("type"),
+            "find ".dim(),
+            key("up/down"),
+            "intent ".dim(),
+            key("enter"),
+            "switch ".dim(),
+            key("esc"),
+            "back".dim(),
         ],
         TuiMode::Repos if repo_focus == RepoPane::AddPath => vec![
             key("tab"),
@@ -542,7 +676,7 @@ fn render_overlay(
         TuiMode::Create => render_create(frame, area, state, regions),
         TuiMode::Archive => render_archive(frame, area, state, regions),
         TuiMode::Help => render_help(frame, area, regions),
-        TuiMode::List | TuiMode::Search | TuiMode::Leader | TuiMode::Repos => {}
+        TuiMode::List | TuiMode::Search | TuiMode::Leader | TuiMode::Intents | TuiMode::Repos => {}
     }
 
     if let Some(toast) = &state.toast {
@@ -792,9 +926,12 @@ fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
 fn mode_style(mode: TuiMode) -> Style {
     match mode {
         TuiMode::Archive => theme::style_status_warn(),
-        TuiMode::Create | TuiMode::Search | TuiMode::Leader | TuiMode::Repos | TuiMode::Help => {
-            theme::style_command()
-        }
+        TuiMode::Create
+        | TuiMode::Search
+        | TuiMode::Leader
+        | TuiMode::Intents
+        | TuiMode::Repos
+        | TuiMode::Help => theme::style_command(),
         TuiMode::List => theme::style_status_ok(),
     }
 }
@@ -806,6 +943,7 @@ fn mode_label(mode: TuiMode) -> &'static str {
         TuiMode::Leader => "COMMAND",
         TuiMode::Create => "CREATE",
         TuiMode::Archive => "ARCHIVE",
+        TuiMode::Intents => "INTENT",
         TuiMode::Repos => "REPOS",
         TuiMode::Help => "HELP",
     }

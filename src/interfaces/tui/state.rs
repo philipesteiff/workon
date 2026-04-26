@@ -18,6 +18,11 @@ pub(super) struct TuiState {
     pub(super) create_goal: String,
     pub(super) create_intent: usize,
     pub(super) intents: Vec<(String, String)>,
+    pub(super) intent_work_slug: String,
+    pub(super) intent_work_title: String,
+    pub(super) intent_current_id: String,
+    pub(super) intent_filter: String,
+    pub(super) selected_intent: usize,
     pub(super) repo: RepoPickerState,
     pub(super) root: PathBuf,
     pub(super) current_work_path: Option<PathBuf>,
@@ -36,6 +41,7 @@ pub(super) enum TuiMode {
     Leader,
     Create,
     Archive,
+    Intents,
     Repos,
     Help,
 }
@@ -74,6 +80,10 @@ pub(super) enum TuiAction {
     Quit,
     Switch(String),
     Archive(String),
+    SwitchIntent {
+        work_slug: String,
+        intent_id: String,
+    },
     Create {
         goal: String,
         intent_id: String,
@@ -108,6 +118,11 @@ impl TuiState {
             create_goal: String::new(),
             create_intent: 0,
             intents: Vec::new(),
+            intent_work_slug: String::new(),
+            intent_work_title: String::new(),
+            intent_current_id: String::new(),
+            intent_filter: String::new(),
+            selected_intent: 0,
             repo: RepoPickerState::default(),
             root: PathBuf::new(),
             current_work_path: None,
@@ -420,6 +435,83 @@ impl TuiState {
         if !self.intents.is_empty() {
             self.create_intent = (self.create_intent + self.intents.len() - 1) % self.intents.len();
         }
+    }
+
+    pub(super) fn enter_intent_context(
+        &mut self,
+        work_slug: String,
+        work_title: String,
+        current_intent_id: String,
+    ) {
+        self.mode = TuiMode::Intents;
+        self.intent_work_slug = work_slug;
+        self.intent_work_title = work_title;
+        self.intent_current_id = current_intent_id.clone();
+        self.intent_filter.clear();
+        self.selected_intent = self
+            .filtered_intent_indices()
+            .iter()
+            .position(|index| {
+                self.intents
+                    .get(*index)
+                    .is_some_and(|(id, _)| id == &current_intent_id)
+            })
+            .unwrap_or(0);
+    }
+
+    pub(super) fn push_intent_filter_char(&mut self, character: char) {
+        self.intent_filter.push(character);
+        self.selected_intent = 0;
+    }
+
+    pub(super) fn pop_intent_filter_char(&mut self) {
+        self.intent_filter.pop();
+        self.selected_intent = 0;
+    }
+
+    pub(super) fn move_intent_selection(&mut self, delta: isize) {
+        let count = self.filtered_intent_indices().len();
+        if count == 0 {
+            self.selected_intent = 0;
+            return;
+        }
+
+        let count = count as isize;
+        self.selected_intent = (self.selected_intent as isize + delta).rem_euclid(count) as usize;
+    }
+
+    pub(super) fn selected_intent_id(&self) -> Option<String> {
+        let indices = self.filtered_intent_indices();
+        indices
+            .get(self.selected_intent)
+            .and_then(|index| self.intents.get(*index))
+            .map(|(id, _)| id.clone())
+    }
+
+    pub(super) fn selected_intent_summary(&self) -> Option<(String, String)> {
+        let indices = self.filtered_intent_indices();
+        indices
+            .get(self.selected_intent)
+            .and_then(|index| self.intents.get(*index))
+            .cloned()
+    }
+
+    pub(super) fn filtered_intent_indices(&self) -> Vec<usize> {
+        let query = self.intent_filter.trim().to_ascii_lowercase();
+        self.intents
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (id, summary))| {
+                if query.is_empty()
+                    || id.to_ascii_lowercase().contains(&query)
+                    || summary.to_ascii_lowercase().contains(&query)
+                {
+                    Some(index)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn clamp_selection(&mut self) {

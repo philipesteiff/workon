@@ -110,6 +110,29 @@ fn run_loop(
                     state.close_panel();
                 }
             },
+            TuiAction::SwitchIntent {
+                work_slug,
+                intent_id,
+            } => match app.execute(Command::SwitchWorkIntent {
+                query: work_slug.clone(),
+                intent_id: intent_id.clone(),
+            }) {
+                Ok(CommandOutput::WorkIntentSwitched(change)) => {
+                    reload_work_list(app, state)?;
+                    state.select_slug(&work_slug);
+                    state.toast = Some(Toast::info("Intent switched", &change.intent.id));
+                    state.push_trace(
+                        TraceKind::Sync,
+                        format!("{} intent {}", change.work.slug, change.intent.id),
+                    );
+                    state.close_panel();
+                }
+                Ok(_) => unreachable!("switch work intent command returns intent switch output"),
+                Err(error) => {
+                    state.toast = Some(Toast::error("Intent switch failed", &error.to_string()));
+                    state.push_trace(TraceKind::Err, format!("intent switch failed: {error}"));
+                }
+            },
             TuiAction::Create { goal, intent_id } => {
                 match app.execute(Command::CreateWork { goal, intent_id }) {
                     Ok(CommandOutput::WorkCreated(work)) => {

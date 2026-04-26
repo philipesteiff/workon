@@ -134,6 +134,7 @@ Repository context from the TUI:
 
 ```text
 /r       open repository context for the highlighted Work
+/i       open intent context for the highlighted Work
 tab      switch between repository sources, creation path, and selected repos
 type     filter repositories
 space    select or remove one or more repositories
@@ -142,6 +143,18 @@ esc      return to the Work queue
 ```
 
 The left panel lists repositories from the active `gh` account and local repositories discovered in configured repo workspaces. Selecting a GitHub repo creates it in the selected repo workspace and links it. Selecting a local repo links that existing checkout directly. The right panel lists repositories selected for the highlighted Work, including pending additions and removals. Loading the view shows a loader while repositories are discovered. Applying changes shows per-repo progress and an operation log.
+
+Intent context from the TUI:
+
+```text
+/i       open intent context for the highlighted Work
+type     filter reusable intent profiles
+up/down  move through matching intents
+enter    switch the highlighted Work to the selected intent
+esc      return to the Work queue
+```
+
+The intent view lists built-in and custom reusable intent profiles. Switching updates the Work metadata and rewrites `AGENTS.md` and `CLAUDE.md`.
 
 ### `wo list`
 
@@ -200,6 +213,22 @@ wo archive billing
 
 Workon moves the Work folder from `~/.workon/work/` to `~/.workon/archive/`.
 Archived Works no longer appear in `wo` and cannot be opened by normal Work queries.
+
+### `wo intent`
+
+Define and switch reusable Work intentions.
+
+```sh
+wo intent list
+wo intent show investigate
+wo intent switch billing review-pr
+wo intent duplicate investigate debug-production --name "Debug Production"
+wo intent new debug-production --name "Debug Production" --summary "Diagnose production behavior from evidence."
+wo intent edit debug-production --instruction "Reproduce before changing code."
+wo intent archive debug-production
+```
+
+Built-in intents are read-only. Custom intents are global reusable profiles. Switching a Work intent updates `workon.meta` and rewrites agent files.
 
 ### `wo repos`
 
@@ -283,9 +312,7 @@ wo context
 
 Alias: `wo context`.
 
-This is where intent, skills, MCPs, and repos are expected to be added, removed, or changed later.
-
-Status: placeholder for the broader context editor. GitHub repository context is available through `wo`, `/r` in the TUI, and `wo repos ...` in the CLI.
+Intent switching and repository context are available through `wo`, the TUI, and dedicated CLI commands. Skills and MCP weighting live on intent profiles.
 
 ## Principles
 

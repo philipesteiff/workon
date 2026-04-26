@@ -2,7 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use workon::{App, Command, CommandOutput, WorkonError};
+use workon::{
+    App, Command, CommandOutput, IntentProfileInput, IntentProfilePatch, IntentSource, WorkonError,
+};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -191,7 +193,7 @@ fn ambiguous_work_error_includes_slug_and_title() {
 }
 
 #[test]
-fn context_command_is_explicitly_tbd_but_uses_command_layer() {
+fn context_command_reports_available_context_surfaces() {
     let root = temp_root("context_command_is_explicitly_tbd_but_uses_command_layer");
     let app = App::new(root.path().to_path_buf());
 
@@ -202,11 +204,11 @@ fn context_command_is_explicitly_tbd_but_uses_command_layer() {
         panic!("expected Context output");
     };
 
-    assert_eq!(context.status, "TBD");
+    assert_eq!(context.status, "available");
     assert!(context.message.contains("intent"));
     assert!(context.message.contains("skills"));
     assert!(context.message.contains("MCPs"));
-    assert!(context.message.contains("repos"));
+    assert!(context.message.contains("repository"));
 }
 
 #[test]
@@ -222,6 +224,144 @@ fn unknown_intent_returns_typed_error() {
         .expect_err("unknown intent should fail");
 
     assert!(matches!(error, WorkonError::UnknownIntent { .. }));
+}
+
+#[test]
+fn custom_intents_are_created_edited_duplicated_listed_and_archived() {
+    let root = temp_root("intent_catalog_lifecycle");
+    let app = App::new(root.path().to_path_buf());
+
+    let CommandOutput::IntentCreated(created) = app
+        .execute(Command::CreateIntent {
+            input: IntentProfileInput {
+                id: "debug-production".to_string(),
+                name: "Debug Production".to_string(),
+                summary: "Diagnose production behavior from evidence.".to_string(),
+                skill_weights: vec!["debugging".to_string()],
+                mcp_weights: vec!["github".to_string(), "logs".to_string()],
+                instructions: vec!["Reproduce before changing code.".to_string()],
+            },
+        })
+        .expect("custom intent should create")
+    else {
+        panic!("expected IntentCreated output");
+    };
+    assert_eq!(created.intent.id, "debug-production");
+    assert_eq!(created.source, IntentSource::Custom);
+
+    let CommandOutput::IntentUpdated(updated) = app
+        .execute(Command::EditIntent {
+            intent_id: "debug-production".to_string(),
+            patch: IntentProfilePatch {
+                name: None,
+                summary: Some("Debug production issues with a tight evidence loop.".to_string()),
+                skill_weights: Some(vec!["systematic-debugging".to_string()]),
+                mcp_weights: None,
+                instructions: Some(vec![
+                    "Reproduce before changing code.".to_string(),
+                    "Keep rollback risk visible.".to_string(),
+                ]),
+            },
+        })
+        .expect("custom intent should edit")
+    else {
+        panic!("expected IntentUpdated output");
+    };
+    assert_eq!(
+        updated.intent.summary,
+        "Debug production issues with a tight evidence loop."
+    );
+    assert_eq!(
+        updated.intent.skill_weights,
+        vec!["systematic-debugging".to_string()]
+    );
+
+    app.execute(Command::DuplicateIntent {
+        source_intent_id: "debug-production".to_string(),
+        new_intent_id: "debug-api".to_string(),
+        name: Some("Debug API".to_string()),
+    })
+    .expect("custom intent should duplicate");
+
+    let CommandOutput::IntentList(list) = app
+        .execute(Command::ListIntents)
+        .expect("intents should list")
+    else {
+        panic!("expected IntentList output");
+    };
+    assert!(list
+        .intents
+        .iter()
+        .any(|intent| intent.id == "investigate" && intent.source == IntentSource::BuiltIn));
+    assert!(list
+        .intents
+        .iter()
+        .any(|intent| intent.id == "debug-production" && intent.source == IntentSource::Custom));
+    assert!(list
+        .intents
+        .iter()
+        .any(|intent| intent.id == "debug-api" && intent.name == "Debug API"));
+
+    app.execute(Command::ArchiveIntent {
+        intent_id: "debug-production".to_string(),
+    })
+    .expect("custom intent should archive");
+
+    let CommandOutput::IntentList(list) = app
+        .execute(Command::ListIntents)
+        .expect("intents should list after archive")
+    else {
+        panic!("expected IntentList output");
+    };
+    assert!(!list
+        .intents
+        .iter()
+        .any(|intent| intent.id == "debug-production"));
+    assert!(list.intents.iter().any(|intent| intent.id == "debug-api"));
+}
+
+#[test]
+fn switching_work_intent_updates_metadata_and_agent_files() {
+    let root = temp_root("intent_switch");
+    let app = App::new(root.path().to_path_buf());
+
+    app.execute(Command::CreateIntent {
+        input: IntentProfileInput {
+            id: "shape-context".to_string(),
+            name: "Shape Context".to_string(),
+            summary: "Shape reusable context before implementation.".to_string(),
+            skill_weights: vec!["brainstorming".to_string()],
+            mcp_weights: Vec::new(),
+            instructions: vec!["Clarify purpose before changing code.".to_string()],
+        },
+    })
+    .expect("custom intent should create");
+
+    let work = create_investigate(&app, "Define intent workflow");
+
+    let CommandOutput::WorkIntentSwitched(switched) = app
+        .execute(Command::SwitchWorkIntent {
+            query: work.slug.clone(),
+            intent_id: "shape-context".to_string(),
+        })
+        .expect("work intent should switch")
+    else {
+        panic!("expected WorkIntentSwitched output");
+    };
+
+    assert_eq!(switched.previous_intent_id, "investigate");
+    assert_eq!(switched.work.intent_id, "shape-context");
+    assert_eq!(switched.intent.id, "shape-context");
+
+    let meta =
+        fs::read_to_string(switched.work.path.join("workon.meta")).expect("metadata should exist");
+    assert!(meta.contains("intent_id=shape-context"));
+
+    let agents =
+        fs::read_to_string(switched.work.path.join("AGENTS.md")).expect("agent file should exist");
+    assert!(agents.contains("Current Intent"));
+    assert!(agents.contains("Shape Context"));
+    assert!(agents.contains("Clarify purpose before changing code."));
 }
 
 #[test]

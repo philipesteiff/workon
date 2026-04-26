@@ -31,6 +31,7 @@ impl TuiState {
             TuiMode::Leader => self.handle_leader_key(key),
             TuiMode::Create => self.handle_create_key(key),
             TuiMode::Archive => self.handle_archive_key(key),
+            TuiMode::Intents => self.handle_intents_key(key),
             TuiMode::Repos => self.handle_repos_key(key),
             TuiMode::Help => self.handle_help_key(key),
         }
@@ -135,6 +136,20 @@ impl TuiState {
                 self.enter_repo_loading(slug.clone(), title);
                 TuiAction::OpenRepos(slug)
             }
+            KeyCode::Char('i') if is_plain_character(key) => {
+                let Some((slug, title, intent_id)) = self.selected_work().map(|work| {
+                    (
+                        work.slug.clone(),
+                        work.title.clone(),
+                        work.intent_id.clone(),
+                    )
+                }) else {
+                    return TuiAction::None;
+                };
+                self.enter_intent_context(slug, title, intent_id);
+                self.push_trace(TraceKind::Run, "intent context ready");
+                TuiAction::None
+            }
             KeyCode::Char('?') if is_plain_character(key) => {
                 self.mode = TuiMode::Help;
                 TuiAction::None
@@ -238,6 +253,42 @@ impl TuiState {
         }
     }
 
+    fn handle_intents_key(&mut self, key: KeyEvent) -> TuiAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.close_panel();
+                TuiAction::None
+            }
+            KeyCode::Down => {
+                self.move_intent_selection(1);
+                TuiAction::None
+            }
+            KeyCode::Up => {
+                self.move_intent_selection(-1);
+                TuiAction::None
+            }
+            KeyCode::Backspace if !self.intent_filter.is_empty() => {
+                self.pop_intent_filter_char();
+                TuiAction::None
+            }
+            KeyCode::Enter => {
+                let Some(intent_id) = self.selected_intent_id() else {
+                    self.toast = Some(Toast::error("Intent required", "No intent is selected."));
+                    return TuiAction::None;
+                };
+                TuiAction::SwitchIntent {
+                    work_slug: self.intent_work_slug.clone(),
+                    intent_id,
+                }
+            }
+            KeyCode::Char(character) if is_plain_character(key) => {
+                self.push_intent_filter_char(character);
+                TuiAction::None
+            }
+            _ => TuiAction::None,
+        }
+    }
+
     fn handle_help_key(&mut self, key: KeyEvent) -> TuiAction {
         match key.code {
             KeyCode::Esc => {
@@ -269,11 +320,11 @@ impl TuiState {
 
         TuiAction::Create {
             goal,
-            intent_id: self.selected_intent_id().to_string(),
+            intent_id: self.selected_create_intent_id().to_string(),
         }
     }
 
-    fn selected_intent_id(&self) -> &str {
+    fn selected_create_intent_id(&self) -> &str {
         self.intents
             .get(self.create_intent)
             .map(|(id, _)| id.as_str())

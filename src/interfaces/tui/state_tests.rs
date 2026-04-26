@@ -280,6 +280,44 @@ fn slash_leader_opens_repo_context_for_highlighted_work() {
 }
 
 #[test]
+fn slash_i_opens_intent_context_for_highlighted_work() {
+    let mut state = TuiState::new(work_list()).with_intents(intent_list());
+    state.move_selection(1);
+
+    state.handle_key(key(KeyCode::Char('/')));
+    let action = state.handle_key(key(KeyCode::Char('i')));
+
+    assert_eq!(action, TuiAction::None);
+    assert_eq!(state.mode, TuiMode::Intents);
+    assert_eq!(state.intent_work_slug, "review-cache-invalidation-pr");
+    assert_eq!(state.intent_work_title, "Review cache invalidation PR");
+    assert_eq!(state.intent_current_id, "review-pr");
+    assert_eq!(state.selected_intent_id().as_deref(), Some("review-pr"));
+}
+
+#[test]
+fn intent_context_filters_and_switches_highlighted_intent() {
+    let mut state = TuiState::new(work_list()).with_intents(intent_list());
+    state.move_selection(1);
+    state.handle_key(key(KeyCode::Char('/')));
+    state.handle_key(key(KeyCode::Char('i')));
+
+    for character in "brain".chars() {
+        state.handle_key(key(KeyCode::Char(character)));
+    }
+
+    assert_eq!(state.intent_filter, "brain");
+    assert_eq!(state.selected_intent_id().as_deref(), Some("brainstorm"));
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::SwitchIntent {
+            work_slug: "review-cache-invalidation-pr".to_string(),
+            intent_id: "brainstorm".to_string(),
+        }
+    );
+}
+
+#[test]
 fn repo_context_accepts_text_input_while_loading() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
@@ -1083,6 +1121,23 @@ fn work_list() -> WorkList {
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn intent_list() -> Vec<(String, String)> {
+    vec![
+        (
+            "investigate".to_string(),
+            "Answer a technical question with evidence.".to_string(),
+        ),
+        (
+            "review-pr".to_string(),
+            "Review a peer pull request from local context.".to_string(),
+        ),
+        (
+            "brainstorm".to_string(),
+            "Explore an idea without committing to implementation.".to_string(),
+        ),
+    ]
 }
 
 fn available_repositories() -> Vec<AvailableRepository> {

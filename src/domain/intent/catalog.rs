@@ -1,8 +1,12 @@
+use std::collections::BTreeSet;
+
 use crate::domain::IntentProfile;
+use crate::domain::{IntentSource, IntentSummary};
 
 #[derive(Debug, Clone)]
 pub struct IntentCatalog {
     profiles: Vec<IntentProfile>,
+    custom_ids: BTreeSet<String>,
 }
 
 impl IntentCatalog {
@@ -17,7 +21,27 @@ impl IntentCatalog {
                 review_pr(),
                 address_pr_comments(),
             ],
+            custom_ids: BTreeSet::new(),
         }
+    }
+
+    pub fn with_custom(custom: Vec<IntentProfile>) -> Self {
+        let mut catalog = Self::default_catalog();
+        let existing = catalog
+            .profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect::<BTreeSet<_>>();
+
+        for profile in custom {
+            if existing.contains(&profile.id) || catalog.custom_ids.contains(&profile.id) {
+                continue;
+            }
+            catalog.custom_ids.insert(profile.id.clone());
+            catalog.profiles.push(profile);
+        }
+
+        catalog
     }
 
     pub fn find(&self, id: &str) -> Option<IntentProfile> {
@@ -36,6 +60,28 @@ impl IntentCatalog {
 
     pub fn profiles(&self) -> &[IntentProfile] {
         &self.profiles
+    }
+
+    pub fn summaries(&self) -> Vec<IntentSummary> {
+        self.profiles
+            .iter()
+            .map(|profile| IntentSummary {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+                summary: profile.summary.clone(),
+                source: self.source(&profile.id).unwrap_or(IntentSource::BuiltIn),
+            })
+            .collect()
+    }
+
+    pub fn source(&self, id: &str) -> Option<IntentSource> {
+        if self.custom_ids.contains(id) {
+            Some(IntentSource::Custom)
+        } else if self.profiles.iter().any(|profile| profile.id == id) {
+            Some(IntentSource::BuiltIn)
+        } else {
+            None
+        }
     }
 }
 

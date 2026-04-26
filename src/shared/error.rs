@@ -14,6 +14,9 @@ pub enum WorkonError {
     IntentRequired {
         available: Vec<String>,
     },
+    IntentContext {
+        message: String,
+    },
     Io(std::io::Error),
     MissingArgument {
         message: String,
@@ -57,6 +60,7 @@ impl fmt::Display for WorkonError {
                 "intent required for new work.\nUse: wo --intent <intent-id> \"<goal>\"\nAvailable: {}",
                 available.join(", ")
             ),
+            Self::IntentContext { message } => write!(formatter, "{message}"),
             Self::Io(error) => write!(formatter, "io error: {error}"),
             Self::MissingArgument { message } => write!(formatter, "{message}"),
             Self::ProcessFailed { command, stderr } => {

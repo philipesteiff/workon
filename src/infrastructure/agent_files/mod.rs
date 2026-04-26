@@ -63,7 +63,7 @@ fn render_agent_file(
          {source_note}\n\n\
          ## Goal\n\n\
          {goal}\n\n\
-         ## Intent\n\n\
+         ## Current Intent\n\n\
          {} ({})\n\n\
          Intent weights are preferences, not hard requirements.\n\n\
          ## Preferred Skills\n\n\

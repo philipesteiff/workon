@@ -1,4 +1,4 @@
-use crate::application::Command;
+use crate::application::{Command, IntentProfileInput, IntentProfilePatch};
 use crate::interfaces::shell::development_manifest_from_env;
 use crate::shared::error::{Result, WorkonError};
 use std::path::PathBuf;
@@ -11,6 +11,7 @@ pub(crate) enum CliRequest {
         allow_tui: bool,
     },
     Help,
+    IntentHelp,
     ReposHelp,
 }
 
@@ -21,6 +22,10 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
 
     if is_repos_help_request(&args) {
         return Ok(CliRequest::ReposHelp);
+    }
+
+    if is_intent_help_request(&args) {
+        return Ok(CliRequest::IntentHelp);
     }
 
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -87,8 +92,16 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
         return Ok(CliRequest::ReposHelp);
     }
 
+    if input_parts == ["intent"] {
+        return Ok(CliRequest::IntentHelp);
+    }
+
     if input_parts.first().is_some_and(|part| part == "repos") {
         return parse_repos_command(&input_parts, machine);
+    }
+
+    if input_parts.first().is_some_and(|part| part == "intent") {
+        return parse_intent_command(&input_parts, machine);
     }
 
     if input == "list" {
@@ -143,6 +156,19 @@ fn is_repos_help_request(args: &[String]) -> bool {
     ) || matches!(
         args,
         [help, topic] if help == "help" && topic == "repos"
+    )
+}
+
+fn is_intent_help_request(args: &[String]) -> bool {
+    matches!(
+        args,
+        [command] if command == "intent"
+    ) || matches!(
+        args,
+        [command, help] if command == "intent" && (help == "--help" || help == "-h" || help == "help")
+    ) || matches!(
+        args,
+        [help, topic] if help == "help" && topic == "intent"
     )
 }
 
@@ -308,6 +334,219 @@ fn parse_repos_workspace_command(input_parts: &[String], machine: bool) -> Resul
             message: "repos workspace requires list, add, or remove".to_string(),
         }),
     }
+}
+
+fn parse_intent_command(input_parts: &[String], machine: bool) -> Result<CliRequest> {
+    match input_parts.get(1).map(String::as_str) {
+        Some("help") => Ok(CliRequest::IntentHelp),
+        Some("list") => Ok(command_request(Command::ListIntents, machine)),
+        Some("show") => {
+            let Some(intent_id) = input_parts.get(2) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "intent show requires an intent id".to_string(),
+                });
+            };
+            Ok(command_request(
+                Command::ShowIntent {
+                    intent_id: intent_id.clone(),
+                },
+                machine,
+            ))
+        }
+        Some("switch") => {
+            let Some(query) = input_parts.get(2) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "intent switch requires a work query and intent id".to_string(),
+                });
+            };
+            let Some(intent_id) = input_parts.get(3) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "intent switch requires an intent id".to_string(),
+                });
+            };
+            Ok(command_request(
+                Command::SwitchWorkIntent {
+                    query: query.clone(),
+                    intent_id: intent_id.clone(),
+                },
+                machine,
+            ))
+        }
+        Some("new") | Some("create") => parse_intent_new(input_parts, machine),
+        Some("edit") => parse_intent_edit(input_parts, machine),
+        Some("duplicate") | Some("copy") => parse_intent_duplicate(input_parts, machine),
+        Some("archive") => {
+            let Some(intent_id) = input_parts.get(2) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "intent archive requires an intent id".to_string(),
+                });
+            };
+            Ok(command_request(
+                Command::ArchiveIntent {
+                    intent_id: intent_id.clone(),
+                },
+                machine,
+            ))
+        }
+        _ => Err(WorkonError::MissingArgument {
+            message: "intent requires list, show, switch, new, edit, duplicate, or archive"
+                .to_string(),
+        }),
+    }
+}
+
+fn parse_intent_new(input_parts: &[String], machine: bool) -> Result<CliRequest> {
+    let Some(id) = input_parts.get(2) else {
+        return Err(WorkonError::MissingArgument {
+            message: "intent new requires an intent id".to_string(),
+        });
+    };
+    let flags = parse_intent_flags(&input_parts[3..], IntentFlagMode::Create)?;
+    Ok(command_request(
+        Command::CreateIntent {
+            input: IntentProfileInput {
+                id: id.clone(),
+                name: required_flag(flags.name, "--name")?,
+                summary: required_flag(flags.summary, "--summary")?,
+                skill_weights: flags.skill_weights.unwrap_or_default(),
+                mcp_weights: flags.mcp_weights.unwrap_or_default(),
+                instructions: flags.instructions.unwrap_or_default(),
+            },
+        },
+        machine,
+    ))
+}
+
+fn parse_intent_edit(input_parts: &[String], machine: bool) -> Result<CliRequest> {
+    let Some(intent_id) = input_parts.get(2) else {
+        return Err(WorkonError::MissingArgument {
+            message: "intent edit requires an intent id".to_string(),
+        });
+    };
+    let flags = parse_intent_flags(&input_parts[3..], IntentFlagMode::Edit)?;
+    Ok(command_request(
+        Command::EditIntent {
+            intent_id: intent_id.clone(),
+            patch: IntentProfilePatch {
+                name: flags.name,
+                summary: flags.summary,
+                skill_weights: flags.skill_weights,
+                mcp_weights: flags.mcp_weights,
+                instructions: flags.instructions,
+            },
+        },
+        machine,
+    ))
+}
+
+fn parse_intent_duplicate(input_parts: &[String], machine: bool) -> Result<CliRequest> {
+    let Some(source_intent_id) = input_parts.get(2) else {
+        return Err(WorkonError::MissingArgument {
+            message: "intent duplicate requires a source intent id".to_string(),
+        });
+    };
+    let Some(new_intent_id) = input_parts.get(3) else {
+        return Err(WorkonError::MissingArgument {
+            message: "intent duplicate requires a new intent id".to_string(),
+        });
+    };
+    let flags = parse_intent_flags(&input_parts[4..], IntentFlagMode::Duplicate)?;
+    Ok(command_request(
+        Command::DuplicateIntent {
+            source_intent_id: source_intent_id.clone(),
+            new_intent_id: new_intent_id.clone(),
+            name: flags.name,
+        },
+        machine,
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntentFlagMode {
+    Create,
+    Edit,
+    Duplicate,
+}
+
+#[derive(Debug, Default)]
+struct IntentFlags {
+    name: Option<String>,
+    summary: Option<String>,
+    skill_weights: Option<Vec<String>>,
+    mcp_weights: Option<Vec<String>>,
+    instructions: Option<Vec<String>>,
+}
+
+fn parse_intent_flags(parts: &[String], mode: IntentFlagMode) -> Result<IntentFlags> {
+    let mut flags = IntentFlags::default();
+    let mut index = 0;
+    while index < parts.len() {
+        match parts[index].as_str() {
+            "--name" => {
+                flags.name = Some(flag_value(parts, index, "--name")?);
+                index += 2;
+            }
+            "--summary" if mode != IntentFlagMode::Duplicate => {
+                flags.summary = Some(flag_value(parts, index, "--summary")?);
+                index += 2;
+            }
+            "--skill" if mode != IntentFlagMode::Duplicate => {
+                push_flag_value(
+                    &mut flags.skill_weights,
+                    flag_value(parts, index, "--skill")?,
+                );
+                index += 2;
+            }
+            "--mcp" if mode != IntentFlagMode::Duplicate => {
+                push_flag_value(&mut flags.mcp_weights, flag_value(parts, index, "--mcp")?);
+                index += 2;
+            }
+            "--instruction" if mode != IntentFlagMode::Duplicate => {
+                push_flag_value(
+                    &mut flags.instructions,
+                    flag_value(parts, index, "--instruction")?,
+                );
+                index += 2;
+            }
+            "--clear-skills" if mode == IntentFlagMode::Edit => {
+                flags.skill_weights = Some(Vec::new());
+                index += 1;
+            }
+            "--clear-mcps" if mode == IntentFlagMode::Edit => {
+                flags.mcp_weights = Some(Vec::new());
+                index += 1;
+            }
+            "--clear-instructions" if mode == IntentFlagMode::Edit => {
+                flags.instructions = Some(Vec::new());
+                index += 1;
+            }
+            flag => {
+                return Err(WorkonError::MissingArgument {
+                    message: format!("unknown intent option: {flag}"),
+                });
+            }
+        }
+    }
+    Ok(flags)
+}
+
+fn push_flag_value(values: &mut Option<Vec<String>>, value: String) {
+    values.get_or_insert_with(Vec::new).push(value);
+}
+
+fn flag_value(parts: &[String], index: usize, flag: &str) -> Result<String> {
+    parts
+        .get(index + 1)
+        .cloned()
+        .ok_or_else(|| WorkonError::MissingArgument {
+            message: format!("{flag} requires a value"),
+        })
+}
+
+fn required_flag(value: Option<String>, flag: &str) -> Result<String> {
+    value.ok_or_else(|| WorkonError::MissingArgument {
+        message: format!("intent new requires {flag}"),
+    })
 }
 
 fn parse_workspace_option(parts: &[String]) -> Result<(Option<PathBuf>, Vec<String>)> {
@@ -497,6 +736,167 @@ mod tests {
                 CliRequest::ReposHelp
             );
         }
+    }
+
+    #[test]
+    fn parses_intent_help_requests() {
+        for args in [
+            vec!["intent".to_string()],
+            vec!["intent".to_string(), "--help".to_string()],
+            vec!["intent".to_string(), "-h".to_string()],
+            vec!["intent".to_string(), "help".to_string()],
+            vec!["help".to_string(), "intent".to_string()],
+            vec!["--machine".to_string(), "intent".to_string()],
+        ] {
+            assert_eq!(
+                parse_args(args).expect("args should parse"),
+                CliRequest::IntentHelp
+            );
+        }
+    }
+
+    #[test]
+    fn parses_intent_commands() {
+        assert_eq!(
+            parse_args(vec!["intent".to_string(), "list".to_string()]).expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ListIntents,
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "intent".to_string(),
+                "show".to_string(),
+                "investigate".to_string()
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ShowIntent {
+                    intent_id: "investigate".to_string(),
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "intent".to_string(),
+                "switch".to_string(),
+                "billing".to_string(),
+                "review-pr".to_string()
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::SwitchWorkIntent {
+                    query: "billing".to_string(),
+                    intent_id: "review-pr".to_string(),
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "intent".to_string(),
+                "duplicate".to_string(),
+                "investigate".to_string(),
+                "debug-prod".to_string(),
+                "--name".to_string(),
+                "Debug Production".to_string(),
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::DuplicateIntent {
+                    source_intent_id: "investigate".to_string(),
+                    new_intent_id: "debug-prod".to_string(),
+                    name: Some("Debug Production".to_string()),
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "intent".to_string(),
+                "new".to_string(),
+                "debug-prod".to_string(),
+                "--name".to_string(),
+                "Debug Production".to_string(),
+                "--summary".to_string(),
+                "Diagnose production behavior.".to_string(),
+                "--skill".to_string(),
+                "systematic-debugging".to_string(),
+                "--mcp".to_string(),
+                "github".to_string(),
+                "--instruction".to_string(),
+                "Reproduce before changing code.".to_string(),
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::CreateIntent {
+                    input: crate::application::IntentProfileInput {
+                        id: "debug-prod".to_string(),
+                        name: "Debug Production".to_string(),
+                        summary: "Diagnose production behavior.".to_string(),
+                        skill_weights: vec!["systematic-debugging".to_string()],
+                        mcp_weights: vec!["github".to_string()],
+                        instructions: vec!["Reproduce before changing code.".to_string()],
+                    },
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "intent".to_string(),
+                "edit".to_string(),
+                "debug-prod".to_string(),
+                "--summary".to_string(),
+                "Use a tighter evidence loop.".to_string(),
+                "--clear-mcps".to_string(),
+                "--instruction".to_string(),
+                "Keep rollback risk visible.".to_string(),
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::EditIntent {
+                    intent_id: "debug-prod".to_string(),
+                    patch: crate::application::IntentProfilePatch {
+                        name: None,
+                        summary: Some("Use a tighter evidence loop.".to_string()),
+                        skill_weights: None,
+                        mcp_weights: Some(Vec::new()),
+                        instructions: Some(vec!["Keep rollback risk visible.".to_string()]),
+                    },
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
+
+        assert_eq!(
+            parse_args(vec![
+                "intent".to_string(),
+                "archive".to_string(),
+                "debug-prod".to_string(),
+            ])
+            .expect("args should parse"),
+            CliRequest::Command {
+                command: Command::ArchiveIntent {
+                    intent_id: "debug-prod".to_string(),
+                },
+                machine: false,
+                allow_tui: false,
+            }
+        );
     }
 
     #[test]
