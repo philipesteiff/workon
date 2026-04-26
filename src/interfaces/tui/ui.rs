@@ -1326,8 +1326,9 @@ mod tests {
         assert!(!attached.contains("REPO WORKSPACES"));
         assert!(!attached.contains("No repositories selected for this Work."));
         assert!(attached.contains("openai/workon"));
-        assert!(attached.contains("GitHub repos create in /tmp/repos"));
+        assert!(attached.contains("GitHub create in /tmp/repos; local link in place."));
         assert!(!attached.contains("type filters repos"));
+        assert!(!attached.contains("github default"));
 
         state.repo.filter = "api".to_string();
         let add = render_content(&state, 120, 36);
@@ -1400,7 +1401,68 @@ mod tests {
         let content = render_content(&state, 120, 36);
 
         assert!(content.contains("openai/local-tool"));
-        assert!(content.contains("local feature/workon /tmp/repos/local-tool"));
+        assert!(!content.contains("local feature/workon /tmp/repos/local-tool"));
+    }
+
+    #[test]
+    fn renders_repo_context_rows_as_compact_columns_with_selected_detail() {
+        let home = PathBuf::from(std::env::var("HOME").expect("HOME should be set for tests"));
+        let local_path = home.join("Projects/client/local-tool");
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            Vec::new(),
+            vec![RepositoryCandidate {
+                name_with_owner: "openai/local-tool".to_string(),
+                branch: "feature/workon".to_string(),
+                path: local_path.clone(),
+                url: "https://github.com/openai/local-tool".to_string(),
+            }],
+            Vec::new(),
+            vec![RepositoryWorkspace {
+                path: home.join("Projects"),
+            }],
+        );
+
+        let content = render_content(&state, 160, 36);
+        let buffer = render_buffer(&state, 160, 36);
+        let row = row_containing(&buffer, "openai/local-tool");
+        let local_row_text = row_text(&buffer, row);
+        let detail_text = row_text(&buffer, row + 1);
+
+        assert!(local_row_text.contains("openai/local-tool"));
+        assert!(local_row_text.contains("local"));
+        assert!(local_row_text.contains("feature/workon"));
+        assert!(!local_row_text.contains("./client/local-tool"));
+        assert!(!local_row_text.contains("local feature/workon"));
+        assert!(detail_text.contains("path "));
+        assert!(detail_text.contains("~/Projects/client/local-tool"));
+        assert!(detail_text.contains(" | work "));
+        assert!(detail_text.contains("./client/local-tool"));
+        assert!(!detail_text.contains("remote"));
+        assert!(!detail_text.contains("https://github.com/openai/local-tool"));
+        assert!(!content.contains(&local_path.display().to_string()));
+    }
+
+    #[test]
+    fn gives_repository_catalog_more_horizontal_space_than_workspace_panels() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            local_candidates(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+
+        let buffer = render_buffer(&state, 160, 36);
+
+        assert!(
+            x_containing(&buffer, "ADD PATH") > 116,
+            "workspace panels should start after a wider repository catalog"
+        );
     }
 
     #[test]
@@ -1419,7 +1481,7 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("GitHub repos create in /tmp/client-repos"));
+        assert!(content.contains("GitHub create in /tmp/client-repos; local link in place."));
         assert!(content.contains("ADD PATH"));
         assert!(content.contains("CONFIGURED PATHS"));
         assert!(!content.contains("CREATE IN"));
@@ -1888,16 +1950,40 @@ mod tests {
 
     fn row_containing(buffer: &Buffer, text: &str) -> u16 {
         for y in 0..buffer.area.height {
-            let mut row = String::new();
-            for x in 0..buffer.area.width {
-                row.push_str(buffer[(x, y)].symbol());
-            }
+            let row = row_text(buffer, y);
             if row.contains(text) {
                 return y;
             }
         }
 
         panic!("buffer did not contain row text: {text}");
+    }
+
+    fn row_text(buffer: &Buffer, y: u16) -> String {
+        let mut row = String::new();
+        for x in 0..buffer.area.width {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        row
+    }
+
+    fn x_containing(buffer: &Buffer, text: &str) -> u16 {
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let mut candidate = String::new();
+                for end in x..buffer.area.width {
+                    candidate.push_str(buffer[(end, y)].symbol());
+                    if candidate == text {
+                        return x;
+                    }
+                    if !text.starts_with(&candidate) || candidate.len() >= text.len() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        panic!("buffer did not contain text: {text}");
     }
 
     fn row_has_bg(buffer: &Buffer, y: u16, color: Color) -> bool {

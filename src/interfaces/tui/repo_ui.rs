@@ -1,5 +1,8 @@
+use std::path::{Path, PathBuf};
+
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::{Frame, Line, Span, Stylize};
+use ratatui::style::Style;
 use ratatui::widgets::{Paragraph, Wrap};
 
 use super::animation::{AnimationTarget, RenderRegions};
@@ -20,7 +23,7 @@ pub(super) fn render_repo_context(
 
     if area.width >= 96 {
         let [repositories, workspaces] =
-            Layout::horizontal([Constraint::Percentage(62), Constraint::Fill(1)]).areas(area);
+            Layout::horizontal([Constraint::Percentage(76), Constraint::Fill(1)]).areas(area);
         render_repo_catalog_panel(frame, repositories, state);
         render_workspace_side_panels(frame, workspaces, state);
     } else {
@@ -72,15 +75,25 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
     let mut lines = vec![repo_catalog_context_line(state, rows.is_empty())];
 
     if !rows.is_empty() {
-        let visible_rows = catalog_area.height.saturating_sub(lines.len() as u16) as usize;
+        let line_budget = catalog_area.height.saturating_sub(lines.len() as u16) as usize;
+        let reserve_detail = line_budget > 1;
+        let visible_rows = if reserve_detail {
+            line_budget.saturating_sub(1)
+        } else {
+            line_budget
+        };
         let start = scroll_start(state.repo.selected_catalog, rows.len(), visible_rows);
-        lines.extend(
-            rows.iter()
-                .enumerate()
-                .skip(start)
-                .take(visible_rows)
-                .map(|(index, row)| catalog_row(row, state, index)),
-        );
+        let workspace = state.repo.selected_workspace_path();
+        for (index, row) in rows.iter().enumerate().skip(start).take(visible_rows) {
+            lines.push(catalog_row(row, state, index, catalog_area.width));
+            if reserve_detail && index == state.repo.selected_catalog {
+                lines.push(catalog_row_detail(
+                    row,
+                    catalog_area.width,
+                    workspace.as_deref(),
+                ));
+            }
+        }
     }
 
     frame.render_widget(Paragraph::new(lines), catalog_area);
@@ -135,8 +148,8 @@ fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static
 
     match state.repo.selected_workspace_path() {
         Some(path) => Line::from(format!(
-            "GitHub repos create in {}; local repos link in place.",
-            path.display()
+            "GitHub create in {}; local link in place.",
+            compact_path(&path)
         )),
         None => Line::from("Select GitHub repos to create or local repos to link.".dim()),
     }
@@ -243,88 +256,339 @@ fn scroll_start(selected: usize, total: usize, visible_rows: usize) -> usize {
     selected.saturating_add(1).saturating_sub(visible_rows)
 }
 
-fn catalog_repo_row(
-    name: &str,
-    meta: &str,
+struct RepoRowRenderData {
+    name: String,
+    source: &'static str,
+    branch: String,
     attached_to_work: bool,
     pending_add: bool,
     pending_remove: bool,
     force_remove: bool,
-    selected: bool,
-) -> Line<'static> {
-    let marker = if pending_remove && force_remove {
+}
+
+fn catalog_repo_row(data: RepoRowRenderData, selected: bool, width: u16) -> Line<'static> {
+    let marker = if data.pending_remove && data.force_remove {
         "[!]"
-    } else if pending_remove {
+    } else if data.pending_remove {
         "[-]"
-    } else if pending_add || attached_to_work {
+    } else if data.pending_add || data.attached_to_work {
         "[x]"
     } else {
         "[ ]"
     };
-    let status = if pending_add {
+    let status = if data.pending_add {
         "ADD"
-    } else if pending_remove && force_remove {
+    } else if data.pending_remove && data.force_remove {
         "FORCE"
-    } else if pending_remove {
+    } else if data.pending_remove {
         "REMOVE"
-    } else if attached_to_work {
+    } else if data.attached_to_work && data.source != "attached" {
         "ATTACHED"
     } else {
         ""
     };
     let anchor = if selected { ">>" } else { "  " };
-    Line::from(vec![
+    let columns = repo_columns(usize::from(width));
+    let mut spans = vec![
         Span::styled(anchor.to_string(), theme::style_command()),
         Span::raw(" "),
         Span::styled(marker.to_string(), theme::style_muted_text()),
         Span::raw(" "),
-        Span::styled(name.to_string(), theme::style_primary_text()),
-        Span::raw("  "),
-        Span::styled(meta.to_string(), theme::style_meta_value()),
-        Span::raw(" "),
-        Span::styled(status.to_string(), theme::style_command()),
-    ])
+    ];
+    push_column(
+        &mut spans,
+        &data.name,
+        columns.name,
+        theme::style_primary_text(),
+        Truncate::End,
+    );
+    push_column(
+        &mut spans,
+        data.source,
+        columns.source,
+        theme::style_meta_value(),
+        Truncate::End,
+    );
+    push_column(
+        &mut spans,
+        &data.branch,
+        columns.branch,
+        theme::style_meta_value(),
+        Truncate::End,
+    );
+    push_column(
+        &mut spans,
+        status,
+        columns.status,
+        theme::style_command(),
+        Truncate::End,
+    );
+    Line::from(spans)
 }
 
-fn catalog_row(row: &RepoCatalogRow, state: &TuiState, index: usize) -> Line<'static> {
+fn catalog_row(row: &RepoCatalogRow, state: &TuiState, index: usize, width: u16) -> Line<'static> {
     match row {
         RepoCatalogRow::GitHub(repository) => catalog_repo_row(
-            &repository.name_with_owner,
-            &format!("github default {}", repository.default_branch),
-            state.is_repository_selected(&repository.name_with_owner),
-            state.repo.pending_add.contains(&repository.name_with_owner),
-            state
-                .repo
-                .pending_remove
-                .contains(&repository.name_with_owner),
-            state.repo.force_remove,
+            RepoRowRenderData {
+                name: repository.name_with_owner.clone(),
+                source: "github",
+                branch: repository.default_branch.clone(),
+                attached_to_work: state.is_repository_selected(&repository.name_with_owner),
+                pending_add: state.repo.pending_add.contains(&repository.name_with_owner),
+                pending_remove: state
+                    .repo
+                    .pending_remove
+                    .contains(&repository.name_with_owner),
+                force_remove: state.repo.force_remove,
+            },
             index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
+            width,
         ),
         RepoCatalogRow::Local(candidate) => catalog_repo_row(
-            &candidate.name_with_owner,
-            &format!("local {} {}", candidate.branch, candidate.path.display()),
-            state.is_repository_selected(&candidate.name_with_owner),
-            state.repo.is_local_candidate_selected(&candidate.path),
-            state
-                .repo
-                .pending_remove
-                .contains(&candidate.name_with_owner),
-            state.repo.force_remove,
+            RepoRowRenderData {
+                name: candidate.name_with_owner.clone(),
+                source: "local",
+                branch: candidate.branch.clone(),
+                attached_to_work: state.is_repository_selected(&candidate.name_with_owner),
+                pending_add: state.repo.is_local_candidate_selected(&candidate.path),
+                pending_remove: state
+                    .repo
+                    .pending_remove
+                    .contains(&candidate.name_with_owner),
+                force_remove: state.repo.force_remove,
+            },
             index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
+            width,
         ),
         RepoCatalogRow::Attached(repository) => catalog_repo_row(
-            &repository.name_with_owner,
-            &format!("attached {}", repository.branch),
-            state.is_repository_selected(&repository.name_with_owner),
-            false,
-            state
-                .repo
-                .pending_remove
-                .contains(&repository.name_with_owner),
-            state.repo.force_remove,
+            RepoRowRenderData {
+                name: repository.name_with_owner.clone(),
+                source: "attached",
+                branch: repository.branch.clone(),
+                attached_to_work: state.is_repository_selected(&repository.name_with_owner),
+                pending_add: false,
+                pending_remove: state
+                    .repo
+                    .pending_remove
+                    .contains(&repository.name_with_owner),
+                force_remove: state.repo.force_remove,
+            },
             index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
+            width,
         ),
     }
+}
+
+fn catalog_row_detail(row: &RepoCatalogRow, width: u16, workspace: Option<&Path>) -> Line<'static> {
+    let detail = match row {
+        RepoCatalogRow::GitHub(repository) => DetailFields {
+            key: "create",
+            value: workspace
+                .map(compact_path)
+                .unwrap_or_else(|| "workspace not set".to_string()),
+            secondary_key: "work",
+            secondary_value: workspace.map(|path| {
+                row_path(
+                    &path.join(
+                        repository
+                            .name_with_owner
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or("repo"),
+                    ),
+                    workspace,
+                )
+            }),
+        },
+        RepoCatalogRow::Local(candidate) => DetailFields {
+            key: "path",
+            value: compact_path(&candidate.path),
+            secondary_key: "work",
+            secondary_value: Some(row_path(&candidate.path, workspace)),
+        },
+        RepoCatalogRow::Attached(repository) => DetailFields {
+            key: "path",
+            value: compact_path(&repository.path),
+            secondary_key: "work",
+            secondary_value: Some(row_path(&repository.path, workspace)),
+        },
+    };
+    let width = usize::from(width);
+    let indent = 7.min(width);
+    let value_width = width.saturating_sub(indent);
+
+    let mut spans = vec![
+        Span::raw(" ".repeat(indent)),
+        Span::styled(detail.key.to_string(), theme::style_command()),
+        Span::raw(" "),
+    ];
+    match detail.secondary_value {
+        Some(secondary_value) => {
+            let fixed_width =
+                detail.key.len() + " ".len() + " | ".len() + detail.secondary_key.len() + " ".len();
+            let available = value_width.saturating_sub(fixed_width);
+            let value_column = detail_value_width(&detail.value, available);
+            let secondary_column = available.saturating_sub(value_column);
+            spans.push(Span::styled(
+                fit_padded(&detail.value, value_column, Truncate::Start),
+                theme::style_muted_text(),
+            ));
+            spans.push(Span::raw(" | "));
+            spans.push(Span::styled(
+                detail.secondary_key.to_string(),
+                theme::style_command(),
+            ));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                fit_text(&secondary_value, secondary_column, Truncate::Start),
+                theme::style_muted_text(),
+            ));
+        }
+        None => spans.push(Span::styled(
+            fit_text(&detail.value, value_width, Truncate::Start),
+            theme::style_muted_text(),
+        )),
+    }
+    Line::from(spans)
+}
+
+struct DetailFields {
+    key: &'static str,
+    value: String,
+    secondary_key: &'static str,
+    secondary_value: Option<String>,
+}
+
+fn detail_value_width(value: &str, available: usize) -> usize {
+    if available == 0 {
+        return 0;
+    }
+    let natural = value.chars().count();
+    let preferred = available.saturating_mul(3) / 5;
+    natural.min(preferred).max(available.min(16))
+}
+
+#[derive(Clone, Copy)]
+struct RepoColumns {
+    name: usize,
+    source: usize,
+    branch: usize,
+    status: usize,
+}
+
+#[derive(Clone, Copy)]
+enum Truncate {
+    Start,
+    End,
+}
+
+fn repo_columns(width: usize) -> RepoColumns {
+    let source = if width >= 52 { 8 } else { 0 };
+    let branch = if width >= 120 {
+        18
+    } else if width >= 64 {
+        14
+    } else {
+        0
+    };
+    let status = if width >= 104 { 8 } else { 0 };
+    let shown_columns = [source, branch, status]
+        .into_iter()
+        .filter(|column| *column > 0)
+        .count();
+    let gaps = shown_columns;
+    let fixed = 7 + source + branch + status + gaps;
+    let name = width.saturating_sub(fixed).max(12);
+
+    RepoColumns {
+        name,
+        source,
+        branch,
+        status,
+    }
+}
+
+fn push_column(
+    spans: &mut Vec<Span<'static>>,
+    value: &str,
+    width: usize,
+    style: Style,
+    truncation: Truncate,
+) {
+    if width == 0 {
+        return;
+    }
+    if spans.len() > 4 {
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(fit_padded(value, width, truncation), style));
+}
+
+fn fit_padded(value: &str, width: usize, truncation: Truncate) -> String {
+    let fitted = fit_text(value, width, truncation);
+    format!("{fitted:<width$}")
+}
+
+fn fit_text(value: &str, width: usize, truncation: Truncate) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    if value.chars().count() <= width {
+        return value.to_string();
+    }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+
+    let keep = width - 3;
+    match truncation {
+        Truncate::Start => {
+            let tail = value
+                .chars()
+                .rev()
+                .take(keep)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<String>();
+            format!("...{tail}")
+        }
+        Truncate::End => {
+            let head = value.chars().take(keep).collect::<String>();
+            format!("{head}...")
+        }
+    }
+}
+
+fn row_path(path: &Path, workspace: Option<&Path>) -> String {
+    if let Some(workspace) = workspace {
+        if let Ok(relative) = path.strip_prefix(workspace) {
+            if relative.as_os_str().is_empty() {
+                return ".".to_string();
+            }
+            return format!("./{}", relative.display());
+        }
+    }
+    compact_path(path)
+}
+
+fn compact_path(path: &Path) -> String {
+    if let Some(home) = home_path() {
+        if let Ok(relative) = path.strip_prefix(&home) {
+            if relative.as_os_str().is_empty() {
+                return "~".to_string();
+            }
+            return format!("~/{}", relative.display());
+        }
+    }
+
+    path.display().to_string()
+}
+
+fn home_path() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
 }
 
 fn workspace_row(state: &TuiState, path: String, index: usize, focused: bool) -> Line<'static> {
