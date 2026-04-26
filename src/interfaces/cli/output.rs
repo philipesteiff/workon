@@ -352,16 +352,23 @@ Usage:
   wo --intent <id> \"<goal>\"  create work
   wo ctx                     print context status
   wo install-shell           install folder switching
+  wo version                 print version
 
 Options:
   -i, --intent <id>          intent for new work
   --machine                  emit shell switch signals
   -h, --help                 show this help
+  -V, --version              print version
 
 Env:
   WORKON_ROOT=/path          override the default ~/.workon root
 ",
     )?;
+    Ok(())
+}
+
+pub(crate) fn write_version(writer: &mut dyn Write) -> Result<()> {
+    writeln!(writer, "wo {}", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
 

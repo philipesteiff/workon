@@ -1,0 +1,211 @@
+name: Release Homebrew Formula
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+env:
+  BINARY_NAME: wo
+  FORMULA_NAME: workon
+  TAP_REPO: philipesteiff/homebrew-tap
+  TAP_BRANCH: main
+
+jobs:
+  verify:
+    name: Verify Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Verify
+        run: just verify
+
+      - name: Build
+        run: cargo build
+
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION_TOML="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [ "v${VERSION_TOML}" != "${TAG}" ]; then
+            echo "Tag ${TAG} does not match Cargo.toml version v${VERSION_TOML}" >&2
+            exit 1
+          fi
+
+  package:
+    name: Package ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-latest
+          - target: darwin-x86_64
+            runner: macos-15-intel
+          - target: linux-x86_64
+            runner: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Package release artifact
+        run: scripts/package.sh
+
+      - name: Verify expected artifact name
+        run: test -f "dist/workon-${{ matrix.target }}.tar.gz"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: workon-${{ matrix.target }}
+          path: dist/workon-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release and Tap
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute checksums
+        run: |
+          set -euo pipefail
+          for archive in dist/*.tar.gz; do
+            checksum="$(sha256sum "${archive}" | awk '{print $1}')"
+            printf '%s %s\n' "${checksum}" "$(basename "${archive}")" >> checksums.txt
+          done
+          cat checksums.txt
+
+      - name: Validate Homebrew tap token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "Missing HOMEBREW_TAP_TOKEN secret with write access to ${TAP_REPO}" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPO }}
+          ref: ${{ env.TAP_BRANCH }}
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Update Homebrew formula
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO_SLUG="${GITHUB_REPOSITORY}"
+          FORMULA_DIR="Formula"
+          FORMULA_PATH="${FORMULA_DIR}/${FORMULA_NAME}.rb"
+
+          checksum_for() {
+            awk -v name="$1" '$2 == name {print $1}' "../checksums.txt"
+          }
+
+          DARWIN_ARM_SHA="$(checksum_for workon-darwin-arm64.tar.gz)"
+          DARWIN_INTEL_SHA="$(checksum_for workon-darwin-x86_64.tar.gz)"
+          LINUX_INTEL_SHA="$(checksum_for workon-linux-x86_64.tar.gz)"
+
+          for checksum in "$DARWIN_ARM_SHA" "$DARWIN_INTEL_SHA" "$LINUX_INTEL_SHA"; do
+            if [ -z "$checksum" ]; then
+              echo "Missing checksum for one or more release artifacts" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -p "${FORMULA_DIR}"
+          cat > "${FORMULA_PATH}" <<RUBY
+          class Workon < Formula
+            desc "CLI and compact TUI for creating agent-ready context workspaces"
+            homepage "https://github.com/${REPO_SLUG}"
+            version "${VERSION}"
+            license "Apache-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/${REPO_SLUG}/releases/download/${GITHUB_REF_NAME}/workon-darwin-arm64.tar.gz"
+                sha256 "${DARWIN_ARM_SHA}"
+              end
+
+              on_intel do
+                url "https://github.com/${REPO_SLUG}/releases/download/${GITHUB_REF_NAME}/workon-darwin-x86_64.tar.gz"
+                sha256 "${DARWIN_INTEL_SHA}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/${REPO_SLUG}/releases/download/${GITHUB_REF_NAME}/workon-linux-x86_64.tar.gz"
+                sha256 "${LINUX_INTEL_SHA}"
+              end
+            end
+
+            def install
+              bin.install "${BINARY_NAME}"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/wo version")
+            end
+
+            def caveats
+              "Run wo install-shell to enable folder switching in zsh."
+            end
+          end
+          RUBY
+
+      - name: Commit and push formula
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/${FORMULA_NAME}.rb"
+          if git diff --cached --quiet; then
+            echo "No changes to Formula/${FORMULA_NAME}.rb"
+            exit 0
+          fi
+          git commit -m "${FORMULA_NAME} ${GITHUB_REF_NAME}"
+          git push origin "${TAP_BRANCH}"

@@ -1,6 +1,10 @@
 # Rust
 /target/
+/dist/
 **/*.rs.bk
+
+# Local notes and generated docs
+/docs/
 
 # IntelliJ / JetBrains
 .idea/

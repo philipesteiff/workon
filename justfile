@@ -7,6 +7,9 @@ default:
 build:
     cargo build
 
+package:
+    scripts/package.sh
+
 fmt-check:
     cargo fmt --check
 

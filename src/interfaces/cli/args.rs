@@ -13,6 +13,7 @@ pub(crate) enum CliRequest {
     Help,
     IntentHelp,
     ReposHelp,
+    Version,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
@@ -38,6 +39,10 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
         .filter(|arg| arg.as_str() != "--machine")
         .cloned()
         .collect::<Vec<_>>();
+
+    if is_version_request(&command_args) {
+        return Ok(CliRequest::Version);
+    }
 
     if command_args == ["install-shell"] {
         return Ok(command_request(Command::InstallShell, false));
@@ -169,6 +174,13 @@ fn is_intent_help_request(args: &[String]) -> bool {
     ) || matches!(
         args,
         [help, topic] if help == "help" && topic == "intent"
+    )
+}
+
+fn is_version_request(args: &[String]) -> bool {
+    matches!(
+        args,
+        [command] if command == "version" || command == "--version" || command == "-V"
     )
 }
 
@@ -658,6 +670,20 @@ mod tests {
                 allow_tui: false,
             }
         );
+    }
+
+    #[test]
+    fn parses_version_requests() {
+        for args in [
+            vec!["--version".to_string()],
+            vec!["-V".to_string()],
+            vec!["version".to_string()],
+        ] {
+            assert_eq!(
+                parse_args(args).expect("args should parse"),
+                CliRequest::Version
+            );
+        }
     }
 
     #[test]

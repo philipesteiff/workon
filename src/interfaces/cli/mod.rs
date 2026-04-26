@@ -9,7 +9,7 @@ mod args;
 mod output;
 
 use self::args::{parse_args, CliRequest};
-use self::output::{render_output, write_help, write_intent_help, write_repos_help};
+use self::output::{render_output, write_help, write_intent_help, write_repos_help, write_version};
 
 pub fn run_cli(args: impl IntoIterator<Item = String>) -> i32 {
     let root = match workon_root() {
@@ -53,6 +53,11 @@ fn run(
 
     if let CliRequest::IntentHelp = request {
         write_intent_help(stdout)?;
+        return Ok(0);
+    }
+
+    if let CliRequest::Version = request {
+        write_version(stdout)?;
         return Ok(0);
     }
 

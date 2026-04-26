@@ -137,6 +137,25 @@ fn help_prints_command_summary() {
 }
 
 #[test]
+fn version_prints_package_version() {
+    let root = temp_root("version_prints_package_version");
+
+    for args in [vec!["--version"], vec!["version"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+            .current_dir(root.path())
+            .env("WORKON_ROOT", root.path())
+            .args(args)
+            .output()
+            .expect("wo should run");
+
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+
+        assert_eq!(stdout, format!("wo {}\n", env!("CARGO_PKG_VERSION")));
+    }
+}
+
+#[test]
 fn repos_help_prints_usage() {
     let root = temp_root("repos_help_prints_usage");
 
