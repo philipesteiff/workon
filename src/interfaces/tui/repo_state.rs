@@ -140,6 +140,7 @@ impl Default for RepoPickerState {
 }
 
 impl RepoPickerState {
+    #[cfg(test)]
     pub(super) fn enter_context(
         &mut self,
         work_slug: String,
@@ -171,13 +172,18 @@ impl RepoPickerState {
         self.status = RepoStatus::Ready;
     }
 
-    pub(super) fn enter_loading(&mut self, work_slug: String, work_title: String) {
+    pub(super) fn enter_loading(
+        &mut self,
+        work_slug: String,
+        work_title: String,
+        attached: Vec<AttachedRepository>,
+    ) {
         self.focus = RepoPane::Catalog;
         self.work_slug = work_slug;
         self.work_title = work_title;
         self.available.clear();
         self.candidates.clear();
-        self.attached.clear();
+        self.attached = attached;
         self.workspaces.clear();
         self.selected_workspace = 0;
         self.selected_catalog = 0;
@@ -220,24 +226,34 @@ impl RepoPickerState {
         self.clamp_selection();
     }
 
-    pub(super) fn update_workspaces(&mut self, workspaces: Vec<RepositoryWorkspace>) {
+    pub(super) fn update_attached_from_load(&mut self, attached: Vec<AttachedRepository>) {
+        self.attached = attached;
+        self.pending_add.clear();
+        self.pending_link.clear();
+        self.pending_remove.clear();
+        self.force_remove = false;
+        self.clamp_selection();
+    }
+
+    pub(super) fn update_available_from_load(&mut self, available: Vec<AvailableRepository>) {
+        self.available = available;
+        self.clamp_selection();
+    }
+
+    pub(super) fn update_workspaces_from_load(&mut self, workspaces: Vec<RepositoryWorkspace>) {
         let was_empty = self.workspaces.is_empty();
         self.workspaces = workspaces;
         self.clamp_selection();
-        if matches!(self.status, RepoStatus::Loading { .. }) {
-            self.status = RepoStatus::Ready;
-        }
-        if was_empty && !self.workspaces.is_empty() {
+        if was_empty && !self.workspaces.is_empty() && self.focus == RepoPane::AddPath {
             self.focus = RepoPane::Catalog;
         } else if self.workspaces.is_empty() && self.focus == RepoPane::ConfiguredPaths {
             self.focus = RepoPane::AddPath;
         }
     }
 
-    pub(super) fn update_candidates(&mut self, candidates: Vec<RepositoryCandidate>) {
+    pub(super) fn update_candidates_from_load(&mut self, candidates: Vec<RepositoryCandidate>) {
         self.candidates = candidates;
         self.pending_link.clear();
-        self.finish_loading();
         self.clamp_selection();
     }
 
@@ -293,13 +309,6 @@ impl RepoPickerState {
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> RepoPickerAction {
-        if matches!(self.status, RepoStatus::Loading { .. }) {
-            return match key.code {
-                KeyCode::Esc => RepoPickerAction::Back,
-                _ => RepoPickerAction::None,
-            };
-        }
-
         match key.code {
             KeyCode::Esc => {
                 self.pending_add.clear();

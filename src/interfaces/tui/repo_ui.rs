@@ -71,7 +71,7 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
 
     let mut lines = vec![repo_catalog_context_line(state, rows.is_empty())];
 
-    if !matches!(state.repo.status, RepoStatus::Loading { .. }) && !rows.is_empty() {
+    if !rows.is_empty() {
         let visible_rows = catalog_area.height.saturating_sub(lines.len() as u16) as usize;
         let start = scroll_start(state.repo.selected_catalog, rows.len(), visible_rows);
         lines.extend(

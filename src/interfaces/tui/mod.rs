@@ -14,7 +14,7 @@ mod ui;
 use std::collections::BTreeMap;
 use std::io::{self, Stdout};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -116,11 +116,13 @@ fn run_loop(
     let mut animation = AnimationRuntime::default();
     let mut last_frame = Instant::now();
     let mut repo_load_job: Option<RepoLoadJob> = None;
+    let mut repo_workspace_job: Option<RepoWorkspaceJob> = None;
     let mut attached_repository_index_job =
         Some(spawn_attached_repository_index(app.clone(), state));
 
     loop {
         poll_repo_load_job(&mut repo_load_job, state);
+        poll_repo_workspace_job(&mut repo_workspace_job, state);
         poll_attached_repository_index_job(&mut attached_repository_index_job, state);
         let elapsed = last_frame.elapsed();
         last_frame = Instant::now();
@@ -130,6 +132,7 @@ fn run_loop(
             animation.is_animating()
                 || state.is_title_activity_active()
                 || repo_load_job.is_some()
+                || repo_workspace_job.is_some()
                 || attached_repository_index_job.is_some(),
         )?
         else {
@@ -197,6 +200,8 @@ fn run_loop(
                 force_remove,
                 workspace,
             } => {
+                repo_load_job = None;
+                repo_workspace_job = None;
                 let request = RepoChangeRequest {
                     work_slug,
                     add,
@@ -210,66 +215,18 @@ fn run_loop(
                 show_repo_batch_outcome(state, outcome);
             }
             TuiAction::AddRepoWorkspaces { work_slug, paths } => {
-                draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
-                match app.execute(Command::AddRepositoryWorkspaces {
-                    paths: paths.clone(),
-                }) {
-                    Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
-                        let count = workspaces.workspaces.len();
-                        state.update_repo_workspaces(workspaces.workspaces);
-                        record_repo_workspace_added(state, &paths, count);
-                        state.start_repo_loading("Loading repository sources");
-                        draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
-                        refresh_repository_candidates(app, state, &work_slug);
-                    }
-                    Ok(_) => unreachable!("add repository workspace returns repository workspaces"),
-                    Err(error) => {
-                        state.toast =
-                            Some(Toast::error("Repo workspace failed", &error.to_string()));
-                        state.push_repo_log(
-                            TraceKind::Err,
-                            format!("repo workspace failed: {error}"),
-                        );
-                        state.push_trace(TraceKind::Err, format!("repo workspace failed: {error}"));
-                    }
-                }
-                if state.repo.work_slug != work_slug {
-                    state.push_trace(
-                        TraceKind::Warn,
-                        format!("repo workspace setup returned for stale work {work_slug}"),
-                    );
-                }
+                repo_load_job = None;
+                repo_workspace_job = Some(spawn_repo_workspace_job(
+                    app.clone(),
+                    RepoWorkspaceRequest::Add { work_slug, paths },
+                ));
             }
             TuiAction::RemoveRepoWorkspace { work_slug, path } => {
-                draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
-                match app.execute(Command::RemoveRepositoryWorkspace { path: path.clone() }) {
-                    Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
-                        let count = workspaces.workspaces.len();
-                        state.update_repo_workspaces(workspaces.workspaces);
-                        record_repo_workspace_removed(state, &path, count);
-                        state.start_repo_loading("Loading repository sources");
-                        draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
-                        refresh_repository_candidates(app, state, &work_slug);
-                    }
-                    Ok(_) => {
-                        unreachable!("remove repository workspace returns repository workspaces")
-                    }
-                    Err(error) => {
-                        state.toast =
-                            Some(Toast::error("Repo workspace failed", &error.to_string()));
-                        state.push_repo_log(
-                            TraceKind::Err,
-                            format!("repo workspace failed: {error}"),
-                        );
-                        state.push_trace(TraceKind::Err, format!("repo workspace failed: {error}"));
-                    }
-                }
-                if state.repo.work_slug != work_slug {
-                    state.push_trace(
-                        TraceKind::Warn,
-                        format!("repo workspace removal returned for stale work {work_slug}"),
-                    );
-                }
+                repo_load_job = None;
+                repo_workspace_job = Some(spawn_repo_workspace_job(
+                    app.clone(),
+                    RepoWorkspaceRequest::Remove { work_slug, path },
+                ));
             }
         }
         animation.observe_transition(before, AnimationSnapshot::from_state(state));
@@ -302,30 +259,6 @@ fn record_repo_workspace_removed(state: &mut TuiState, path: &Path, workspace_co
         TraceKind::Sync,
         format!("repo workspaces configured: {workspace_count}"),
     );
-}
-
-fn refresh_repository_candidates(app: &App, state: &mut TuiState, work_slug: &str) {
-    match app.execute(Command::ListRepositoryCandidates {
-        query: work_slug.to_string(),
-    }) {
-        Ok(CommandOutput::RepositoryCandidates(candidates)) => {
-            let count = candidates.candidates.len();
-            state.update_repo_candidates(candidates.candidates);
-            state.push_repo_log(TraceKind::Sync, format!("discovered {count} local repos"));
-        }
-        Ok(_) => unreachable!("list repository candidates command returns candidates"),
-        Err(error) => {
-            state.push_repo_log(
-                TraceKind::Warn,
-                format!("local repo discovery unavailable: {error}"),
-            );
-            state.push_trace(
-                TraceKind::Warn,
-                format!("local repo discovery unavailable: {error}"),
-            );
-            state.finish_repo_loading();
-        }
-    }
 }
 
 fn draw_frame(
@@ -446,26 +379,217 @@ fn load_attached_repository_index(
     Ok(repositories)
 }
 
-struct RepoContextData {
+#[derive(Clone)]
+enum RepoWorkspaceRequest {
+    Add {
+        work_slug: String,
+        paths: Vec<PathBuf>,
+    },
+    Remove {
+        work_slug: String,
+        path: PathBuf,
+    },
+}
+
+impl RepoWorkspaceRequest {
+    fn work_slug(&self) -> &str {
+        match self {
+            Self::Add { work_slug, .. } | Self::Remove { work_slug, .. } => work_slug,
+        }
+    }
+}
+
+enum RepoWorkspaceMessage {
+    Workspaces(Result<Vec<crate::domain::RepositoryWorkspace>>),
+    Candidates(Result<Vec<crate::domain::RepositoryCandidate>>),
+    Finished,
+}
+
+struct RepoWorkspaceJob {
+    work_slug: String,
+    request: RepoWorkspaceRequest,
+    receiver: Receiver<RepoWorkspaceMessage>,
+}
+
+fn spawn_repo_workspace_job(app: App, request: RepoWorkspaceRequest) -> RepoWorkspaceJob {
+    let work_slug = request.work_slug().to_string();
+    let worker_request = request.clone();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        run_repo_workspace_job(&app, worker_request, sender);
+    });
+
+    RepoWorkspaceJob {
+        work_slug,
+        request,
+        receiver,
+    }
+}
+
+fn poll_repo_workspace_job(job: &mut Option<RepoWorkspaceJob>, state: &mut TuiState) {
+    let Some(active_job) = job.as_ref() else {
+        return;
+    };
+
+    if state.mode != TuiMode::Repos || state.repo.work_slug != active_job.work_slug {
+        *job = None;
+        return;
+    }
+
+    loop {
+        let message = match job
+            .as_ref()
+            .expect("repo workspace job should exist")
+            .receiver
+            .try_recv()
+        {
+            Ok(message) => message,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                state.toast = Some(Toast::error(
+                    "Repo workspace failed",
+                    "repository workspace job stopped before returning a result",
+                ));
+                state.push_trace(
+                    TraceKind::Err,
+                    "repo workspace job stopped before returning a result",
+                );
+                state.set_repo_failed("repository workspace job stopped before returning a result");
+                *job = None;
+                return;
+            }
+        };
+
+        if matches!(message, RepoWorkspaceMessage::Finished) {
+            state.finish_repo_loading();
+            *job = None;
+            return;
+        }
+
+        let request = job
+            .as_ref()
+            .expect("repo workspace job should exist")
+            .request
+            .clone();
+        apply_repo_workspace_message(state, &request, message);
+    }
+}
+
+fn apply_repo_workspace_message(
+    state: &mut TuiState,
+    request: &RepoWorkspaceRequest,
+    message: RepoWorkspaceMessage,
+) {
+    match message {
+        RepoWorkspaceMessage::Workspaces(Ok(workspaces)) => {
+            let count = workspaces.len();
+            state.update_repo_workspaces_from_load(workspaces);
+            match request {
+                RepoWorkspaceRequest::Add { paths, .. } => {
+                    record_repo_workspace_added(state, paths, count);
+                }
+                RepoWorkspaceRequest::Remove { path, .. } => {
+                    record_repo_workspace_removed(state, path, count);
+                }
+            }
+            state.start_repo_loading("Loading repository sources");
+        }
+        RepoWorkspaceMessage::Workspaces(Err(error)) => {
+            state.toast = Some(Toast::error("Repo workspace failed", &error.to_string()));
+            state.push_repo_log(TraceKind::Err, format!("repo workspace failed: {error}"));
+            state.push_trace(TraceKind::Err, format!("repo workspace failed: {error}"));
+            state.set_repo_failed(error.to_string());
+        }
+        RepoWorkspaceMessage::Candidates(Ok(candidates)) => {
+            let count = candidates.len();
+            state.update_repo_candidates_from_load(candidates);
+            state.push_repo_log(TraceKind::Sync, format!("discovered {count} local repos"));
+        }
+        RepoWorkspaceMessage::Candidates(Err(error)) => {
+            state.push_repo_log(
+                TraceKind::Warn,
+                format!("local repo discovery unavailable: {error}"),
+            );
+            state.push_trace(
+                TraceKind::Warn,
+                format!("local repo discovery unavailable: {error}"),
+            );
+        }
+        RepoWorkspaceMessage::Finished => {}
+    }
+}
+
+fn run_repo_workspace_job(
+    app: &App,
+    request: RepoWorkspaceRequest,
+    sender: Sender<RepoWorkspaceMessage>,
+) {
+    let workspaces = match apply_repo_workspace_request(app, &request) {
+        Ok(workspaces) => workspaces,
+        Err(error) => {
+            let _ = sender.send(RepoWorkspaceMessage::Workspaces(Err(error)));
+            let _ = sender.send(RepoWorkspaceMessage::Finished);
+            return;
+        }
+    };
+
+    if sender
+        .send(RepoWorkspaceMessage::Workspaces(Ok(workspaces)))
+        .is_err()
+    {
+        return;
+    }
+
+    let _ = sender.send(RepoWorkspaceMessage::Candidates(load_repo_candidates(
+        app,
+        request.work_slug(),
+    )));
+    let _ = sender.send(RepoWorkspaceMessage::Finished);
+}
+
+fn apply_repo_workspace_request(
+    app: &App,
+    request: &RepoWorkspaceRequest,
+) -> Result<Vec<crate::domain::RepositoryWorkspace>> {
+    let output = match request {
+        RepoWorkspaceRequest::Add { paths, .. } => {
+            app.execute(Command::AddRepositoryWorkspaces {
+                paths: paths.clone(),
+            })?
+        }
+        RepoWorkspaceRequest::Remove { path, .. } => {
+            app.execute(Command::RemoveRepositoryWorkspace { path: path.clone() })?
+        }
+    };
+    let CommandOutput::RepositoryWorkspaces(workspaces) = output else {
+        unreachable!("repository workspace commands return repository workspaces");
+    };
+    Ok(workspaces.workspaces)
+}
+
+struct RepoAttachedData {
     work: crate::domain::WorkSummary,
-    available: Vec<crate::domain::AvailableRepository>,
-    candidates: Vec<crate::domain::RepositoryCandidate>,
     attached: Vec<crate::domain::AttachedRepository>,
-    workspaces: Vec<crate::domain::RepositoryWorkspace>,
-    catalog_error: Option<String>,
-    candidate_error: Option<String>,
+}
+
+enum RepoLoadMessage {
+    Attached(Result<RepoAttachedData>),
+    Workspaces(Result<Vec<crate::domain::RepositoryWorkspace>>),
+    Candidates(Result<Vec<crate::domain::RepositoryCandidate>>),
+    Catalog(Result<Vec<crate::domain::AvailableRepository>>),
+    Finished,
 }
 
 struct RepoLoadJob {
     work_slug: String,
-    receiver: Receiver<Result<RepoContextData>>,
+    receiver: Receiver<RepoLoadMessage>,
 }
 
 fn spawn_repo_load(app: App, work_slug: String) -> RepoLoadJob {
     let (sender, receiver) = mpsc::channel();
     let worker_slug = work_slug.clone();
     thread::spawn(move || {
-        let _ = sender.send(load_repo_context(&app, &worker_slug));
+        load_repo_context_sources(&app, &worker_slug, sender);
     });
 
     RepoLoadJob {
@@ -475,118 +599,198 @@ fn spawn_repo_load(app: App, work_slug: String) -> RepoLoadJob {
 }
 
 fn poll_repo_load_job(job: &mut Option<RepoLoadJob>, state: &mut TuiState) {
-    let Some(active_job) = job else {
+    let Some(active_job) = job.as_ref() else {
         return;
     };
 
-    let result = match active_job.receiver.try_recv() {
-        Ok(result) => result,
-        Err(TryRecvError::Empty) => return,
-        Err(TryRecvError::Disconnected) => Err(WorkonError::RepositoryContext {
-            message: "repository loader stopped before returning a result".to_string(),
-        }),
-    };
-
-    if state.mode == TuiMode::Repos && state.repo.work_slug == active_job.work_slug {
-        apply_repo_load_result(state, result);
+    if state.mode != TuiMode::Repos || state.repo.work_slug != active_job.work_slug {
+        *job = None;
+        return;
     }
-    *job = None;
-}
 
-fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>) {
-    match result {
-        Ok(repo_context) => {
-            let available_count = repo_context.available.len();
-            let candidate_count = repo_context.candidates.len();
-            let attached_count = repo_context.attached.len();
-            let catalog_error = repo_context.catalog_error;
-            let candidate_error = repo_context.candidate_error;
-            state.enter_repo_context(
-                repo_context.work.slug,
-                repo_context.work.title,
-                repo_context.available,
-                repo_context.candidates,
-                repo_context.attached,
-                repo_context.workspaces,
-            );
-            state.push_repo_log(
-                TraceKind::Sync,
-                format!(
-                    "loaded {available_count} GitHub repos, {candidate_count} local repos, {attached_count} attached"
-                ),
-            );
-            state.push_trace(TraceKind::Run, "repo context loaded");
-            if let Some(error) = catalog_error {
+    loop {
+        let message = match job
+            .as_ref()
+            .expect("repo job should exist")
+            .receiver
+            .try_recv()
+        {
+            Ok(message) => message,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
                 state.toast = Some(Toast::error(
-                    "GitHub catalog unavailable",
-                    "Attached repositories can still be removed.",
+                    "Repos failed",
+                    "repository loader stopped before returning a result",
                 ));
                 state.push_trace(
-                    TraceKind::Warn,
-                    format!("GitHub catalog unavailable: {error}"),
+                    TraceKind::Err,
+                    "repository loader stopped before returning a result",
                 );
-                state.set_repo_failed(format!("GitHub catalog unavailable: {error}"));
+                state.set_repo_failed("repository loader stopped before returning a result");
+                *job = None;
+                return;
             }
-            if let Some(error) = candidate_error {
-                state.push_trace(
-                    TraceKind::Warn,
-                    format!("local repo discovery unavailable: {error}"),
-                );
-                state.push_repo_log(
-                    TraceKind::Warn,
-                    format!("local repo discovery unavailable: {error}"),
-                );
-            }
+        };
+
+        if matches!(message, RepoLoadMessage::Finished) {
+            state.finish_repo_loading();
+            state.push_trace(TraceKind::Run, "repo context loaded");
+            *job = None;
+            return;
         }
-        Err(error) => {
+
+        apply_repo_load_message(state, message);
+    }
+}
+
+fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
+    match message {
+        RepoLoadMessage::Attached(Ok(attached)) => {
+            let count = attached.attached.len();
+            state.repo.work_slug = attached.work.slug;
+            state.repo.work_title = attached.work.title;
+            state.update_repo_attached_from_load(attached.attached);
+            state.push_repo_log(TraceKind::Sync, format!("loaded {count} attached repos"));
+        }
+        RepoLoadMessage::Attached(Err(error)) => {
             state.toast = Some(Toast::error("Repos failed", &error.to_string()));
             state.push_trace(TraceKind::Err, format!("repos failed: {error}"));
             state.set_repo_failed(error.to_string());
         }
+        RepoLoadMessage::Workspaces(Ok(workspaces)) => {
+            let count = workspaces.len();
+            state.update_repo_workspaces_from_load(workspaces);
+            state.push_repo_log(TraceKind::Sync, format!("loaded {count} repo workspaces"));
+        }
+        RepoLoadMessage::Workspaces(Err(error)) => {
+            state.push_repo_log(
+                TraceKind::Warn,
+                format!("repo workspaces unavailable: {error}"),
+            );
+            state.push_trace(
+                TraceKind::Warn,
+                format!("repo workspaces unavailable: {error}"),
+            );
+        }
+        RepoLoadMessage::Candidates(Ok(candidates)) => {
+            let count = candidates.len();
+            state.update_repo_candidates_from_load(candidates);
+            state.push_repo_log(TraceKind::Sync, format!("discovered {count} local repos"));
+        }
+        RepoLoadMessage::Candidates(Err(error)) => {
+            state.push_repo_log(
+                TraceKind::Warn,
+                format!("local repo discovery unavailable: {error}"),
+            );
+            state.push_trace(
+                TraceKind::Warn,
+                format!("local repo discovery unavailable: {error}"),
+            );
+        }
+        RepoLoadMessage::Catalog(Ok(available)) => {
+            let count = available.len();
+            state.update_repo_available_from_load(available);
+            state.push_repo_log(TraceKind::Sync, format!("loaded {count} GitHub repos"));
+        }
+        RepoLoadMessage::Catalog(Err(error)) => {
+            state.toast = Some(Toast::error(
+                "GitHub catalog unavailable",
+                "Attached repositories can still be removed.",
+            ));
+            state.push_trace(
+                TraceKind::Warn,
+                format!("GitHub catalog unavailable: {error}"),
+            );
+            state.set_repo_failed(format!("GitHub catalog unavailable: {error}"));
+        }
+        RepoLoadMessage::Finished => {}
     }
 }
 
-fn load_repo_context(app: &App, work_slug: &str) -> Result<RepoContextData> {
+fn load_repo_context_sources(app: &App, work_slug: &str, sender: Sender<RepoLoadMessage>) {
+    let attached = match load_repo_attached(app, work_slug) {
+        Ok(attached) => attached,
+        Err(error) => {
+            let _ = sender.send(RepoLoadMessage::Attached(Err(error)));
+            let _ = sender.send(RepoLoadMessage::Finished);
+            return;
+        }
+    };
+    if sender
+        .send(RepoLoadMessage::Attached(Ok(RepoAttachedData {
+            work: attached.work,
+            attached: attached.repositories,
+        })))
+        .is_err()
+    {
+        return;
+    }
+
+    let workspaces = match load_repo_workspaces(app) {
+        Ok(workspaces) => {
+            if sender
+                .send(RepoLoadMessage::Workspaces(Ok(workspaces.clone())))
+                .is_err()
+            {
+                return;
+            }
+            workspaces
+        }
+        Err(error) => {
+            let _ = sender.send(RepoLoadMessage::Workspaces(Err(error)));
+            Vec::new()
+        }
+    };
+
+    if !workspaces.is_empty() {
+        let _ = sender.send(RepoLoadMessage::Candidates(load_repo_candidates(
+            app, work_slug,
+        )));
+    }
+
+    let _ = sender.send(RepoLoadMessage::Catalog(load_repo_catalog(app)));
+    let _ = sender.send(RepoLoadMessage::Finished);
+}
+
+fn load_repo_attached(app: &App, work_slug: &str) -> Result<crate::domain::WorkRepositoryList> {
     let CommandOutput::WorkRepositories(attached) = app.execute(Command::ListWorkRepositories {
         query: work_slug.to_string(),
     })?
     else {
         unreachable!("list work repositories command returns work repositories");
     };
+    Ok(attached)
+}
 
-    let (available, catalog_error) = match app.execute(Command::ListGitHubRepositories) {
-        Ok(CommandOutput::RepositoryCatalog(catalog)) => (catalog.repositories, None),
-        Ok(_) => unreachable!("list GitHub repositories command returns repository catalog"),
-        Err(error) => (Vec::new(), Some(error.to_string())),
-    };
-
+fn load_repo_workspaces(app: &App) -> Result<Vec<crate::domain::RepositoryWorkspace>> {
     let CommandOutput::RepositoryWorkspaces(workspaces) =
         app.execute(Command::ListRepositoryWorkspaces)?
     else {
         unreachable!("list repository workspaces command returns repository workspaces");
     };
+    Ok(workspaces.workspaces)
+}
 
-    let (candidates, candidate_error) = if workspaces.workspaces.is_empty() {
-        (Vec::new(), None)
-    } else {
-        match app.execute(Command::ListRepositoryCandidates {
+fn load_repo_candidates(
+    app: &App,
+    work_slug: &str,
+) -> Result<Vec<crate::domain::RepositoryCandidate>> {
+    let CommandOutput::RepositoryCandidates(candidates) =
+        app.execute(Command::ListRepositoryCandidates {
             query: work_slug.to_string(),
-        }) {
-            Ok(CommandOutput::RepositoryCandidates(candidates)) => (candidates.candidates, None),
-            Ok(_) => unreachable!("list repository candidates command returns candidates"),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        }
+        })?
+    else {
+        unreachable!("list repository candidates command returns candidates");
     };
+    Ok(candidates.candidates)
+}
 
-    Ok(RepoContextData {
-        work: attached.work,
-        available,
-        candidates,
-        attached: attached.repositories,
-        workspaces: workspaces.workspaces,
-        catalog_error,
-        candidate_error,
-    })
+fn load_repo_catalog(app: &App) -> Result<Vec<crate::domain::AvailableRepository>> {
+    let CommandOutput::RepositoryCatalog(catalog) = app.execute(Command::ListGitHubRepositories)?
+    else {
+        unreachable!("list GitHub repositories command returns repository catalog");
+    };
+    Ok(catalog.repositories)
 }
 
 fn refresh_attached_repositories(app: &App, state: &mut TuiState, work_slug: &str) {
@@ -784,9 +988,10 @@ mod tests {
     };
     use super::state::{Toast, TraceKind, TuiMode, TuiState};
     use super::{
-        apply_repo_load_result, poll_attached_repository_index_job, record_repo_workspace_added,
-        record_repo_workspace_removed, show_repo_batch_outcome, AttachedRepositoryIndexJob,
-        RepoBatchOutcome, RepoContextData,
+        apply_repo_load_message, poll_attached_repository_index_job, poll_repo_load_job,
+        poll_repo_workspace_job, record_repo_workspace_added, record_repo_workspace_removed,
+        show_repo_batch_outcome, AttachedRepositoryIndexJob, RepoAttachedData, RepoBatchOutcome,
+        RepoLoadMessage, RepoWorkspaceJob, RepoWorkspaceMessage, RepoWorkspaceRequest,
     };
 
     #[test]
@@ -817,18 +1022,20 @@ mod tests {
     fn repo_load_keeps_attached_repositories_when_github_catalog_fails() {
         let mut state = TuiState::new(work_list());
         let work = work_list().works[0].clone();
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
 
-        apply_repo_load_result(
+        apply_repo_load_message(
             &mut state,
-            Ok(RepoContextData {
+            RepoLoadMessage::Attached(Ok(RepoAttachedData {
                 work,
-                available: Vec::new(),
-                candidates: Vec::new(),
                 attached: attached_repositories(),
-                workspaces: Vec::new(),
-                catalog_error: Some("gh auth required".to_string()),
-                candidate_error: None,
-            }),
+            })),
+        );
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Catalog(Err(crate::shared::error::WorkonError::RepositoryContext {
+                message: "gh auth required".to_string(),
+            })),
         );
 
         assert_eq!(state.mode, TuiMode::Repos);
@@ -841,6 +1048,63 @@ mod tests {
             .any(|row| row.name() == "openai/workon"));
         let toast = state.toast.expect("catalog failure should show a toast");
         assert_eq!(toast.title, "GitHub catalog unavailable");
+    }
+
+    #[test]
+    fn repo_load_applies_partial_attached_result_before_finished() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(RepoLoadMessage::Attached(Ok(RepoAttachedData {
+                work: work.clone(),
+                attached: attached_repositories(),
+            })))
+            .expect("partial repo load message should send");
+        let mut job = Some(super::RepoLoadJob {
+            work_slug: work.slug,
+            receiver,
+        });
+
+        poll_repo_load_job(&mut job, &mut state);
+
+        assert!(job.is_some());
+        assert_eq!(state.repo.attached.len(), 1);
+        assert_eq!(state.repo.attached[0].name_with_owner, "openai/workon");
+    }
+
+    #[test]
+    fn repo_workspace_job_applies_paths_before_candidate_refresh_finishes() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
+        let path = std::path::PathBuf::from("/tmp/repos");
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(RepoWorkspaceMessage::Workspaces(Ok(vec![
+                crate::domain::RepositoryWorkspace { path: path.clone() },
+            ])))
+            .expect("partial repo workspace message should send");
+        let mut job = Some(RepoWorkspaceJob {
+            work_slug: work.slug.clone(),
+            request: RepoWorkspaceRequest::Add {
+                work_slug: work.slug,
+                paths: vec![path.clone()],
+            },
+            receiver,
+        });
+
+        poll_repo_workspace_job(&mut job, &mut state);
+
+        assert!(job.is_some());
+        assert_eq!(state.repo.workspaces.len(), 1);
+        assert_eq!(state.repo.workspaces[0].path, path);
+        assert!(state
+            .repo
+            .logs
+            .iter()
+            .any(|event| event.message == "repo workspace added /tmp/repos"));
     }
 
     #[test]

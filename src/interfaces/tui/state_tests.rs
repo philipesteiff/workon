@@ -280,17 +280,41 @@ fn slash_leader_opens_repo_context_for_highlighted_work() {
 }
 
 #[test]
-fn repo_context_ignores_text_input_while_loading() {
+fn repo_context_accepts_text_input_while_loading() {
     let mut state = TuiState::new(work_list());
-    state.enter_repo_loading(
+    state.enter_repo_context(
         "billing-retry-audit".to_string(),
         "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
     );
+    state.start_repo_loading("Loading repository sources");
 
     assert_eq!(state.handle_key(key(KeyCode::Char('w'))), TuiAction::None);
 
     assert_eq!(state.mode, TuiMode::Repos);
-    assert!(state.repo.filter.is_empty());
+    assert_eq!(state.repo.filter, "w");
+}
+
+#[test]
+fn repo_context_accepts_navigation_while_loading() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+    state.start_repo_loading("Loading repository sources");
+
+    assert_eq!(state.handle_key(key(KeyCode::Down)), TuiAction::None);
+
+    assert_eq!(state.mode, TuiMode::Repos);
+    assert_eq!(state.repo.selected_catalog, 1);
 }
 
 #[test]
@@ -494,7 +518,7 @@ fn repo_context_uses_workspace_after_required_setup_completes() {
         attached_repositories(),
         Vec::new(),
     );
-    state.update_repo_workspaces(repo_workspaces());
+    state.update_repo_workspaces_from_load(repo_workspaces());
     state.handle_key(key(KeyCode::Down));
     state.handle_key(key(KeyCode::Char(' ')));
 

@@ -272,6 +272,7 @@ impl TuiState {
         self.pre_filter_selected_slug = None;
     }
 
+    #[cfg(test)]
     pub(super) fn enter_repo_context(
         &mut self,
         work_slug: String,
@@ -291,7 +292,12 @@ impl TuiState {
 
     pub(super) fn enter_repo_loading(&mut self, work_slug: String, work_title: String) {
         self.mode = TuiMode::Repos;
-        self.repo.enter_loading(work_slug, work_title);
+        let attached = self
+            .attached_repositories
+            .get(&work_slug)
+            .cloned()
+            .unwrap_or_default();
+        self.repo.enter_loading(work_slug, work_title, attached);
     }
 
     pub(super) fn advance_activity_frame(&mut self) {
@@ -312,12 +318,28 @@ impl TuiState {
         self.repo.update_attached(attached);
     }
 
-    pub(super) fn update_repo_workspaces(&mut self, workspaces: Vec<RepositoryWorkspace>) {
-        self.repo.update_workspaces(workspaces);
+    pub(super) fn update_repo_attached_from_load(&mut self, attached: Vec<AttachedRepository>) {
+        self.attached_repositories
+            .insert(self.repo.work_slug.clone(), attached.clone());
+        self.repo.update_attached_from_load(attached);
     }
 
-    pub(super) fn update_repo_candidates(&mut self, candidates: Vec<RepositoryCandidate>) {
-        self.repo.update_candidates(candidates);
+    pub(super) fn update_repo_available_from_load(&mut self, available: Vec<AvailableRepository>) {
+        self.repo.update_available_from_load(available);
+    }
+
+    pub(super) fn update_repo_workspaces_from_load(
+        &mut self,
+        workspaces: Vec<RepositoryWorkspace>,
+    ) {
+        self.repo.update_workspaces_from_load(workspaces);
+    }
+
+    pub(super) fn update_repo_candidates_from_load(
+        &mut self,
+        candidates: Vec<RepositoryCandidate>,
+    ) {
+        self.repo.update_candidates_from_load(candidates);
     }
 
     pub(super) fn start_repo_loading(&mut self, message: impl Into<String>) {

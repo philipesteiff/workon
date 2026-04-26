@@ -1511,6 +1511,25 @@ mod tests {
     }
 
     #[test]
+    fn renders_available_repo_rows_while_sources_are_loading() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            Vec::new(),
+            Vec::new(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+        state.start_repo_loading("Loading repository sources");
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("Loading repository sources"));
+        assert!(content.contains("openai/workon"));
+    }
+
+    #[test]
     fn animates_repo_context_loading_title() {
         let mut state = TuiState::new(work_list());
         state.enter_repo_loading(
