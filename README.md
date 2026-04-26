@@ -6,7 +6,7 @@ Primary command: `wo`.
 
 AI agents are replaceable. Context is not.
 
-Workon switches folders through a small shell function. No subshell.
+Workon switches folders through a small shell function.
 
 By default, Workon stores Work in `~/.workon`. Set `WORKON_ROOT=/path/to/root` to use another root.
 
@@ -20,10 +20,10 @@ just wo --intent investigate "Answer a technical question for my manager across 
 just smoke
 ```
 
-Production shell setup:
+Homebrew install:
 
 ```sh
-wo install-shell
+brew install philipesteiff/tap/workon && wo install-shell
 # restart the shell, or source the script printed by the command
 ```
 
@@ -35,14 +35,6 @@ Workon sits above agents and tools. It turns messy engineering intent into a dur
 
 Workon prepares context. Agents use it. Engineers control it.
 
-## Model
-
-```text
-intent -> work folder -> agent files -> agent session -> preserved context
-```
-
-Commands are shortcuts. Natural text starts Work. The engineer selects the intent profile.
-
 ## Concepts
 
 **Work**  
@@ -52,10 +44,12 @@ A started unit of engineering intent. Each Work gets a folder:
 ~/.workon/work/<title>/
 ```
 
-The folder holds agent files, notes, outputs, repos, evidence, and artifacts. Work can be switched, resumed, changed, and closed.
+The folder holds agent files, notes, outputs, repos, evidence, and artifacts. 
+
+Work can be switched, changed, and archived.
 
 **Intent**  
-A dynamic instruction profile for a kind of Work: investigate, review, address comments, design, brainstorm.
+A dynamic instruction profile for a kind of Work: investigate, review, address comments, design, brainstorm etc.
 
 Intent adds weight to generated agent instructions. It tells the agent which skills, MCPs, sources, and output style to prefer. Weight means preference, not enforcement. Intent can change as the work changes.
 
@@ -69,53 +63,6 @@ Workon writes instruction files into the Work folder.
 
 They include the goal, current intent, preferred skills, preferred MCPs, attached repos, evidence hygiene, and next steps.
 
-**Context**  
-The current shape of the Work: intent, skills, MCPs, repos, notes, decisions, evidence, and outputs.
-
-```sh
-wo ctx
-wo context
-```
-
-This is intended to become the context surface for changing intent, skills, MCPs, and repos.
-
-Status: placeholder. The command exists, but the editor behavior is not implemented yet.
-
-## First Scenario: Investigate
-
-```sh
-wo --intent investigate "As SE, I want to answer a technical question for my manager that needs investigation across one or more repositories."
-```
-
-Current flow:
-
-```text
-work created: <generated-title>
-intent: investigate
-slug: <generated-slug>
-folder created: ~/.workon/work/<title>/
-files: AGENTS.md, CLAUDE.md
-next: work from the folder
-```
-
-Planned context flow:
-
-```sh
-wo ctx
-```
-
-Future shape:
-
-```text
-context editor opened: intent, skills, MCPs, repos
-repos selected: repo-a, repo-b
-folder created: repos/
-cloned: repos/repo-a
-cloned: repos/repo-b
-updated: AGENTS.md
-updated: CLAUDE.md
-```
-
 The engineer can now launch Claude, Codex, or Cursor from the Work folder with context already injected.
 
 ## CLI Reference
@@ -128,7 +75,7 @@ Open the compact Work list TUI.
 wo
 ```
 
-Use this to switch into existing Work without remembering exact names. The TUI is an inline command panel, not a full-screen app.
+Use this to switch into existing Work without remembering exact names. 
 
 Repository context from the TUI:
 
@@ -301,19 +248,6 @@ Remove behavior:
 Branch names and worktree identity are read from local Git state, so user branch
 changes are reflected without editing `workon.repos.json`.
 
-### `wo ctx`
-
-Show the current status of the context surface.
-
-```sh
-wo ctx
-wo context
-```
-
-Alias: `wo context`.
-
-Intent switching and repository context are available through `wo`, the TUI, and dedicated CLI commands. Skills and MCP weighting live on intent profiles.
-
 ## Principles
 
 - Context-first
@@ -328,5 +262,4 @@ Intent switching and repository context are available through `wo`, the TUI, and
 - Not an AI IDE
 - Not another chat app
 - Not the agent
-
-Workon prepares the context agents need to work well.
+- Not an terminal app

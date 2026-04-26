@@ -1,15 +1,7 @@
-# AGENTS
-
-How AI agents should work in this repo.
-
 ## Principles
 
 - Be concise.
-- Prefer sharp wording over more wording.
-- Make the smallest useful next step.
-- Do not expand scope or product complexity without asking.
 - Keep artifacts readable by humans first.
-- Challenge vague ideas and state trade-offs briefly.
 - Use relevant skills when necessary.
 
 ## Product Shape
@@ -18,8 +10,6 @@ How AI agents should work in this repo.
 - Engineers control the flow.
 - Tools and agents consume context through adapters.
 - Start with the CLI.
-- Treat lifecycle steps as optional moments.
-- Prefer portability before integration depth.
 
 ## Interface Architecture
 
@@ -108,13 +98,3 @@ How AI agents should work in this repo.
 - Verify user-facing changes from a disposable temp directory, not the repo root.
 - Report commands run, expected result, actual result, and any gap.
 - Do not claim completion without verification.
-
-## Collaboration
-
-- Ask when a decision changes product direction.
-- Keep decisions visible.
-- Keep docs short enough to stay alive.
-- Use simple language; avoid filler and hype.
-- Repository context worktrees use raw `git worktree` through `src/infrastructure/git_worktree/`; do not add Worktrunk as a product dependency for this path.
-- Commit only when asked.
-- Keep commits narrow and named for the user-facing change.
