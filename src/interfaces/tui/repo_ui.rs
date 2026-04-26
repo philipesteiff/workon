@@ -1,5 +1,3 @@
-use std::path::{Path, PathBuf};
-
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::{Frame, Line, Span, Stylize};
 use ratatui::style::Style;
@@ -7,14 +5,15 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::animation::{AnimationTarget, RenderRegions};
 use super::components::{panel_block_with_title, section, status_badge};
-use super::repo_state::{RepoCatalogRow, RepoOperation, RepoPane, RepoStatus};
-use super::state::{TraceKind, TuiState};
+use super::repo_rows::{catalog_header_row, catalog_row, catalog_row_detail, compact_path};
+use super::repo_state::{RepoPane, RepoPickerState, RepoStatus};
+use super::state::TraceKind;
 use super::theme;
 
 pub(super) fn render_repo_context(
     frame: &mut Frame<'_>,
     area: Rect,
-    state: &TuiState,
+    repo: &RepoPickerState,
     regions: &mut Option<&mut RenderRegions>,
 ) {
     if let Some(regions) = regions.as_deref_mut() {
@@ -24,33 +23,19 @@ pub(super) fn render_repo_context(
     if area.width >= 96 {
         let [repositories, workspaces] =
             Layout::horizontal([Constraint::Percentage(76), Constraint::Fill(1)]).areas(area);
-        render_repo_catalog_panel(frame, repositories, state);
-        render_workspace_side_panels(frame, workspaces, state);
+        render_repo_catalog_panel(frame, repositories, repo);
+        render_workspace_side_panels(frame, workspaces, repo);
     } else {
         let [repositories, workspaces] =
             Layout::vertical([Constraint::Percentage(58), Constraint::Fill(1)]).areas(area);
-        render_repo_catalog_panel(frame, repositories, state);
-        render_workspace_side_panels(frame, workspaces, state);
+        render_repo_catalog_panel(frame, repositories, repo);
+        render_workspace_side_panels(frame, workspaces, repo);
     }
 }
 
-pub(super) fn repo_activity_message(
-    action: RepoOperation,
-    current: usize,
-    total: usize,
-    repository: &str,
-) -> String {
-    match action {
-        RepoOperation::Add => format!("{current}/{total} Cloning {repository}"),
-        RepoOperation::Link => format!("{current}/{total} Linking {repository}"),
-        RepoOperation::Remove => format!("{current}/{total} Removing {repository}"),
-        RepoOperation::Refresh => format!("{current}/{total} Refreshing {repository}"),
-    }
-}
-
-fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let rows = state.repo.catalog_rows();
-    let catalog_focused = state.repo.focus == RepoPane::Catalog;
+fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, repo: &RepoPickerState) {
+    let rows = repo.catalog_rows();
+    let catalog_focused = repo.focus == RepoPane::Catalog;
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled("REPOSITORIES", theme::style_panel_title()),
@@ -72,7 +57,7 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
         (catalog, Some(log))
     };
 
-    let mut lines = vec![repo_catalog_context_line(state, rows.is_empty())];
+    let mut lines = vec![repo_catalog_context_line(repo, rows.is_empty())];
 
     if !rows.is_empty() {
         lines.push(catalog_header_row(catalog_area.width));
@@ -83,11 +68,11 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
         } else {
             line_budget
         };
-        let start = scroll_start(state.repo.selected_catalog, rows.len(), visible_rows);
-        let workspace = state.repo.selected_workspace_path();
+        let start = scroll_start(repo.selected_catalog, rows.len(), visible_rows);
+        let workspace = repo.selected_workspace_path();
         for (index, row) in rows.iter().enumerate().skip(start).take(visible_rows) {
-            lines.push(catalog_row(row, state, index, catalog_area.width));
-            if reserve_detail && index == state.repo.selected_catalog {
+            lines.push(catalog_row(row, repo, index, catalog_area.width));
+            if reserve_detail && index == repo.selected_catalog {
                 lines.push(catalog_row_detail(
                     row,
                     catalog_area.width,
@@ -100,16 +85,16 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
     frame.render_widget(Paragraph::new(lines), catalog_area);
 
     if let Some(log_area) = log_area {
-        render_repo_log(frame, log_area, state);
+        render_repo_log(frame, log_area, repo);
     }
 }
 
-fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static> {
-    if matches!(state.repo.status, RepoStatus::Loading { .. }) {
+fn repo_catalog_context_line(repo: &RepoPickerState, rows_empty: bool) -> Line<'static> {
+    if matches!(repo.status, RepoStatus::Loading { .. }) {
         return Line::from("Repository sources are loading.".dim());
     }
 
-    if state.repo.requires_workspace_setup() {
+    if repo.requires_workspace_setup() {
         return Line::from(vec![
             status_badge("REQUIRED", theme::style_status_warn()),
             Span::raw(" "),
@@ -120,11 +105,11 @@ fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static
         ]);
     }
 
-    if matches!(state.repo.status, RepoStatus::Failed { .. }) {
+    if matches!(repo.status, RepoStatus::Failed { .. }) {
         return Line::from("GitHub is unavailable; local and attached repos remain usable.".dim());
     }
 
-    if state.repo.force_remove && !state.repo.pending_remove.is_empty() {
+    if repo.force_remove && !repo.pending_remove.is_empty() {
         return Line::from(vec![
             status_badge("FORCE", theme::style_status_warn()),
             Span::raw(" "),
@@ -136,18 +121,18 @@ fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static
     }
 
     if rows_empty {
-        return if state.repo.filter.is_empty() {
+        return if repo.filter.is_empty() {
             Line::from("No repositories are available from configured sources.".dim())
         } else {
-            Line::from(format!("No repositories match `{}`.", state.repo.filter).dim())
+            Line::from(format!("No repositories match `{}`.", repo.filter).dim())
         };
     }
 
-    if !state.repo.filter.is_empty() {
-        return Line::from(format!("Showing repositories matching `{}`.", state.repo.filter).dim());
+    if !repo.filter.is_empty() {
+        return Line::from(format!("Showing repositories matching `{}`.", repo.filter).dim());
     }
 
-    match state.repo.selected_workspace_path() {
+    match repo.selected_workspace_path() {
         Some(path) => Line::from(format!(
             "GitHub create in {}; local link in place.",
             compact_path(&path)
@@ -156,20 +141,20 @@ fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static
     }
 }
 
-fn render_workspace_side_panels(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_workspace_side_panels(frame: &mut Frame<'_>, area: Rect, repo: &RepoPickerState) {
     let [add_path, configured_paths] =
         Layout::vertical([Constraint::Length(7), Constraint::Fill(1)]).areas(area);
-    render_add_path_panel(frame, add_path, state);
-    render_configured_paths_panel(frame, configured_paths, state);
+    render_add_path_panel(frame, add_path, repo);
+    render_configured_paths_panel(frame, configured_paths, repo);
 }
 
-fn render_add_path_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let focused = state.repo.focus == RepoPane::AddPath;
+fn render_add_path_panel(frame: &mut Frame<'_>, area: Rect, repo: &RepoPickerState) {
+    let focused = repo.focus == RepoPane::AddPath;
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled("ADD PATH", theme::style_panel_title()),
         Span::raw(" "),
-        if state.repo.requires_workspace_setup() {
+        if repo.requires_workspace_setup() {
             status_badge("REQUIRED", theme::style_status_warn())
         } else {
             Span::raw("")
@@ -183,7 +168,7 @@ fn render_add_path_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Line::from(""),
         Line::from(vec![
             Span::styled("paths ", theme::style_command()),
-            Span::styled(workspace_input_label(state), workspace_input_style(state)),
+            Span::styled(workspace_input_label(repo), workspace_input_style(repo)),
         ]),
     ];
     frame.render_widget(
@@ -192,16 +177,13 @@ fn render_add_path_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     );
 }
 
-fn render_configured_paths_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let focused = state.repo.focus == RepoPane::ConfiguredPaths;
+fn render_configured_paths_panel(frame: &mut Frame<'_>, area: Rect, repo: &RepoPickerState) {
+    let focused = repo.focus == RepoPane::ConfiguredPaths;
     let title = Line::from(vec![
         Span::raw(" "),
         Span::styled("CONFIGURED PATHS", theme::style_panel_title()),
         Span::raw(" "),
-        Span::styled(
-            state.repo.workspaces.len().to_string(),
-            theme::style_command(),
-        ),
+        Span::styled(repo.workspaces.len().to_string(), theme::style_command()),
         Span::raw(" "),
         Span::styled(focus_label(focused), theme::style_command()),
     ]);
@@ -209,36 +191,30 @@ fn render_configured_paths_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiS
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let lines = if state.repo.workspaces.is_empty() {
+    let lines = if repo.workspaces.is_empty() {
         vec![Line::from("No repo workspaces configured.".dim())]
     } else {
         let visible_rows = inner.height as usize;
-        let start = scroll_start(
-            state.repo.selected_workspace,
-            state.repo.workspaces.len(),
-            visible_rows,
-        );
-        state
-            .repo
-            .workspaces
+        let start = scroll_start(repo.selected_workspace, repo.workspaces.len(), visible_rows);
+        repo.workspaces
             .iter()
             .enumerate()
             .skip(start)
             .take(visible_rows)
             .map(|(index, workspace)| {
-                workspace_row(state, workspace.path.display().to_string(), index, focused)
+                workspace_row(repo, workspace.path.display().to_string(), index, focused)
             })
             .collect()
     };
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn render_repo_log(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn render_repo_log(frame: &mut Frame<'_>, area: Rect, repo: &RepoPickerState) {
     let mut lines = vec![section("OPERATION LOG")];
-    if state.repo.logs.is_empty() {
+    if repo.logs.is_empty() {
         lines.push(Line::from("No repository operations yet.".dim()));
     } else {
-        lines.extend(state.repo.logs.iter().rev().map(|event| {
+        lines.extend(repo.logs.iter().rev().map(|event| {
             Line::from(vec![
                 trace_badge(event.kind),
                 Span::raw(" "),
@@ -257,382 +233,13 @@ fn scroll_start(selected: usize, total: usize, visible_rows: usize) -> usize {
     selected.saturating_add(1).saturating_sub(visible_rows)
 }
 
-struct RepoRowRenderData {
-    name: String,
-    source: &'static str,
-    branch: String,
-    attached_to_work: bool,
-    pending_add: bool,
-    pending_remove: bool,
-    force_remove: bool,
-}
-
-fn catalog_repo_row(data: RepoRowRenderData, selected: bool, width: u16) -> Line<'static> {
-    let marker = if data.pending_remove && data.force_remove {
-        "[!]"
-    } else if data.pending_remove {
-        "[-]"
-    } else if data.pending_add || data.attached_to_work {
-        "[x]"
-    } else {
-        "[ ]"
-    };
-    let status = if data.pending_add {
-        "ADD"
-    } else if data.pending_remove && data.force_remove {
-        "FORCE"
-    } else if data.pending_remove {
-        "REMOVE"
-    } else if data.attached_to_work && data.source != "attached" {
-        "ATTACHED"
-    } else {
-        ""
-    };
-    let anchor = if selected { ">>" } else { "  " };
-    let columns = repo_columns(usize::from(width));
-    let mut spans = vec![
-        Span::styled(anchor.to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(marker.to_string(), theme::style_muted_text()),
-        Span::raw(" "),
-    ];
-    push_column(
-        &mut spans,
-        &data.name,
-        columns.name,
-        theme::style_primary_text(),
-        Truncate::End,
-    );
-    push_column(
-        &mut spans,
-        data.source,
-        columns.source,
-        theme::style_meta_value(),
-        Truncate::End,
-    );
-    push_column(
-        &mut spans,
-        &data.branch,
-        columns.branch,
-        theme::style_meta_value(),
-        Truncate::End,
-    );
-    push_column(
-        &mut spans,
-        status,
-        columns.status,
-        theme::style_command(),
-        Truncate::End,
-    );
-    Line::from(spans)
-}
-
-fn catalog_header_row(width: u16) -> Line<'static> {
-    let columns = repo_columns(usize::from(width));
-    let mut spans = vec![
-        Span::styled("  ".to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled("   ".to_string(), theme::style_muted_text()),
-        Span::raw(" "),
-    ];
-    push_column(
-        &mut spans,
-        "REPOSITORY",
-        columns.name,
-        theme::style_muted_text(),
-        Truncate::End,
-    );
-    push_column(
-        &mut spans,
-        "SOURCE",
-        columns.source,
-        theme::style_muted_text(),
-        Truncate::End,
-    );
-    push_column(
-        &mut spans,
-        "BRANCH",
-        columns.branch,
-        theme::style_muted_text(),
-        Truncate::End,
-    );
-    push_column(
-        &mut spans,
-        "STATE",
-        columns.status,
-        theme::style_muted_text(),
-        Truncate::End,
-    );
-    Line::from(spans)
-}
-
-fn catalog_row(row: &RepoCatalogRow, state: &TuiState, index: usize, width: u16) -> Line<'static> {
-    match row {
-        RepoCatalogRow::GitHub(repository) => catalog_repo_row(
-            RepoRowRenderData {
-                name: repository.name_with_owner.clone(),
-                source: "github",
-                branch: repository.default_branch.clone(),
-                attached_to_work: state.is_repository_selected(&repository.name_with_owner),
-                pending_add: state.repo.pending_add.contains(&repository.name_with_owner),
-                pending_remove: state
-                    .repo
-                    .pending_remove
-                    .contains(&repository.name_with_owner),
-                force_remove: state.repo.force_remove,
-            },
-            index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
-            width,
-        ),
-        RepoCatalogRow::Local(candidate) => catalog_repo_row(
-            RepoRowRenderData {
-                name: candidate.name_with_owner.clone(),
-                source: "local",
-                branch: candidate.branch.clone(),
-                attached_to_work: state.is_repository_selected(&candidate.name_with_owner),
-                pending_add: state.repo.is_local_candidate_selected(&candidate.path),
-                pending_remove: state
-                    .repo
-                    .pending_remove
-                    .contains(&candidate.name_with_owner),
-                force_remove: state.repo.force_remove,
-            },
-            index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
-            width,
-        ),
-        RepoCatalogRow::Attached(repository) => catalog_repo_row(
-            RepoRowRenderData {
-                name: repository.name_with_owner.clone(),
-                source: "attached",
-                branch: repository.branch.clone(),
-                attached_to_work: state.is_repository_selected(&repository.name_with_owner),
-                pending_add: false,
-                pending_remove: state
-                    .repo
-                    .pending_remove
-                    .contains(&repository.name_with_owner),
-                force_remove: state.repo.force_remove,
-            },
-            index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
-            width,
-        ),
-    }
-}
-
-fn catalog_row_detail(row: &RepoCatalogRow, width: u16, workspace: Option<&Path>) -> Line<'static> {
-    let detail = match row {
-        RepoCatalogRow::GitHub(repository) => DetailFields {
-            key: "create",
-            value: workspace
-                .map(compact_path)
-                .unwrap_or_else(|| "workspace not set".to_string()),
-            secondary_key: "work",
-            secondary_value: workspace.map(|path| {
-                row_path(
-                    &path.join(
-                        repository
-                            .name_with_owner
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or("repo"),
-                    ),
-                    workspace,
-                )
-            }),
-        },
-        RepoCatalogRow::Local(candidate) => DetailFields {
-            key: "path",
-            value: compact_path(&candidate.path),
-            secondary_key: "work",
-            secondary_value: Some(row_path(&candidate.path, workspace)),
-        },
-        RepoCatalogRow::Attached(repository) => DetailFields {
-            key: "path",
-            value: compact_path(&repository.path),
-            secondary_key: "work",
-            secondary_value: Some(row_path(&repository.path, workspace)),
-        },
-    };
-    let width = usize::from(width);
-    let indent = 7.min(width);
-    let value_width = width.saturating_sub(indent);
-
-    let mut spans = vec![
-        Span::raw(" ".repeat(indent)),
-        Span::styled(detail.key.to_string(), theme::style_command()),
-        Span::raw(" "),
-    ];
-    match detail.secondary_value {
-        Some(secondary_value) => {
-            let fixed_width =
-                detail.key.len() + " ".len() + " | ".len() + detail.secondary_key.len() + " ".len();
-            let available = value_width.saturating_sub(fixed_width);
-            let value_column = detail_value_width(&detail.value, available);
-            let secondary_column = available.saturating_sub(value_column);
-            spans.push(Span::styled(
-                fit_padded(&detail.value, value_column, Truncate::Start),
-                theme::style_muted_text(),
-            ));
-            spans.push(Span::raw(" | "));
-            spans.push(Span::styled(
-                detail.secondary_key.to_string(),
-                theme::style_command(),
-            ));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                fit_text(&secondary_value, secondary_column, Truncate::Start),
-                theme::style_muted_text(),
-            ));
-        }
-        None => spans.push(Span::styled(
-            fit_text(&detail.value, value_width, Truncate::Start),
-            theme::style_muted_text(),
-        )),
-    }
-    Line::from(spans)
-}
-
-struct DetailFields {
-    key: &'static str,
-    value: String,
-    secondary_key: &'static str,
-    secondary_value: Option<String>,
-}
-
-fn detail_value_width(value: &str, available: usize) -> usize {
-    if available == 0 {
-        return 0;
-    }
-    let natural = value.chars().count();
-    let preferred = available.saturating_mul(3) / 5;
-    natural.min(preferred).max(available.min(16))
-}
-
-#[derive(Clone, Copy)]
-struct RepoColumns {
-    name: usize,
-    source: usize,
-    branch: usize,
-    status: usize,
-}
-
-#[derive(Clone, Copy)]
-enum Truncate {
-    Start,
-    End,
-}
-
-fn repo_columns(width: usize) -> RepoColumns {
-    let source = if width >= 52 { 8 } else { 0 };
-    let branch = if width >= 120 {
-        18
-    } else if width >= 64 {
-        14
-    } else {
-        0
-    };
-    let status = if width >= 104 { 8 } else { 0 };
-    let shown_columns = [source, branch, status]
-        .into_iter()
-        .filter(|column| *column > 0)
-        .count();
-    let gaps = shown_columns;
-    let fixed = 7 + source + branch + status + gaps;
-    let name = width.saturating_sub(fixed).max(12);
-
-    RepoColumns {
-        name,
-        source,
-        branch,
-        status,
-    }
-}
-
-fn push_column(
-    spans: &mut Vec<Span<'static>>,
-    value: &str,
-    width: usize,
-    style: Style,
-    truncation: Truncate,
-) {
-    if width == 0 {
-        return;
-    }
-    if spans.len() > 4 {
-        spans.push(Span::raw(" "));
-    }
-    spans.push(Span::styled(fit_padded(value, width, truncation), style));
-}
-
-fn fit_padded(value: &str, width: usize, truncation: Truncate) -> String {
-    let fitted = fit_text(value, width, truncation);
-    format!("{fitted:<width$}")
-}
-
-fn fit_text(value: &str, width: usize, truncation: Truncate) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    if value.chars().count() <= width {
-        return value.to_string();
-    }
-    if width <= 3 {
-        return ".".repeat(width);
-    }
-
-    let keep = width - 3;
-    match truncation {
-        Truncate::Start => {
-            let tail = value
-                .chars()
-                .rev()
-                .take(keep)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<String>();
-            format!("...{tail}")
-        }
-        Truncate::End => {
-            let head = value.chars().take(keep).collect::<String>();
-            format!("{head}...")
-        }
-    }
-}
-
-fn row_path(path: &Path, workspace: Option<&Path>) -> String {
-    if let Some(workspace) = workspace {
-        if let Ok(relative) = path.strip_prefix(workspace) {
-            if relative.as_os_str().is_empty() {
-                return ".".to_string();
-            }
-            return format!("./{}", relative.display());
-        }
-    }
-    compact_path(path)
-}
-
-fn compact_path(path: &Path) -> String {
-    if let Some(home) = home_path() {
-        if let Ok(relative) = path.strip_prefix(&home) {
-            if relative.as_os_str().is_empty() {
-                return "~".to_string();
-            }
-            return format!("~/{}", relative.display());
-        }
-    }
-
-    path.display().to_string()
-}
-
-fn home_path() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-}
-
-fn workspace_row(state: &TuiState, path: String, index: usize, focused: bool) -> Line<'static> {
-    let selected = index == state.repo.selected_workspace;
+fn workspace_row(
+    repo: &RepoPickerState,
+    path: String,
+    index: usize,
+    focused: bool,
+) -> Line<'static> {
+    let selected = index == repo.selected_workspace;
     let anchor = if selected && focused { ">>" } else { "  " };
     let marker = if selected { "[x]" } else { "[ ]" };
     let path_style = if selected {
@@ -649,16 +256,16 @@ fn workspace_row(state: &TuiState, path: String, index: usize, focused: bool) ->
     ])
 }
 
-fn workspace_input_label(state: &TuiState) -> String {
-    if state.repo.workspace_input().is_empty() {
+fn workspace_input_label(repo: &RepoPickerState) -> String {
+    if repo.workspace_input().is_empty() {
         "<type folder path>".to_string()
     } else {
-        state.repo.workspace_input().to_string()
+        repo.workspace_input().to_string()
     }
 }
 
-fn workspace_input_style(state: &TuiState) -> ratatui::style::Style {
-    if state.repo.workspace_input().is_empty() {
+fn workspace_input_style(repo: &RepoPickerState) -> Style {
+    if repo.workspace_input().is_empty() {
         theme::style_muted_text()
     } else {
         theme::style_meta_value()
@@ -680,5 +287,50 @@ fn focus_label(focused: bool) -> &'static str {
         "FOCUS"
     } else {
         ""
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::{AttachedRepository, AvailableRepository, RepositoryWorkspace};
+    use crate::interfaces::tui::repo_state::{RepoCatalogRow, RepoPickerState};
+
+    use super::catalog_row;
+
+    #[test]
+    fn catalog_rows_render_from_repo_picker_state_without_full_tui_state() {
+        let mut picker = RepoPickerState::default();
+        picker.enter_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            vec![AvailableRepository {
+                name_with_owner: "openai/api".to_string(),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/api".to_string(),
+                ssh_url: "git@github.com:openai/api.git".to_string(),
+            }],
+            Vec::new(),
+            vec![AttachedRepository {
+                name_with_owner: "openai/workon".to_string(),
+                branch: "workon/billing-retry-audit".to_string(),
+                path: "/tmp/workon/.workon/work/billing-retry-audit/repos/openai__workon".into(),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/workon".to_string(),
+            }],
+            vec![RepositoryWorkspace {
+                path: "/tmp/repos".into(),
+            }],
+        );
+
+        let row = RepoCatalogRow::GitHub(AvailableRepository {
+            name_with_owner: "openai/api".to_string(),
+            default_branch: "main".to_string(),
+            url: "https://github.com/openai/api".to_string(),
+            ssh_url: "git@github.com:openai/api.git".to_string(),
+        });
+
+        let rendered = catalog_row(&row, &picker, 0, 96);
+
+        assert_eq!(rendered.spans[4].content.trim(), "openai/api");
     }
 }

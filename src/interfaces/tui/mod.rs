@@ -1,8 +1,10 @@
 mod animation;
 mod components;
+mod control_panel;
 mod keymap;
 mod keys;
 mod repo_jobs;
+mod repo_rows;
 mod repo_state;
 mod repo_ui;
 mod state;

@@ -11,15 +11,13 @@ use crate::domain::{AttachedRepository, WorkSummary};
 use super::animation::{AnimationTarget, RenderRegions};
 use super::components::{
     key, label_value, panel_block, panel_block_with_activity, panel_block_with_title, render_popup,
-    section, status_badge, top_border, TitleActivity,
+    section, status_badge, top_border,
 };
-use super::repo_state::{RepoPane, RepoStatus};
-use super::repo_ui::{render_repo_context, repo_activity_message};
+use super::control_panel::{self, TraceVisibility};
+use super::repo_state::RepoPane;
+use super::repo_ui::render_repo_context;
 use super::state::{Toast, ToastKind, TraceKind, TuiMode, TuiState};
 use super::theme;
-
-const CONTROL_PANEL_MAX_WIDTH: u16 = 160;
-const CONTROL_PANEL_SIDE_MARGIN: u16 = 2;
 
 #[cfg(test)]
 pub(super) fn render(frame: &mut Frame<'_>, state: &TuiState) {
@@ -35,7 +33,11 @@ pub(super) fn render_for_animation(frame: &mut Frame<'_>, state: &TuiState) -> R
 fn render_inner(frame: &mut Frame<'_>, state: &TuiState, mut regions: Option<&mut RenderRegions>) {
     let area = frame.area();
     let dialog = control_panel_rect(area, state);
-    let block = panel_block_with_activity(control_title(state), true, title_activity(state));
+    let block = panel_block_with_activity(
+        control_panel::title(state.mode),
+        true,
+        control_panel::title_activity(state.mode, &state.repo.status, state.repo.activity_frame),
+    );
     let inner = block.inner(dialog);
     frame.render_widget(Clear, dialog);
     frame.render_widget(block, dialog);
@@ -49,32 +51,6 @@ fn render_inner(frame: &mut Frame<'_>, state: &TuiState, mut regions: Option<&mu
     render_overlay(frame, area, state, &mut regions);
 }
 
-fn control_title(state: &TuiState) -> &'static str {
-    if state.mode == TuiMode::Repos {
-        "WORKON // CONTROL // REPO"
-    } else {
-        "WORKON // CONTROL"
-    }
-}
-
-fn title_activity(state: &TuiState) -> Option<TitleActivity> {
-    match &state.repo.status {
-        RepoStatus::Loading { message } if state.mode == TuiMode::Repos => Some(
-            TitleActivity::loading(message.clone(), state.repo.activity_frame),
-        ),
-        RepoStatus::Applying {
-            action,
-            current,
-            total,
-            repository,
-        } if state.mode == TuiMode::Repos => Some(TitleActivity::loading(
-            repo_activity_message(*action, *current, *total, repository),
-            state.repo.activity_frame,
-        )),
-        _ => None,
-    }
-}
-
 fn render_workspace(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -86,7 +62,7 @@ fn render_workspace(
     }
 
     if state.mode == TuiMode::Repos {
-        render_repo_context(frame, area, state, regions);
+        render_repo_context(frame, area, &state.repo, regions);
         return;
     }
 
@@ -810,19 +786,7 @@ fn toast_badge(kind: ToastKind) -> Span<'static> {
 }
 
 fn control_panel_rect(area: Rect, state: &TuiState) -> Rect {
-    if area.width < 44 || area.height < 12 {
-        return area;
-    }
-
-    let width = area
-        .width
-        .saturating_sub(CONTROL_PANEL_SIDE_MARGIN)
-        .min(CONTROL_PANEL_MAX_WIDTH);
-    let base_height = 28;
-    let trace_extra = if state.trace_visible { 5 } else { 0 };
-    let height = (base_height + trace_extra).min(area.height.saturating_sub(2));
-
-    centered_area(area, width, height)
+    control_panel::rect(area, TraceVisibility::from(state.trace_visible))
 }
 
 fn mode_style(mode: TuiMode) -> Style {
@@ -833,25 +797,6 @@ fn mode_style(mode: TuiMode) -> Style {
         }
         TuiMode::List => theme::style_status_ok(),
     }
-}
-
-fn centered_area(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width);
-    let height = height.min(area.height);
-    let [_, center, _] = Layout::vertical([
-        Constraint::Length((area.height - height) / 2),
-        Constraint::Length(height),
-        Constraint::Fill(1),
-    ])
-    .areas(area);
-    let [_, center, _] = Layout::horizontal([
-        Constraint::Length((area.width - width) / 2),
-        Constraint::Length(width),
-        Constraint::Fill(1),
-    ])
-    .areas(center);
-
-    center
 }
 
 fn mode_label(mode: TuiMode) -> &'static str {
@@ -1089,6 +1034,22 @@ mod tests {
         assert_eq!(panel.width, 158);
         assert_eq!(panel.height, 28);
         assert_eq!(panel.x, 1);
+    }
+
+    #[test]
+    fn control_panel_shell_can_be_computed_without_full_tui_state() {
+        let panel = crate::interfaces::tui::control_panel::rect(
+            Rect::new(0, 0, 160, 36),
+            crate::interfaces::tui::control_panel::TraceVisibility::Hidden,
+        );
+
+        assert_eq!(panel.width, 158);
+        assert_eq!(panel.height, 28);
+        assert_eq!(panel.x, 1);
+        assert_eq!(
+            crate::interfaces::tui::control_panel::title(TuiMode::Repos),
+            "WORKON // CONTROL // REPO"
+        );
     }
 
     #[test]

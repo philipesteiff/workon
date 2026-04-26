@@ -368,10 +368,6 @@ impl TuiState {
         self.repo.push_log(kind, message);
     }
 
-    pub(super) fn is_repository_selected(&self, name_with_owner: &str) -> bool {
-        self.repo.is_selected(name_with_owner)
-    }
-
     pub(super) fn filtered_indices(&self) -> Vec<usize> {
         let query = self.filter.trim().to_ascii_lowercase();
         self.works
