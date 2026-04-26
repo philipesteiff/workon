@@ -1,6 +1,7 @@
 use crate::application::Command;
 use crate::interfaces::shell::development_manifest_from_env;
 use crate::shared::error::{Result, WorkonError};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CliRequest {
@@ -163,6 +164,44 @@ fn list_request(machine: bool, allow_tui: bool) -> CliRequest {
 
 fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliRequest> {
     match input_parts.get(1).map(String::as_str) {
+        Some("workspace") | Some("workspaces") => {
+            parse_repos_workspace_command(input_parts, machine)
+        }
+        Some("discover") => {
+            let query = input_parts[2..].join(" ");
+            if query.trim().is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos discover requires a work query".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::ListRepositoryCandidates { query },
+                machine,
+            ))
+        }
+        Some("link") => {
+            let Some(query) = input_parts.get(2) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos link requires a work query and at least one path".to_string(),
+                });
+            };
+            let paths = input_parts[3..]
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos link requires at least one path".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::LinkWorkRepositories {
+                    query: query.clone(),
+                    paths,
+                },
+                machine,
+            ))
+        }
         Some("list") => {
             let query = input_parts[2..].join(" ");
             if query.trim().is_empty() {
@@ -176,13 +215,14 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
             ))
         }
         Some("add") => {
-            let Some(query) = input_parts.get(2) else {
+            let (workspace, positional) = parse_workspace_option(&input_parts[2..])?;
+            let Some(query) = positional.first() else {
                 return Err(WorkonError::MissingArgument {
                     message: "repos add requires a work query and at least one repository"
                         .to_string(),
                 });
             };
-            let repositories = input_parts[3..].to_vec();
+            let repositories = positional[1..].to_vec();
             if repositories.is_empty() {
                 return Err(WorkonError::MissingArgument {
                     message: "repos add requires at least one repository".to_string(),
@@ -192,6 +232,7 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
                 Command::AddWorkRepositories {
                     query: query.clone(),
                     repositories,
+                    workspace,
                 },
                 machine,
             ))
@@ -225,9 +266,69 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
             ))
         }
         _ => Err(WorkonError::MissingArgument {
-            message: "repos requires list, add, or remove".to_string(),
+            message: "repos requires list, add, link, discover, workspace, or remove".to_string(),
         }),
     }
+}
+
+fn parse_repos_workspace_command(input_parts: &[String], machine: bool) -> Result<CliRequest> {
+    match input_parts.get(2).map(String::as_str) {
+        Some("list") | None => Ok(command_request(Command::ListRepositoryWorkspaces, machine)),
+        Some("add") => {
+            let paths = input_parts
+                .get(3..)
+                .unwrap_or_default()
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            if paths.is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos workspace add requires at least one path".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::AddRepositoryWorkspaces { paths },
+                machine,
+            ))
+        }
+        Some("remove") => {
+            let Some(path) = input_parts.get(3) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos workspace remove requires a path".to_string(),
+                });
+            };
+            Ok(command_request(
+                Command::RemoveRepositoryWorkspace {
+                    path: PathBuf::from(path),
+                },
+                machine,
+            ))
+        }
+        _ => Err(WorkonError::MissingArgument {
+            message: "repos workspace requires list, add, or remove".to_string(),
+        }),
+    }
+}
+
+fn parse_workspace_option(parts: &[String]) -> Result<(Option<PathBuf>, Vec<String>)> {
+    let mut workspace = None;
+    let mut positional = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        if parts[index] == "--workspace" {
+            let Some(value) = parts.get(index + 1) else {
+                return Err(WorkonError::MissingArgument {
+                    message: "--workspace requires a path".to_string(),
+                });
+            };
+            workspace = Some(PathBuf::from(value));
+            index += 2;
+        } else {
+            positional.push(parts[index].clone());
+            index += 1;
+        }
+    }
+    Ok((workspace, positional))
 }
 
 #[cfg(test)]

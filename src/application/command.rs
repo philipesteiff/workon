@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use crate::domain::{
-    ArchivedWork, ContextStatus, CreatedWork, OpenedWork, RepositoryCatalog,
-    RepositoryContextChange, WorkList, WorkRepositoryList,
+    ArchivedWork, ContextStatus, CreatedWork, OpenedWork, RepositoryCandidateList,
+    RepositoryCatalog, RepositoryContextChange, RepositoryWorkspaceList, WorkList,
+    WorkRepositoryList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +15,10 @@ pub enum Command {
     AddWorkRepositories {
         query: String,
         repositories: Vec<String>,
+        workspace: Option<PathBuf>,
+    },
+    AddRepositoryWorkspaces {
+        paths: Vec<PathBuf>,
     },
     CreateWork {
         goal: String,
@@ -24,6 +29,10 @@ pub enum Command {
     },
     InstallShell,
     ListGitHubRepositories,
+    ListRepositoryCandidates {
+        query: String,
+    },
+    ListRepositoryWorkspaces,
     ListWorkRepositories {
         query: String,
     },
@@ -34,6 +43,13 @@ pub enum Command {
     },
     OpenWork {
         query: String,
+    },
+    LinkWorkRepositories {
+        query: String,
+        paths: Vec<PathBuf>,
+    },
+    RemoveRepositoryWorkspace {
+        path: PathBuf,
     },
     RemoveWorkRepositories {
         query: String,
@@ -47,6 +63,8 @@ pub enum CommandOutput {
     WorkArchived(ArchivedWork),
     Context(ContextStatus),
     RepositoryCatalog(RepositoryCatalog),
+    RepositoryCandidates(RepositoryCandidateList),
+    RepositoryWorkspaces(RepositoryWorkspaceList),
     ShellInstalled {
         label: String,
         script_path: PathBuf,

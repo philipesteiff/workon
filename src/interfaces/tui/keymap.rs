@@ -214,16 +214,36 @@ impl TuiState {
                 self.toast = Some(toast);
                 TuiAction::None
             }
+            RepoPickerAction::AddWorkspaces { work_slug, paths } => {
+                TuiAction::AddRepoWorkspaces { work_slug, paths }
+            }
+            RepoPickerAction::RemoveWorkspace { work_slug, path } => {
+                TuiAction::RemoveRepoWorkspace { work_slug, path }
+            }
+            RepoPickerAction::CloseWorkspaceDialog { work_slug, refresh } => {
+                if refresh {
+                    TuiAction::RefreshRepoIndex { work_slug }
+                } else if self.repo.requires_workspace_setup() {
+                    self.restore_queue_mode();
+                    TuiAction::None
+                } else {
+                    TuiAction::None
+                }
+            }
             RepoPickerAction::Apply {
                 work_slug,
                 add,
+                link,
                 remove,
                 force_remove,
+                workspace,
             } => TuiAction::ApplyRepoChanges {
                 work_slug,
                 add,
+                link,
                 remove,
                 force_remove,
+                workspace,
             },
         }
     }

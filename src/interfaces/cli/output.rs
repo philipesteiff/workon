@@ -33,6 +33,40 @@ pub(crate) fn render_output(
                 )?;
             }
         }
+        CommandOutput::RepositoryCandidates(candidates) => {
+            writeln!(
+                writer,
+                "repository candidates for work: {}",
+                candidates.work.title
+            )?;
+            if candidates.candidates.is_empty() {
+                writeln!(
+                    writer,
+                    "No repository candidates found in configured workspaces."
+                )?;
+            } else {
+                for candidate in &candidates.candidates {
+                    writeln!(
+                        writer,
+                        "{}  {}  {}",
+                        candidate.name_with_owner,
+                        candidate.branch,
+                        candidate.path.display()
+                    )?;
+                }
+            }
+        }
+        CommandOutput::RepositoryWorkspaces(list) => {
+            if list.workspaces.is_empty() {
+                writeln!(writer, "No repository workspaces configured.")?;
+                writeln!(writer, "Add one with: wo repos workspace add <path>...")?;
+            } else {
+                writeln!(writer, "repository workspaces:")?;
+                for workspace in &list.workspaces {
+                    writeln!(writer, "{}", workspace.path.display())?;
+                }
+            }
+        }
         CommandOutput::ShellInstalled {
             label,
             script_path,
@@ -222,11 +256,19 @@ Usage:
   wo <work-query>            open matching work
   wo archive <work-query>    archive matching work
   wo repos list <work-query>
-                             list attached GitHub repos
-  wo repos add <work> <owner/repo>...
-                             attach GitHub repos as worktrees
+                             list attached repositories
+  wo repos discover <work-query>
+                             discover repo candidates from configured workspaces
+  wo repos add [--workspace <path>] <work> <owner/repo>...
+                             create/link GitHub repos from a configured workspace
+  wo repos link <work> <path>...
+                             link existing repo worktrees or checkouts
+  wo repos workspace add <path>...
+                             configure repo workspaces for discovery and creation
+  wo repos workspace list|remove
+                             manage configured repo workspaces
   wo repos remove [--force] <work> <owner/repo>...
-                             remove attached repo worktrees
+                             remove attached repo links
   wo repos                   show GitHub repo context help
   wo --intent <id> \"<goal>\"  create work
   wo ctx                     print context status
@@ -246,26 +288,39 @@ Env:
 
 pub(crate) fn write_repos_help(writer: &mut dyn Write) -> Result<()> {
     writer.write_all(
-        b"wo repos - attach GitHub repositories to a Work as git worktrees
+        b"wo repos - link repositories to a Work
 
 Usage:
   wo repos list <work-query>
-      List GitHub repositories attached to the matching Work.
+      List repositories attached to the matching Work.
 
-  wo repos add <work-query> <owner/repo>...
-      Attach one or more GitHub repositories to the matching Work.
-      Repositories are cached as bare repos, then checked out under:
-      <work>/repos/<owner>__<repo>
+  wo repos discover <work-query>
+      Discover Git working trees under configured repo workspaces.
+
+  wo repos add [--workspace <path>] <work-query> <owner/repo>...
+      Create one or more GitHub repositories in a configured repo workspace,
+      then expose them under <work>/repos/ with symlinks.
+
+  wo repos link <work-query> <path>...
+      Link existing Git working trees or worktrees to the matching Work.
+
+  wo repos workspace list
+      List folders Workon may scan and create repos in.
+
+  wo repos workspace add <path>...
+      Add one or more repo workspaces. Workon creates repos only inside configured workspaces.
+
+  wo repos workspace remove <path>
+      Remove a repo workspace from discovery and creation.
 
   wo repos remove [--force] <work-query> <owner/repo>...
-      Remove one or more attached repository worktrees.
-      Branches and bare repo caches are kept.
-      Use --force only when you accept losing dirty worktree changes.
+      Remove one or more attached repository links.
+      The underlying checkout or worktree is kept.
 
 TUI:
   wo
-      Highlight a Work, press /r, use the left GitHub catalog and right selected panel,
-      press ! to arm force removal, then press enter to apply pending changes.
+      Highlight a Work, press /r, select GitHub or local repositories, tab to
+      choose the creation path when multiple workspaces exist, then press enter.
 
 Requires:
   gh auth login

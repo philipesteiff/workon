@@ -134,14 +134,14 @@ Repository context from the TUI:
 
 ```text
 /r       open repository context for the highlighted Work
-tab      switch between GitHub catalog and selected repos
+tab      switch between repository sources, creation path, and selected repos
 type     filter repositories
 space    select or remove one or more repositories
-enter    apply pending add/remove changes
+enter    apply pending add/link/remove changes
 esc      return to the Work queue
 ```
 
-The left panel lists repositories from the active `gh` account. The right panel lists repositories selected for the highlighted Work, including pending additions and removals. Loading the view shows a loader while `gh` returns repositories. Applying changes shows per-repo progress and an operation log. Adding a repo creates an initial Work-specific branch named `workon/<work-slug>` and attaches it as a git worktree under the Work folder.
+The left panel lists repositories from the active `gh` account and local repositories discovered in configured repo workspaces. Selecting a GitHub repo creates it in the selected repo workspace and links it. Selecting a local repo links that existing checkout directly. The right panel lists repositories selected for the highlighted Work, including pending additions and removals. Loading the view shows a loader while repositories are discovered. Applying changes shows per-repo progress and an operation log.
 
 ### `wo list`
 
@@ -203,12 +203,13 @@ Archived Works no longer appear in `wo` and cannot be opened by normal Work quer
 
 ### `wo repos`
 
-Attach GitHub repositories to a Work as git worktrees.
+Link repositories to a Work.
 
 Prerequisites:
 
 - `gh` installed and authenticated
 - `git` installed
+- at least one repo workspace configured for GitHub repo creation
 
 List attached repositories:
 
@@ -216,11 +217,34 @@ List attached repositories:
 wo repos list billing
 ```
 
+Configure repo workspaces:
+
+```sh
+wo repos workspace add ~/Projects/worktrees ~/Code/client-worktrees
+wo repos workspace list
+wo repos workspace remove ~/Projects/worktrees
+```
+
+Repo workspaces are user-approved folders Workon may scan and create repos in. Workon does not create hidden real checkouts under `~/.workon`; it only creates inside configured repo workspaces.
+
+Discover existing worktrees/checkouts in configured repo workspaces:
+
+```sh
+wo repos discover billing
+```
+
+Link an existing checkout or worktree:
+
+```sh
+wo repos link billing ~/Projects/worktrees/GalleryApp.git.feature-auth
+```
+
 Add one or more repositories:
 
 ```sh
 wo repos add billing openai/workon
 wo repos add billing openai/workon openai/another-repo
+wo repos add --workspace ~/Projects/worktrees billing openai/workon
 ```
 
 Remove one or more repositories:
@@ -232,20 +256,20 @@ wo repos remove billing openai/workon
 Add behavior:
 
 - caches the GitHub repo as a bare repo under Workon storage
+- creates the real worktree under a configured repo workspace
 - creates an initial branch named `workon/<work-slug>`
-- creates the worktree at `<work>/repos/<owner>__<repo>`
-- writes only durable GitHub fallback data to `workon.repos.json`
+- exposes the repo at `<work>/repos/<repo>` with a symlink
+- writes durable fallback/link data to `workon.repos.json`
 - rewrites `AGENTS.md` and `CLAUDE.md` with the attached repo list
 
 Remove behavior:
 
-- runs `git worktree remove`
-- keeps branches and repo caches
+- removes the Workon symlink from `<work>/repos/`
+- keeps the underlying checkout, worktree, branch, and repo cache
 - updates `workon.repos.json`, `AGENTS.md`, and `CLAUDE.md`
-- fails without changing metadata when Git refuses removal
 
 `wo repos list` and the TUI reconstruct live repository state from `<work>/repos/`.
-Branch names and worktree paths are read from the local git worktrees, so user branch
+Branch names and worktree identity are read from local Git state, so user branch
 changes are reflected without editing `workon.repos.json`.
 
 ### `wo ctx`

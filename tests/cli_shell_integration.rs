@@ -131,8 +131,8 @@ fn help_prints_command_summary() {
 
     assert!(stdout.contains("wo - start, open, and archive work folders"));
     assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work"));
-    assert!(stdout.contains("wo repos add <work> <owner/repo>..."));
-    assert!(stdout.contains("attach GitHub repos as worktrees"));
+    assert!(stdout.contains("wo repos add [--workspace <path>] <work> <owner/repo>..."));
+    assert!(stdout.contains("create/link GitHub repos from a configured workspace"));
     assert!(stdout.contains("WORKON_ROOT=/path"));
 }
 
@@ -155,11 +155,13 @@ fn repos_help_prints_usage() {
         assert!(output.status.success());
         let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
 
-        assert!(stdout.contains("wo repos - attach GitHub repositories"));
+        assert!(stdout.contains("wo repos - link repositories"));
         assert!(stdout.contains("wo repos list <work-query>"));
-        assert!(stdout.contains("wo repos add <work-query> <owner/repo>..."));
+        assert!(stdout.contains("wo repos add [--workspace <path>] <work-query> <owner/repo>..."));
+        assert!(stdout.contains("wo repos workspace add <path>..."));
         assert!(stdout.contains("wo repos remove [--force] <work-query> <owner/repo>..."));
         assert!(stdout.contains("Highlight a Work, press /r"));
+        assert!(stdout.contains("tab to"));
         assert!(!stdout.contains("\n  wt\n"));
     }
 }
@@ -257,8 +259,31 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
     let fake_bin = fake_repo_tools();
     let fake_path = path_with_prepended(fake_bin.path());
     let log_path = root.path().join("tool.log");
+    let workspace_path = root.path().join("repo-workspace");
+    let second_workspace_path = root.path().join("repo-workspace-client");
     fs::write(&log_path, "").expect("tool log should initialize");
     create_work(root.path(), "Repository context cli smoke");
+
+    let workspace = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args([
+            "repos",
+            "workspace",
+            "add",
+            workspace_path.to_str().expect("workspace path utf8"),
+            second_workspace_path
+                .to_str()
+                .expect("second workspace path utf8"),
+        ])
+        .output()
+        .expect("wo repos workspace add should run");
+    assert!(
+        workspace.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&workspace.stdout),
+        String::from_utf8_lossy(&workspace.stderr)
+    );
 
     let add = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
@@ -268,6 +293,8 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
         .args([
             "repos",
             "add",
+            "--workspace",
+            workspace_path.to_str().expect("workspace path utf8"),
             "repository-context-cli-smoke",
             "openai/workon",
         ])
@@ -340,7 +367,7 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
     assert!(log.contains("gh repo view openai/workon"));
     assert!(log.contains("gh repo clone openai/workon"));
     assert!(log.contains("git -C"));
-    assert!(log.contains("worktree remove --force"));
+    assert!(!log.contains("worktree remove --force"));
 }
 
 #[test]
@@ -685,14 +712,6 @@ fi
 if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
   mkdir -p "$3"
   printf '%s\n' "$4" > "$3/.workon-current-branch"
-  exit 0
-fi
-if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
-  path=
-  for arg in "$@"; do
-    path="$arg"
-  done
-  rm -rf "$path"
   exit 0
 fi
 exit 0

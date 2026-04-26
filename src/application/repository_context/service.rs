@@ -1,15 +1,20 @@
 use crate::application::CommandOutput;
+use std::path::{Path, PathBuf};
+
 use crate::domain::repository_context::paths::{
-    normalize_requested_repositories, work_branch, worktree_path,
+    normalize_requested_repositories, repository_alias, work_branch, workspace_worktree_path,
 };
 use crate::domain::{
-    AttachedRepository, RepositoryAttachment, RepositoryCatalog, RepositoryContextChange,
-    WorkRepositoryList, WorkSummary,
+    AttachedRepository, RepositoryAttachment, RepositoryCandidateList, RepositoryCatalog,
+    RepositoryContextChange, RepositoryWorkspace, RepositoryWorkspaceList, WorkRepositoryList,
+    WorkSummary,
 };
 use crate::infrastructure::agent_files::RepoContextFileWriter;
-use crate::infrastructure::git_worktree::{WorktreeInspector, WorktreeManager};
+use crate::infrastructure::git_worktree::{RepositoryLinker, WorktreeInspector, WorktreeManager};
 use crate::infrastructure::github::GithubClient;
-use crate::infrastructure::storage::{RepoMetadataStore, RepositoryCache, WorkStore};
+use crate::infrastructure::storage::{
+    RepoMetadataStore, RepoWorkspaceStore, RepositoryCache, WorkStore,
+};
 use crate::shared::error::{Result, WorkonError};
 
 pub(super) struct RepositoryContextService<'a> {
@@ -18,28 +23,36 @@ pub(super) struct RepositoryContextService<'a> {
     cache: &'a dyn RepositoryCache,
     worktrees: &'a dyn WorktreeManager,
     inspector: &'a dyn WorktreeInspector,
+    linker: &'a dyn RepositoryLinker,
     metadata: &'a dyn RepoMetadataStore,
+    workspaces: &'a dyn RepoWorkspaceStore,
     context_files: &'a dyn RepoContextFileWriter,
 }
 
+pub(super) struct RepositoryContextDeps<'a> {
+    pub(super) store: &'a WorkStore,
+    pub(super) github: &'a dyn GithubClient,
+    pub(super) cache: &'a dyn RepositoryCache,
+    pub(super) worktrees: &'a dyn WorktreeManager,
+    pub(super) inspector: &'a dyn WorktreeInspector,
+    pub(super) linker: &'a dyn RepositoryLinker,
+    pub(super) metadata: &'a dyn RepoMetadataStore,
+    pub(super) workspaces: &'a dyn RepoWorkspaceStore,
+    pub(super) context_files: &'a dyn RepoContextFileWriter,
+}
+
 impl<'a> RepositoryContextService<'a> {
-    pub(super) fn new(
-        store: &'a WorkStore,
-        github: &'a dyn GithubClient,
-        cache: &'a dyn RepositoryCache,
-        worktrees: &'a dyn WorktreeManager,
-        inspector: &'a dyn WorktreeInspector,
-        metadata: &'a dyn RepoMetadataStore,
-        context_files: &'a dyn RepoContextFileWriter,
-    ) -> Self {
+    pub(super) fn new(deps: RepositoryContextDeps<'a>) -> Self {
         Self {
-            store,
-            github,
-            cache,
-            worktrees,
-            inspector,
-            metadata,
-            context_files,
+            store: deps.store,
+            github: deps.github,
+            cache: deps.cache,
+            worktrees: deps.worktrees,
+            inspector: deps.inspector,
+            linker: deps.linker,
+            metadata: deps.metadata,
+            workspaces: deps.workspaces,
+            context_files: deps.context_files,
         }
     }
 
@@ -64,13 +77,81 @@ impl<'a> RepositoryContextService<'a> {
         }))
     }
 
-    pub(super) fn add(&self, query: &str, repositories: &[String]) -> Result<CommandOutput> {
+    pub(super) fn workspaces(workspaces: &dyn RepoWorkspaceStore) -> Result<CommandOutput> {
+        Ok(CommandOutput::RepositoryWorkspaces(
+            RepositoryWorkspaceList {
+                workspaces: workspaces.read()?,
+            },
+        ))
+    }
+
+    pub(super) fn add_workspaces(
+        workspaces: &dyn RepoWorkspaceStore,
+        paths: &[PathBuf],
+    ) -> Result<CommandOutput> {
+        if paths.is_empty() {
+            return Err(WorkonError::MissingArgument {
+                message: "repos workspace add requires at least one path".to_string(),
+            });
+        }
+
+        let mut existing = workspaces.read()?;
+        for path in paths {
+            let workspace = normalize_workspace_path(path)?;
+            if !existing.iter().any(|item| item.path == workspace.path) {
+                existing.push(workspace);
+            }
+        }
+        existing.sort_by(|left, right| left.path.cmp(&right.path));
+        existing.dedup_by(|left, right| left.path == right.path);
+        workspaces.write(&existing)?;
+        Self::workspaces(workspaces)
+    }
+
+    pub(super) fn remove_workspace(
+        workspaces: &dyn RepoWorkspaceStore,
+        path: &Path,
+    ) -> Result<CommandOutput> {
+        let path = normalize_existing_or_input_path(path)?;
+        let mut existing = workspaces.read()?;
+        existing.retain(|workspace| workspace.path != path);
+        workspaces.write(&existing)?;
+        Self::workspaces(workspaces)
+    }
+
+    pub(super) fn discover(
+        store: &WorkStore,
+        workspaces: &dyn RepoWorkspaceStore,
+        inspector: &dyn WorktreeInspector,
+        query: &str,
+    ) -> Result<CommandOutput> {
+        let work = store.open(query)?;
+        let roots = workspaces
+            .read()?
+            .into_iter()
+            .map(|workspace| workspace.path)
+            .collect::<Vec<_>>();
+        Ok(CommandOutput::RepositoryCandidates(
+            RepositoryCandidateList {
+                work: work.into(),
+                candidates: inspector.discover(&roots)?,
+            },
+        ))
+    }
+
+    pub(super) fn add(
+        &self,
+        query: &str,
+        repositories: &[String],
+        workspace: Option<&Path>,
+    ) -> Result<CommandOutput> {
         let work = self.store.open(query)?;
         let work_summary = WorkSummary::from(work.clone());
         let requested = normalize_requested_repositories(repositories)?;
         let mut metadata = self.metadata.read(&work.path)?;
         let mut attached = self.inspector.scan(&work.path, &metadata)?;
         let mut changed = Vec::new();
+        let workspace = self.select_workspace(workspace)?;
 
         for name_with_owner in requested {
             if attached
@@ -83,15 +164,26 @@ impl<'a> RepositoryContextService<'a> {
             let available = self.github.fetch_repository(&name_with_owner)?;
             let cache_path = self.cache.ensure(&available)?;
             let branch = work_branch(&work);
-            let path = worktree_path(&work, &available.name_with_owner)?;
+            let target_path =
+                workspace_worktree_path(&workspace.path, &work.slug, &available.name_with_owner)?;
 
-            self.worktrees
-                .switch(&cache_path, &path, &branch, &available.default_branch)?;
+            self.worktrees.switch(
+                &cache_path,
+                &target_path,
+                &branch,
+                &available.default_branch,
+            )?;
+            let alias = repository_alias(&available.name_with_owner)?;
+            let link_path =
+                self.linker
+                    .link(&work.path, &alias, &available.name_with_owner, &target_path)?;
 
             let attachment = RepositoryAttachment {
                 name_with_owner: available.name_with_owner,
                 default_branch: available.default_branch,
                 url: available.url,
+                alias: link_alias(&link_path)?,
+                target_path: fs_canonicalize(&target_path)?,
             };
             let mut next_metadata = metadata.clone();
             next_metadata.retain(|repo| repo.name_with_owner != attachment.name_with_owner);
@@ -122,11 +214,72 @@ impl<'a> RepositoryContextService<'a> {
         ))
     }
 
+    pub(super) fn link(&self, query: &str, paths: &[PathBuf]) -> Result<CommandOutput> {
+        let work = self.store.open(query)?;
+        let work_summary = WorkSummary::from(work.clone());
+        let mut metadata = self.metadata.read(&work.path)?;
+        let mut attached = self.inspector.scan(&work.path, &metadata)?;
+        let mut changed = Vec::new();
+
+        for path in paths {
+            let target_path = fs_canonicalize(path)?;
+            let Some(candidate) = self.inspector.inspect_candidate(&target_path)? else {
+                return Err(WorkonError::RepositoryContext {
+                    message: format!("not a Git working tree: {}", path.display()),
+                });
+            };
+            if attached
+                .iter()
+                .any(|repo| repo.name_with_owner == candidate.name_with_owner)
+            {
+                continue;
+            }
+
+            let alias = repository_alias(&candidate.name_with_owner)?;
+            let link_path =
+                self.linker
+                    .link(&work.path, &alias, &candidate.name_with_owner, &target_path)?;
+            let attachment = RepositoryAttachment {
+                name_with_owner: candidate.name_with_owner,
+                default_branch: String::new(),
+                url: candidate.url,
+                alias: link_alias(&link_path)?,
+                target_path,
+            };
+            let mut next_metadata = metadata.clone();
+            next_metadata.retain(|repo| repo.name_with_owner != attachment.name_with_owner);
+            next_metadata.push(attachment.clone());
+            next_metadata.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
+            let next_attached = self.inspector.scan(&work.path, &next_metadata)?;
+            let repository = next_attached
+                .iter()
+                .find(|repo| repo.name_with_owner == attachment.name_with_owner)
+                .cloned()
+                .ok_or_else(|| WorkonError::RepositoryContext {
+                    message: format!(
+                        "repository was linked but could not be inspected: {}",
+                        attachment.name_with_owner
+                    ),
+                })?;
+            self.persist(&work_summary, &next_metadata, &next_attached)?;
+            metadata = next_metadata;
+            attached = next_attached;
+            changed.push(repository);
+        }
+
+        Ok(CommandOutput::WorkRepositoriesAdded(
+            RepositoryContextChange {
+                work: work.into(),
+                repositories: changed,
+            },
+        ))
+    }
+
     pub(super) fn remove(
         &self,
         query: &str,
         repositories: &[String],
-        force: bool,
+        _force: bool,
     ) -> Result<CommandOutput> {
         let work = self.store.open(query)?;
         let work_summary = WorkSummary::from(work.clone());
@@ -148,9 +301,7 @@ impl<'a> RepositoryContextService<'a> {
                 });
             };
             let repository = attached[index].clone();
-            let cache_path = self.cache.path_for(&repository.name_with_owner)?;
-            self.worktrees
-                .remove(&cache_path, &repository.path, force)?;
+            self.linker.remove(&repository.path)?;
             let mut next_metadata = metadata.clone();
             next_metadata.retain(|repo| &repo.name_with_owner != name_with_owner);
             let next_attached = self.inspector.scan(&work.path, &next_metadata)?;
@@ -177,6 +328,85 @@ impl<'a> RepositoryContextService<'a> {
         self.metadata.write(&work.path, metadata)?;
         self.context_files.rewrite(work, repositories)
     }
+
+    fn select_workspace(&self, selected: Option<&Path>) -> Result<RepositoryWorkspace> {
+        let workspaces = self.workspaces.read()?;
+        if let Some(selected) = selected {
+            let selected = normalize_existing_or_input_path(selected)?;
+            return workspaces
+                .into_iter()
+                .find(|workspace| workspace.path == selected)
+                .ok_or_else(|| WorkonError::RepositoryContext {
+                    message: format!(
+                        "repository workspace is not configured: {}",
+                        selected.display()
+                    ),
+                });
+        }
+
+        match workspaces.as_slice() {
+            [workspace] => Ok(workspace.clone()),
+            [] => Err(WorkonError::RepositoryContext {
+                message: "no repository workspace configured. Add one with: wo repos workspace add <path>...".to_string(),
+            }),
+            _ => Err(WorkonError::RepositoryContext {
+                message:
+                    "multiple repository workspaces configured. Choose one with --workspace <path>"
+                        .to_string(),
+            }),
+        }
+    }
+}
+
+fn normalize_workspace_path(path: &Path) -> Result<RepositoryWorkspace> {
+    let path = expand_home_path(path)?;
+    std::fs::create_dir_all(&path)?;
+    Ok(RepositoryWorkspace {
+        path: fs_canonicalize(&path)?,
+    })
+}
+
+fn normalize_existing_or_input_path(path: &Path) -> Result<PathBuf> {
+    let path = expand_home_path(path)?;
+    if path.exists() {
+        fs_canonicalize(&path)
+    } else {
+        Ok(path)
+    }
+}
+
+fn fs_canonicalize(path: &Path) -> Result<PathBuf> {
+    std::fs::canonicalize(path).map_err(Into::into)
+}
+
+fn expand_home_path(path: &Path) -> Result<PathBuf> {
+    let Some(value) = path.to_str() else {
+        return Ok(path.to_path_buf());
+    };
+    if value == "~" {
+        return home_dir();
+    }
+    let Some(rest) = value.strip_prefix("~/") else {
+        return Ok(path.to_path_buf());
+    };
+    Ok(home_dir()?.join(rest))
+}
+
+fn home_dir() -> Result<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| WorkonError::RepositoryContext {
+            message: "HOME is required to expand repo workspace paths".to_string(),
+        })
+}
+
+fn link_alias(path: &Path) -> Result<String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(ToString::to_string)
+        .ok_or_else(|| WorkonError::RepositoryContext {
+            message: format!("repository link has no valid alias: {}", path.display()),
+        })
 }
 
 #[cfg(test)]
@@ -187,15 +417,20 @@ mod tests {
 
     use crate::application::CommandOutput;
     use crate::domain::{
-        AttachedRepository, AvailableRepository, RepositoryAttachment, WorkSummary,
+        AttachedRepository, AvailableRepository, RepositoryAttachment, RepositoryCandidate,
+        RepositoryWorkspace, WorkSummary,
     };
     use crate::infrastructure::agent_files::RepoContextFileWriter;
-    use crate::infrastructure::git_worktree::{WorktreeInspector, WorktreeManager};
+    use crate::infrastructure::git_worktree::{
+        RepositoryLinker, WorktreeInspector, WorktreeManager,
+    };
     use crate::infrastructure::github::GithubClient;
-    use crate::infrastructure::storage::{RepoMetadataStore, RepositoryCache, WorkStore};
+    use crate::infrastructure::storage::{
+        RepoMetadataStore, RepoWorkspaceStore, RepositoryCache, WorkStore,
+    };
     use crate::shared::error::{Result, WorkonError};
 
-    use super::RepositoryContextService;
+    use super::{RepositoryContextDeps, RepositoryContextService};
 
     #[test]
     fn add_does_not_persist_metadata_when_created_worktree_cannot_be_scanned() {
@@ -208,20 +443,24 @@ mod tests {
         let cache = FakeCache;
         let worktrees = FakeWorktrees::default();
         let inspector = FakeInspector::new(vec![Vec::new(), Vec::new()]);
+        let linker = FakeLinker::default();
         let metadata = FakeMetadata::default();
+        let workspaces = FakeWorkspaces::with_root(root.path().join("repo-workspace"));
         let context_files = FakeContextFiles::default();
-        let service = RepositoryContextService::new(
-            &store,
-            &github,
-            &cache,
-            &worktrees,
-            &inspector,
-            &metadata,
-            &context_files,
-        );
+        let service = RepositoryContextService::new(RepositoryContextDeps {
+            store: &store,
+            github: &github,
+            cache: &cache,
+            worktrees: &worktrees,
+            inspector: &inspector,
+            linker: &linker,
+            metadata: &metadata,
+            workspaces: &workspaces,
+            context_files: &context_files,
+        });
 
         let error = service
-            .add(&work.slug, &["openai/workon".to_string()])
+            .add(&work.slug, &["openai/workon".to_string()], None)
             .expect_err("missing post-add scan result should fail");
 
         assert!(error
@@ -244,24 +483,28 @@ mod tests {
         let cache = FakeCache;
         let worktrees = FakeWorktrees::default();
         let inspector = FakeInspector::new(vec![Vec::new()]);
+        let linker = FakeLinker::default();
         let metadata = FakeMetadata::with_repositories(vec![repository_attachment()]);
+        let workspaces = FakeWorkspaces::default();
         let context_files = FakeContextFiles::default();
-        let service = RepositoryContextService::new(
-            &store,
-            &github,
-            &cache,
-            &worktrees,
-            &inspector,
-            &metadata,
-            &context_files,
-        );
+        let service = RepositoryContextService::new(RepositoryContextDeps {
+            store: &store,
+            github: &github,
+            cache: &cache,
+            worktrees: &worktrees,
+            inspector: &inspector,
+            linker: &linker,
+            metadata: &metadata,
+            workspaces: &workspaces,
+            context_files: &context_files,
+        });
 
         let error = service
             .remove(&work.slug, &["openai/workon".to_string()], false)
             .expect_err("stale metadata without a scanned worktree is not attached");
 
         assert!(error.to_string().contains("is not attached"));
-        assert_eq!(worktrees.remove_count(), 0);
+        assert_eq!(linker.remove_count(), 0);
         assert_eq!(metadata.write_count(), 0);
         assert_eq!(metadata.repositories(), vec![repository_attachment()]);
         assert_eq!(context_files.rewrite_count(), 0);
@@ -301,17 +544,21 @@ mod tests {
         let cache = FakeCache;
         let worktrees = FakeWorktrees::default();
         let inspector = FakeInspector::new(vec![vec![attached.clone()], Vec::new()]);
+        let linker = FakeLinker::default();
         let metadata = FakeMetadata::default();
+        let workspaces = FakeWorkspaces::default();
         let context_files = FakeContextFiles::default();
-        let service = RepositoryContextService::new(
-            &store,
-            &github,
-            &cache,
-            &worktrees,
-            &inspector,
-            &metadata,
-            &context_files,
-        );
+        let service = RepositoryContextService::new(RepositoryContextDeps {
+            store: &store,
+            github: &github,
+            cache: &cache,
+            worktrees: &worktrees,
+            inspector: &inspector,
+            linker: &linker,
+            metadata: &metadata,
+            workspaces: &workspaces,
+            context_files: &context_files,
+        });
 
         let CommandOutput::WorkRepositoriesRemoved(change) = service
             .remove(&work.slug, &["openai/workon".to_string()], false)
@@ -321,7 +568,7 @@ mod tests {
         };
 
         assert_eq!(change.repositories, vec![attached]);
-        assert_eq!(worktrees.remove_count(), 1);
+        assert_eq!(linker.remove_count(), 1);
         assert_eq!(metadata.write_count(), 1);
         assert!(metadata.repositories().is_empty());
         assert_eq!(context_files.rewrite_count(), 1);
@@ -368,16 +615,11 @@ mod tests {
     #[derive(Default)]
     struct FakeWorktrees {
         switches: RefCell<Vec<PathBuf>>,
-        removes: RefCell<Vec<PathBuf>>,
     }
 
     impl FakeWorktrees {
         fn switch_count(&self) -> usize {
             self.switches.borrow().len()
-        }
-
-        fn remove_count(&self) -> usize {
-            self.removes.borrow().len()
         }
     }
 
@@ -389,12 +631,39 @@ mod tests {
             _branch: &str,
             _default_branch: &str,
         ) -> Result<()> {
+            std::fs::create_dir_all(worktree_path)?;
             self.switches.borrow_mut().push(worktree_path.to_path_buf());
             Ok(())
         }
+    }
 
-        fn remove(&self, _cache_path: &Path, worktree_path: &Path, _force: bool) -> Result<()> {
-            self.removes.borrow_mut().push(worktree_path.to_path_buf());
+    #[derive(Default)]
+    struct FakeLinker {
+        links: RefCell<Vec<PathBuf>>,
+        removes: RefCell<Vec<PathBuf>>,
+    }
+
+    impl FakeLinker {
+        fn remove_count(&self) -> usize {
+            self.removes.borrow().len()
+        }
+    }
+
+    impl RepositoryLinker for FakeLinker {
+        fn link(
+            &self,
+            work_path: &Path,
+            preferred_alias: &str,
+            _name_with_owner: &str,
+            _target_path: &Path,
+        ) -> Result<PathBuf> {
+            let link_path = work_path.join("repos").join(preferred_alias);
+            self.links.borrow_mut().push(link_path.clone());
+            Ok(link_path)
+        }
+
+        fn remove(&self, link_path: &Path) -> Result<()> {
+            self.removes.borrow_mut().push(link_path.to_path_buf());
             Ok(())
         }
     }
@@ -423,6 +692,43 @@ mod tests {
                 .ok_or_else(|| WorkonError::RepositoryContext {
                     message: "unexpected repository scan".to_string(),
                 })
+        }
+
+        fn inspect_candidate(&self, path: &Path) -> Result<Option<RepositoryCandidate>> {
+            Ok(Some(RepositoryCandidate {
+                name_with_owner: "openai/workon".to_string(),
+                branch: "feature/manual".to_string(),
+                path: path.to_path_buf(),
+                url: "https://github.com/openai/workon".to_string(),
+            }))
+        }
+
+        fn discover(&self, _roots: &[PathBuf]) -> Result<Vec<RepositoryCandidate>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeWorkspaces {
+        workspaces: RefCell<Vec<RepositoryWorkspace>>,
+    }
+
+    impl FakeWorkspaces {
+        fn with_root(path: PathBuf) -> Self {
+            Self {
+                workspaces: RefCell::new(vec![RepositoryWorkspace { path }]),
+            }
+        }
+    }
+
+    impl RepoWorkspaceStore for FakeWorkspaces {
+        fn read(&self) -> Result<Vec<RepositoryWorkspace>> {
+            Ok(self.workspaces.borrow().clone())
+        }
+
+        fn write(&self, workspaces: &[RepositoryWorkspace]) -> Result<()> {
+            *self.workspaces.borrow_mut() = workspaces.to_vec();
+            Ok(())
         }
     }
 
@@ -499,6 +805,8 @@ mod tests {
             name_with_owner: "openai/workon".to_string(),
             default_branch: "main".to_string(),
             url: "https://github.com/openai/workon".to_string(),
+            alias: "workon".to_string(),
+            target_path: "/tmp/workon".into(),
         }
     }
 

@@ -1,5 +1,6 @@
 use crate::application::{Command, CommandOutput};
 use crate::shared::error::Result;
+use std::path::PathBuf;
 
 use super::repo_state::RepoOperation;
 use super::state::TraceKind;
@@ -8,8 +9,10 @@ use super::state::TraceKind;
 pub(super) struct RepoChangeRequest {
     pub(super) work_slug: String,
     pub(super) add: Vec<String>,
+    pub(super) link: Vec<PathBuf>,
     pub(super) remove: Vec<String>,
     pub(super) force_remove: bool,
+    pub(super) workspace: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +80,7 @@ pub(super) fn run_repo_batch(
 
 impl RepoBatch {
     pub(super) fn new(request: RepoChangeRequest) -> Self {
-        let total = request.add.len() + request.remove.len();
+        let total = request.add.len() + request.link.len() + request.remove.len();
         let mut current = 0;
         let mut steps = Vec::with_capacity(total);
 
@@ -91,6 +94,22 @@ impl RepoBatch {
                 command: Command::AddWorkRepositories {
                     query: request.work_slug.clone(),
                     repositories: vec![repository],
+                    workspace: request.workspace.clone(),
+                },
+                force_remove: false,
+            });
+        }
+
+        for path in request.link {
+            current += 1;
+            steps.push(RepoStep {
+                operation: RepoOperation::Link,
+                current,
+                total,
+                repository: path.display().to_string(),
+                command: Command::LinkWorkRepositories {
+                    query: request.work_slug.clone(),
+                    paths: vec![path],
                 },
                 force_remove: false,
             });
@@ -171,12 +190,15 @@ impl RepoBatch {
 
 impl RepoStep {
     fn success_message(&self, output: &CommandOutput) -> String {
-        if matches!(self.operation, RepoOperation::Add) && self.changed_repositories(output) == 0 {
+        if matches!(self.operation, RepoOperation::Add | RepoOperation::Link)
+            && self.changed_repositories(output) == 0
+        {
             return format!("already attached {}", self.repository);
         }
 
         match self.operation {
             RepoOperation::Add => format!("attached {}", self.repository),
+            RepoOperation::Link => format!("linked {}", self.repository),
             RepoOperation::Remove if self.force_remove => {
                 format!("force removed {}", self.repository)
             }
@@ -265,8 +287,10 @@ mod tests {
         let mut batch = RepoBatch::new(RepoChangeRequest {
             work_slug: "billing".to_string(),
             add: vec!["openai/api".to_string()],
+            link: Vec::new(),
             remove: Vec::new(),
             force_remove: false,
+            workspace: None,
         });
         let step = batch.next_step().expect("add step");
 
@@ -287,12 +311,42 @@ mod tests {
         assert!(outcome.failures.is_empty());
     }
 
+    #[test]
+    fn batch_links_local_paths_between_adds_and_removes() {
+        let mut batch = RepoBatch::new(RepoChangeRequest {
+            work_slug: "billing".to_string(),
+            add: vec!["openai/api".to_string()],
+            link: vec!["/tmp/repos/local-tool".into()],
+            remove: vec!["openai/workon".to_string()],
+            force_remove: false,
+            workspace: None,
+        });
+
+        let add = batch.next_step().expect("add step");
+        let link = batch.next_step().expect("link step");
+        let remove = batch.next_step().expect("remove step");
+
+        assert_eq!(add.repository, "openai/api");
+        assert_eq!(
+            link.operation,
+            crate::interfaces::tui::repo_state::RepoOperation::Link
+        );
+        assert_eq!(link.repository, "/tmp/repos/local-tool");
+        assert!(matches!(
+            link.command,
+            crate::application::Command::LinkWorkRepositories { .. }
+        ));
+        assert_eq!(remove.repository, "openai/workon");
+    }
+
     fn request() -> RepoChangeRequest {
         RepoChangeRequest {
             work_slug: "billing".to_string(),
             add: vec!["openai/api".to_string(), "openai/docs".to_string()],
+            link: Vec::new(),
             remove: vec!["openai/workon".to_string()],
             force_remove: true,
+            workspace: None,
         }
     }
 

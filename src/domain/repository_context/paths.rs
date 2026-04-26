@@ -32,21 +32,50 @@ pub(crate) fn repository_cache_path(root: &Path, name_with_owner: &str) -> Resul
         .join(format!("{repo}.git")))
 }
 
-pub(crate) fn worktree_path(work: &OpenedWork, name_with_owner: &str) -> Result<PathBuf> {
-    let (owner, repo) = split_repository_name(name_with_owner)?;
-    Ok(work.path.join("repos").join(format!("{owner}__{repo}")))
+pub(crate) fn workspace_worktree_path(
+    workspace: &Path,
+    work_slug: &str,
+    name_with_owner: &str,
+) -> Result<PathBuf> {
+    Ok(workspace
+        .join(work_slug)
+        .join(repository_alias(name_with_owner)?))
 }
 
-pub(crate) fn repository_name_from_worktree_dir(folder_name: &str) -> Option<String> {
-    let (owner, repo) = folder_name.split_once("__")?;
-    if owner.is_empty() || repo.is_empty() {
-        return None;
+pub(crate) fn repository_alias(name_with_owner: &str) -> Result<String> {
+    let (_, repo) = split_repository_name(name_with_owner)?;
+    Ok(repo.to_string())
+}
+
+pub(crate) fn repository_owner_alias(name_with_owner: &str) -> Result<String> {
+    let (owner, repo) = split_repository_name(name_with_owner)?;
+    Ok(format!("{owner}-{repo}"))
+}
+
+pub(crate) fn repository_name_from_remote_url(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches(".git");
+    if let Some(path) = url.strip_prefix("git@github.com:") {
+        return normalize_remote_path(path);
     }
-    Some(format!("{owner}/{repo}"))
+    if let Some(path) = url.strip_prefix("https://github.com/") {
+        return normalize_remote_path(path);
+    }
+    if let Some(path) = url.strip_prefix("ssh://git@github.com/") {
+        return normalize_remote_path(path);
+    }
+    None
 }
 
 pub(crate) fn work_branch(work: &OpenedWork) -> String {
     format!("workon/{}", work.slug)
+}
+
+fn normalize_remote_path(path: &str) -> Option<String> {
+    let parts = path.split('/').collect::<Vec<_>>();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return None;
+    }
+    Some(format!("{}/{}", parts[0], parts[1]))
 }
 
 fn split_repository_name(name_with_owner: &str) -> Result<(&str, &str)> {
@@ -70,7 +99,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        normalize_requested_repositories, repository_cache_path, repository_name_from_worktree_dir,
+        normalize_requested_repositories, repository_alias, repository_cache_path,
+        repository_name_from_remote_url, repository_owner_alias, workspace_worktree_path,
     };
 
     #[test]
@@ -105,13 +135,38 @@ mod tests {
     }
 
     #[test]
-    fn reconstructs_repository_name_from_worktree_folder() {
+    fn builds_repo_aliases_and_workspace_paths() {
         assert_eq!(
-            repository_name_from_worktree_dir("openai__workon"),
+            repository_alias("openai/workon").expect("alias should build"),
+            "workon"
+        );
+        assert_eq!(
+            repository_owner_alias("openai/workon").expect("owner alias should build"),
+            "openai-workon"
+        );
+        assert_eq!(
+            workspace_worktree_path(Path::new("/repos"), "billing", "openai/workon")
+                .expect("path should build"),
+            Path::new("/repos/billing/workon")
+        );
+    }
+
+    #[test]
+    fn reconstructs_repository_name_from_remote_url() {
+        assert_eq!(
+            repository_name_from_remote_url("git@github.com:openai/workon.git"),
             Some("openai/workon".to_string())
         );
         assert_eq!(
-            repository_name_from_worktree_dir("not-a-worktree-name"),
+            repository_name_from_remote_url("https://github.com/openai/workon"),
+            Some("openai/workon".to_string())
+        );
+        assert_eq!(
+            repository_name_from_remote_url("ssh://git@github.com/openai/workon.git"),
+            Some("openai/workon".to_string())
+        );
+        assert_eq!(
+            repository_name_from_remote_url("https://gitlab.com/openai/workon"),
             None
         );
     }

@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::domain::repository_context::paths::repository_name_from_worktree_dir;
-use crate::domain::{AttachedRepository, RepositoryAttachment};
+use crate::domain::repository_context::paths::{
+    repository_name_from_remote_url, repository_owner_alias,
+};
+use crate::domain::{AttachedRepository, RepositoryAttachment, RepositoryCandidate};
 use crate::infrastructure::process::{ProcessRunner, RepoCommand};
 use crate::shared::error::{Result, WorkonError};
 
@@ -15,7 +17,6 @@ pub(crate) trait WorktreeManager {
         branch: &str,
         default_branch: &str,
     ) -> Result<()>;
-    fn remove(&self, cache_path: &Path, worktree_path: &Path, force: bool) -> Result<()>;
 }
 
 pub(crate) trait WorktreeInspector {
@@ -24,6 +25,19 @@ pub(crate) trait WorktreeInspector {
         work_path: &Path,
         metadata: &[RepositoryAttachment],
     ) -> Result<Vec<AttachedRepository>>;
+    fn inspect_candidate(&self, path: &Path) -> Result<Option<RepositoryCandidate>>;
+    fn discover(&self, roots: &[PathBuf]) -> Result<Vec<RepositoryCandidate>>;
+}
+
+pub(crate) trait RepositoryLinker {
+    fn link(
+        &self,
+        work_path: &Path,
+        preferred_alias: &str,
+        name_with_owner: &str,
+        target_path: &Path,
+    ) -> Result<PathBuf>;
+    fn remove(&self, link_path: &Path) -> Result<()>;
 }
 
 pub(crate) struct GitWorktree<'a> {
@@ -109,6 +123,48 @@ impl<'a> GitWorktree<'a> {
         (!url.is_empty()).then_some(url)
     }
 
+    fn inspected_repository(
+        &self,
+        path: &Path,
+        metadata: Option<&RepositoryAttachment>,
+    ) -> Result<Option<AttachedRepository>> {
+        let Some(branch) = self.scan_branch(path) else {
+            return Ok(None);
+        };
+        let url = self
+            .origin_url(path)
+            .or_else(|| metadata.map(|repository| repository.url.clone()))
+            .unwrap_or_default();
+        let name_with_owner = repository_name_from_remote_url(&url)
+            .or_else(|| metadata.map(|repository| repository.name_with_owner.clone()));
+        let Some(name_with_owner) = name_with_owner else {
+            return Ok(None);
+        };
+        let default_branch = metadata
+            .map(|repository| repository.default_branch.clone())
+            .unwrap_or_default();
+
+        Ok(Some(AttachedRepository {
+            name_with_owner,
+            branch,
+            path: path.to_path_buf(),
+            default_branch,
+            url,
+        }))
+    }
+
+    fn candidate_at(&self, path: &Path) -> Result<Option<RepositoryCandidate>> {
+        let Some(repository) = self.inspected_repository(path, None)? else {
+            return Ok(None);
+        };
+        Ok(Some(RepositoryCandidate {
+            name_with_owner: repository.name_with_owner,
+            branch: repository.branch,
+            path: path.to_path_buf(),
+            url: repository.url,
+        }))
+    }
+
     fn ensure_existing_worktree(&self, worktree_path: &Path, branch: &str) -> Result<bool> {
         if !worktree_path.exists() {
             return Ok(false);
@@ -147,48 +203,65 @@ impl WorktreeInspector for GitWorktree<'_> {
             return Ok(Vec::new());
         }
 
-        let metadata_by_name = metadata
+        let metadata_by_alias = metadata
             .iter()
-            .map(|repository| (repository.name_with_owner.as_str(), repository))
+            .filter(|repository| !repository.alias.is_empty())
+            .map(|repository| (repository.alias.as_str(), repository))
+            .collect::<BTreeMap<_, _>>();
+        let metadata_by_target = metadata
+            .iter()
+            .filter(|repository| !repository.target_path.as_os_str().is_empty())
+            .map(|repository| (repository.target_path.as_path(), repository))
             .collect::<BTreeMap<_, _>>();
         let mut repositories = Vec::new();
 
         for entry in fs::read_dir(repos_path)? {
             let entry = entry?;
-            if !entry.file_type()?.is_dir() {
+            let path = entry.path();
+            let file_type = fs::symlink_metadata(&path)?.file_type();
+            let is_symlink = file_type.is_symlink();
+            if !path.is_dir() && !is_symlink {
                 continue;
             }
 
             let folder_name = entry.file_name();
-            let Some(name_with_owner) =
-                repository_name_from_worktree_dir(&folder_name.to_string_lossy())
-            else {
-                continue;
-            };
-            let path = entry.path();
-            let Some(branch) = self.scan_branch(&path) else {
-                continue;
-            };
-            let metadata = metadata_by_name.get(name_with_owner.as_str()).copied();
-            let url = metadata
-                .map(|repository| repository.url.clone())
-                .or_else(|| self.origin_url(&path))
-                .unwrap_or_default();
-            let default_branch = metadata
-                .map(|repository| repository.default_branch.clone())
-                .unwrap_or_default();
-
-            repositories.push(AttachedRepository {
-                name_with_owner,
-                branch,
-                path,
-                default_branch,
-                url,
-            });
+            let alias = folder_name.to_string_lossy();
+            let target = fs::canonicalize(&path)
+                .or_else(|_| symlink_target(&path))
+                .unwrap_or_else(|_| path.clone());
+            let metadata = metadata_by_alias
+                .get(alias.as_ref())
+                .copied()
+                .or_else(|| metadata_by_target.get(target.as_path()).copied());
+            if let Some(repository) = self.inspected_repository(&path, metadata)? {
+                repositories.push(repository);
+            } else if is_symlink && !path.exists() {
+                if let Some(metadata) = metadata {
+                    repositories.push(missing_repository_link(&path, metadata));
+                }
+            }
         }
 
         repositories.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
         Ok(repositories)
+    }
+
+    fn inspect_candidate(&self, path: &Path) -> Result<Option<RepositoryCandidate>> {
+        self.candidate_at(path)
+    }
+
+    fn discover(&self, roots: &[PathBuf]) -> Result<Vec<RepositoryCandidate>> {
+        let mut candidates = Vec::new();
+        for root in roots {
+            discover_root(self, root, 0, &mut candidates)?;
+        }
+        candidates.sort_by(|left, right| {
+            left.name_with_owner
+                .cmp(&right.name_with_owner)
+                .then(left.path.cmp(&right.path))
+        });
+        candidates.dedup_by(|left, right| left.path == right.path);
+        Ok(candidates)
     }
 }
 
@@ -221,23 +294,150 @@ impl WorktreeManager for GitWorktree<'_> {
         ]))?;
         Ok(())
     }
+}
 
-    fn remove(&self, cache_path: &Path, worktree_path: &Path, force: bool) -> Result<()> {
-        let mut args = vec![
-            "-C".to_string(),
-            cache_path.display().to_string(),
-            "worktree".to_string(),
-            "remove".to_string(),
-        ];
-        if force {
-            args.push("--force".to_string());
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SymlinkRepositoryLinker;
+
+impl RepositoryLinker for SymlinkRepositoryLinker {
+    fn link(
+        &self,
+        work_path: &Path,
+        preferred_alias: &str,
+        name_with_owner: &str,
+        target_path: &Path,
+    ) -> Result<PathBuf> {
+        let repos_path = work_path.join("repos");
+        fs::create_dir_all(&repos_path)?;
+        let target = fs::canonicalize(target_path)?;
+        let aliases = link_aliases(preferred_alias, name_with_owner)?;
+
+        for alias in aliases {
+            let link_path = repos_path.join(alias);
+            if same_target(&link_path, &target) {
+                return Ok(link_path);
+            }
+            if !link_path.exists() && fs::symlink_metadata(&link_path).is_err() {
+                create_dir_symlink(&target, &link_path)?;
+                return Ok(link_path);
+            }
         }
-        args.push(worktree_path.display().to_string());
 
-        self.runner
-            .run_checked(&RepoCommand::new("git").args(args))?;
+        Err(WorkonError::RepositoryContext {
+            message: format!(
+                "could not choose repository link name for `{name_with_owner}` in {}",
+                repos_path.display()
+            ),
+        })
+    }
+
+    fn remove(&self, link_path: &Path) -> Result<()> {
+        let metadata = fs::symlink_metadata(link_path)?;
+        if metadata.file_type().is_symlink() {
+            fs::remove_file(link_path)?;
+        } else if metadata.is_dir() {
+            return Err(WorkonError::RepositoryContext {
+                message: format!(
+                    "refusing to remove real repository directory; expected Workon symlink: {}",
+                    link_path.display()
+                ),
+            });
+        } else {
+            fs::remove_file(link_path)?;
+        }
         Ok(())
     }
+}
+
+fn discover_root(
+    git: &GitWorktree<'_>,
+    path: &Path,
+    depth: usize,
+    candidates: &mut Vec<RepositoryCandidate>,
+) -> Result<()> {
+    const MAX_DEPTH: usize = 4;
+    if depth > MAX_DEPTH || !path.exists() || ignored_discovery_path(path) {
+        return Ok(());
+    }
+
+    if let Some(candidate) = git.candidate_at(path)? {
+        candidates.push(candidate);
+        return Ok(());
+    }
+
+    if !path.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let child = entry.path();
+        if child.is_dir() {
+            discover_root(git, &child, depth + 1, candidates)?;
+        }
+    }
+    Ok(())
+}
+
+fn ignored_discovery_path(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".git" | "node_modules" | "target" | ".cache" | ".workon")
+    )
+}
+
+fn link_aliases(preferred_alias: &str, name_with_owner: &str) -> Result<Vec<String>> {
+    let owner_alias = repository_owner_alias(name_with_owner)?;
+    let preferred_alias = preferred_alias.trim();
+    let preferred_alias = if preferred_alias.is_empty() {
+        owner_alias.as_str()
+    } else {
+        preferred_alias
+    };
+    let mut aliases = vec![preferred_alias.to_string()];
+    if preferred_alias != owner_alias {
+        aliases.push(owner_alias.clone());
+    }
+    aliases.extend((2..10).map(|suffix| format!("{owner_alias}-{suffix}")));
+    Ok(aliases)
+}
+
+fn same_target(link_path: &Path, target: &Path) -> bool {
+    fs::canonicalize(link_path).is_ok_and(|existing| existing == target)
+}
+
+fn symlink_target(link_path: &Path) -> std::io::Result<PathBuf> {
+    let target = fs::read_link(link_path)?;
+    if target.is_absolute() {
+        Ok(target)
+    } else {
+        Ok(link_path
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(target))
+    }
+}
+
+fn missing_repository_link(path: &Path, metadata: &RepositoryAttachment) -> AttachedRepository {
+    AttachedRepository {
+        name_with_owner: metadata.name_with_owner.clone(),
+        branch: "missing".to_string(),
+        path: path.to_path_buf(),
+        default_branch: metadata.default_branch.clone(),
+        url: metadata.url.clone(),
+    }
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link_path)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    std::os::windows::fs::symlink_dir(target, link_path)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -250,7 +450,7 @@ mod tests {
     use crate::infrastructure::process::{ProcessRunner, RepoCommand};
     use crate::shared::error::{Result, WorkonError};
 
-    use super::{GitWorktree, WorktreeInspector, WorktreeManager};
+    use super::{create_dir_symlink, GitWorktree, WorktreeInspector, WorktreeManager};
 
     #[test]
     fn switch_creates_branch_and_adds_worktree_with_raw_git() {
@@ -344,53 +544,6 @@ mod tests {
     }
 
     #[test]
-    fn remove_uses_worktree_path_and_can_force() {
-        let runner = RecordingRunner::default();
-        let git = GitWorktree::new(&runner);
-
-        git.remove(
-            Path::new("/cache/openai/workon.git"),
-            Path::new("/work/repos/openai__workon"),
-            true,
-        )
-        .expect("remove should run");
-
-        let commands = runner.commands.borrow();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].args_slice(),
-            expected_args(&[
-                "-C",
-                "/cache/openai/workon.git",
-                "worktree",
-                "remove",
-                "--force",
-                "/work/repos/openai__workon"
-            ])
-            .as_slice()
-        );
-    }
-
-    #[test]
-    fn remove_propagates_dirty_worktree_failure() {
-        let runner = RecordingRunner {
-            remove_failure: true,
-            ..RecordingRunner::default()
-        };
-        let git = GitWorktree::new(&runner);
-
-        let error = git
-            .remove(
-                Path::new("/cache/openai/workon.git"),
-                Path::new("/work/repos/openai__workon"),
-                false,
-            )
-            .expect_err("dirty remove should fail");
-
-        assert!(error.to_string().contains("contains modified files"));
-    }
-
-    #[test]
     fn scan_reconstructs_attached_repositories_from_repos_folder() {
         let runner = RecordingRunner {
             current_branch_output: "feature/manual-branch\n".to_string(),
@@ -398,7 +551,7 @@ mod tests {
         };
         let git = GitWorktree::new(&runner);
         let root = temp_root("git_worktree_scan");
-        let repo_path = root.path().join("repos/openai__workon");
+        let repo_path = root.path().join("repos/workon");
         fs::create_dir_all(&repo_path).expect("repo worktree path");
         fs::create_dir_all(root.path().join("repos/not-a-repo")).expect("invalid folder path");
 
@@ -418,11 +571,12 @@ mod tests {
     fn scan_uses_detached_head_revision_when_current_branch_is_empty() {
         let runner = RecordingRunner {
             rev_parse_output: "abc1234\n".to_string(),
+            remote_url_output: "git@github.com:openai/workon.git\n".to_string(),
             ..RecordingRunner::default()
         };
         let git = GitWorktree::new(&runner);
         let root = temp_root("git_worktree_scan_detached");
-        fs::create_dir_all(root.path().join("repos/openai__workon")).expect("repo worktree path");
+        fs::create_dir_all(root.path().join("repos/workon")).expect("repo worktree path");
 
         let repositories = git.scan(root.path(), &[]).expect("scan should succeed");
 
@@ -439,7 +593,7 @@ mod tests {
         };
         let git = GitWorktree::new(&runner);
         let root = temp_root("git_worktree_scan_origin_url");
-        fs::create_dir_all(root.path().join("repos/openai__workon")).expect("repo worktree path");
+        fs::create_dir_all(root.path().join("repos/workon")).expect("repo worktree path");
 
         let repositories = git.scan(root.path(), &[]).expect("scan should succeed");
 
@@ -451,13 +605,13 @@ mod tests {
     #[test]
     fn scan_skips_invalid_and_non_git_repo_folders() {
         let runner = RecordingRunner {
-            branch_failure_contains: Some("openai__notgit".to_string()),
+            branch_failure_contains: Some("notgit".to_string()),
             ..RecordingRunner::default()
         };
         let git = GitWorktree::new(&runner);
         let root = temp_root("git_worktree_scan_skips");
-        fs::create_dir_all(root.path().join("repos/openai__workon")).expect("repo worktree path");
-        fs::create_dir_all(root.path().join("repos/openai__notgit")).expect("non git path");
+        fs::create_dir_all(root.path().join("repos/workon")).expect("repo worktree path");
+        fs::create_dir_all(root.path().join("repos/notgit")).expect("non git path");
         fs::create_dir_all(root.path().join("repos/not-a-repo")).expect("invalid folder path");
 
         let repositories = git
@@ -466,6 +620,30 @@ mod tests {
 
         assert_eq!(repositories.len(), 1);
         assert_eq!(repositories[0].name_with_owner, "openai/workon");
+    }
+
+    #[test]
+    fn scan_reports_broken_repository_link_from_metadata() {
+        let runner = RecordingRunner {
+            branch_failure_contains: Some("workon".to_string()),
+            ..RecordingRunner::default()
+        };
+        let git = GitWorktree::new(&runner);
+        let root = temp_root("git_worktree_scan_broken_link");
+        let repos_path = root.path().join("repos");
+        let target_path = root.path().join("workspace/workon");
+        let link_path = repos_path.join("workon");
+        fs::create_dir_all(&repos_path).expect("repos path");
+        create_dir_symlink(&target_path, &link_path).expect("broken repo link");
+
+        let repositories = git
+            .scan(root.path(), &[repository_attachment_at(&target_path)])
+            .expect("scan should succeed");
+
+        assert_eq!(repositories.len(), 1);
+        assert_eq!(repositories[0].name_with_owner, "openai/workon");
+        assert_eq!(repositories[0].branch, "missing");
+        assert_eq!(repositories[0].path, link_path);
     }
 
     fn branch_list_args() -> &'static [&'static str] {
@@ -488,10 +666,16 @@ mod tests {
     }
 
     fn repository_attachment() -> RepositoryAttachment {
+        repository_attachment_at(Path::new("/tmp/workon"))
+    }
+
+    fn repository_attachment_at(target_path: &Path) -> RepositoryAttachment {
         RepositoryAttachment {
             name_with_owner: "openai/workon".to_string(),
             default_branch: "main".to_string(),
             url: "https://github.com/openai/workon".to_string(),
+            alias: "workon".to_string(),
+            target_path: target_path.into(),
         }
     }
 
@@ -503,7 +687,6 @@ mod tests {
         rev_parse_output: String,
         remote_url_output: String,
         branch_failure_contains: Option<String>,
-        remove_failure: bool,
     }
 
     impl ProcessRunner for RecordingRunner {
@@ -539,12 +722,6 @@ mod tests {
             }
             if args.ends_with(expected_args(&["remote", "get-url", "origin"]).as_slice()) {
                 return Ok(self.remote_url_output.clone());
-            }
-            if self.remove_failure && args.contains(&"remove".to_string()) {
-                return Err(WorkonError::ProcessFailed {
-                    command: "git worktree remove".to_string(),
-                    stderr: "contains modified files".to_string(),
-                });
             }
             Ok(String::new())
         }

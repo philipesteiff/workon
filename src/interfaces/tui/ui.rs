@@ -311,11 +311,19 @@ fn detail_lines(state: &TuiState, work: &WorkSummary) -> Vec<Line<'static>> {
     ];
     lines.extend(repository_context_lines(
         state.attached_repositories_for(work),
+        state.repository_index_loading,
     ));
     lines
 }
 
-fn repository_context_lines(repositories: &[AttachedRepository]) -> Vec<Line<'static>> {
+fn repository_context_lines(
+    repositories: &[AttachedRepository],
+    loading: bool,
+) -> Vec<Line<'static>> {
+    if loading && repositories.is_empty() {
+        return vec![label_value("repos", "loading")];
+    }
+
     if repositories.is_empty() {
         return vec![label_value("repos", "none")];
     }
@@ -404,7 +412,13 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Span::styled(mode_label(state.mode), mode_style(state.mode)),
         Span::raw("  "),
     ];
-    spans.extend(footer_keys(area.width, state.mode, state.trace_visible));
+    spans.extend(footer_keys(
+        area.width,
+        state.mode,
+        state.trace_visible,
+        state.repo.workspace_dialog_open(),
+        state.repo.requires_workspace_setup(),
+    ));
 
     if area.width >= 96 {
         if let Some(toast) = &state.toast {
@@ -420,7 +434,13 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     frame.render_widget(Paragraph::new(Line::from(spans)).block(top_border()), area);
 }
 
-fn footer_keys(width: u16, mode: TuiMode, trace_visible: bool) -> Vec<Span<'static>> {
+fn footer_keys(
+    width: u16,
+    mode: TuiMode,
+    trace_visible: bool,
+    repo_workspace_dialog_open: bool,
+    repo_workspace_setup_required: bool,
+) -> Vec<Span<'static>> {
     match mode {
         TuiMode::List if width < 88 => vec![
             key("type"),
@@ -490,11 +510,26 @@ fn footer_keys(width: u16, mode: TuiMode, trace_visible: bool) -> Vec<Span<'stat
             key("esc/n"),
             "cancel".dim(),
         ],
+        TuiMode::Repos if repo_workspace_dialog_open => vec![
+            key("tab"),
+            "panel ".dim(),
+            key("space"),
+            "remove ".dim(),
+            key("enter"),
+            "apply ".dim(),
+            key("esc"),
+            "back".dim(),
+        ],
+        TuiMode::Repos if repo_workspace_setup_required => {
+            vec![key("+"), "path ".dim(), key("esc"), "back".dim()]
+        }
         TuiMode::Repos => vec![
             key("tab"),
             "panel ".dim(),
             key("type"),
             "find ".dim(),
+            key("+"),
+            "path ".dim(),
             key("space"),
             "select ".dim(),
             key("!"),
@@ -863,6 +898,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 mod tests {
     use std::path::PathBuf;
 
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -870,8 +906,12 @@ mod tests {
     use ratatui::Terminal;
 
     use super::{control_panel_rect, render, render_for_animation};
-    use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
+    use crate::domain::{
+        AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryWorkspace,
+        WorkList, WorkSummary,
+    };
     use crate::interfaces::tui::animation::AnimationTarget;
+    use crate::interfaces::tui::repo_state::RepoPane;
     use crate::interfaces::tui::state::{Toast, TuiMode, TuiState};
 
     #[test]
@@ -1258,25 +1298,149 @@ mod tests {
             "billing-retry-audit".to_string(),
             "Billing retry audit".to_string(),
             available_repositories(),
+            Vec::new(),
             attached_repositories(),
+            repo_workspaces(),
         );
 
         let attached = render_content(&state, 120, 36);
         assert!(attached.contains("WORKON // CONTROL // REPO"));
         assert!(!attached.contains("REPO CONTEXT"));
-        assert!(attached.contains("GITHUB REPOSITORIES"));
+        assert!(attached.contains("REPOSITORIES"));
         assert!(attached.contains("SELECTED FOR WORK"));
         assert!(attached.contains("openai/workon"));
-        assert!(
-            attached.contains("space selects repos; ! arms force remove; enter applies changes")
-        );
+        assert!(attached.contains("GitHub repos create in /tmp/repos"));
+        assert!(!attached.contains("type filters repos"));
+        assert!(!attached.contains("+ add path"));
 
         state.repo.filter = "api".to_string();
         let add = render_content(&state, 120, 36);
-        assert!(add.contains("find api"));
+        assert!(add.contains("Showing repositories matching `api`."));
         assert!(add.contains("openai/api"));
         assert!(add.contains("openai/api-docs"));
         assert!(add.contains("openai/workon"));
+    }
+
+    #[test]
+    fn renders_repo_context_workspace_setup_as_required_dialog() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            Vec::new(),
+            attached_repositories(),
+            Vec::new(),
+        );
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("REPOSITORIES"));
+        assert!(content.contains("REPO WORKSPACE SETUP"));
+        assert!(content.contains("REPO WORKSPACES"));
+        assert!(content.contains("ADD PATH"));
+        assert!(content.contains("REQUIRED"));
+        assert!(
+            content.contains("Configure repo workspaces before creating or linking repositories.")
+        );
+        assert!(content.contains("<type folder path>"));
+        assert!(content.contains("SELECTED FOR WORK"));
+        assert!(content.contains("openai/workon"));
+        assert!(!content.contains("wo repos workspace add"));
+        assert!(!content.contains("space selects repos"));
+        assert!(!content.contains("type workspace path"));
+    }
+
+    #[test]
+    fn renders_repo_context_scrolls_catalog_to_selected_repository() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            many_available_repositories(30),
+            Vec::new(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+        state.repo.selected_catalog = 24;
+
+        let content = render_content(&state, 100, 18);
+
+        assert!(content.contains("openai/repo-24"));
+        assert!(content.contains(">>"));
+        assert!(!content.contains("openai/repo-00"));
+    }
+
+    #[test]
+    fn renders_repo_context_local_repository_candidates() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            local_candidates(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("openai/local-tool"));
+        assert!(content.contains("local feature/workon /tmp/repos/local-tool"));
+    }
+
+    #[test]
+    fn renders_repo_context_workspace_selector_when_multiple_paths_exist() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            local_candidates(),
+            attached_repositories(),
+            multiple_repo_workspaces(),
+        );
+        state.repo.focus = RepoPane::Workspace;
+        state.repo.selected_workspace = 1;
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("GitHub repos create in /tmp/client-repos"));
+        assert!(!content.contains("CREATE IN"));
+        assert!(!content.contains("+ add path"));
+        assert!(content.contains("openai/local-tool"));
+    }
+
+    #[test]
+    fn renders_repo_context_add_workspace_dialog() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            local_candidates(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+        state.repo.workspace_dialog.open(0, &state.repo.workspaces);
+        state
+            .repo
+            .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        for character in "/tmp/more-repos".chars() {
+            state
+                .repo
+                .handle_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("REPO WORKSPACES"));
+        assert!(content.contains("ADD PATH"));
+        assert!(content.contains("CONFIGURED PATHS"));
+        assert!(content.contains("/tmp/repos"));
+        assert!(content.contains("/tmp/more-repos"));
+        assert!(content.contains("space remove"));
+        assert!(content.contains("enter apply"));
     }
 
     #[test]
@@ -1293,9 +1457,11 @@ mod tests {
             .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
 
-        assert!(title.contains("Loading GitHub repositories"));
-        assert!(content.contains("Loading GitHub repositories"));
-        assert!(!content.contains("LOAD Loading GitHub repositories"));
+        assert!(title.contains("Loading repository sources"));
+        assert!(content.contains("Loading repository sources"));
+        assert!(!content.contains("LOAD Loading repository sources"));
+        assert!(!content.contains("REPO WORKSPACE SETUP"));
+        assert!(!content.contains("repo workspace setup required"));
     }
 
     #[test]
@@ -1328,8 +1494,8 @@ mod tests {
         assert!(!second_title.contains("MAGI"));
         assert!(!first_title.contains("[-]"));
         assert!(!second_title.contains("[\\]"));
-        assert!(first_title.contains("Loading GitHub repositories"));
-        assert!(second_title.contains("Loading GitHub repositories"));
+        assert!(first_title.contains("Loading repository sources"));
+        assert!(second_title.contains("Loading repository sources"));
     }
 
     #[test]
@@ -1339,7 +1505,9 @@ mod tests {
             "billing-retry-audit".to_string(),
             "Billing retry audit".to_string(),
             available_repositories(),
+            Vec::new(),
             attached_repositories(),
+            repo_workspaces(),
         );
         state.start_repo_step(
             crate::interfaces::tui::repo_state::RepoOperation::Remove,
@@ -1375,7 +1543,9 @@ mod tests {
             "billing-retry-audit".to_string(),
             "Billing retry audit".to_string(),
             available_repositories(),
+            Vec::new(),
             attached_repositories(),
+            repo_workspaces(),
         );
         state.start_repo_step(
             crate::interfaces::tui::repo_state::RepoOperation::Add,
@@ -1555,6 +1725,26 @@ mod tests {
         ]
     }
 
+    fn many_available_repositories(count: usize) -> Vec<AvailableRepository> {
+        (0..count)
+            .map(|index| AvailableRepository {
+                name_with_owner: format!("openai/repo-{index:02}"),
+                default_branch: "main".to_string(),
+                url: format!("https://github.com/openai/repo-{index:02}"),
+                ssh_url: format!("git@github.com:openai/repo-{index:02}.git"),
+            })
+            .collect()
+    }
+
+    fn local_candidates() -> Vec<RepositoryCandidate> {
+        vec![RepositoryCandidate {
+            name_with_owner: "openai/local-tool".to_string(),
+            branch: "feature/workon".to_string(),
+            path: PathBuf::from("/tmp/repos/local-tool"),
+            url: "https://github.com/openai/local-tool".to_string(),
+        }]
+    }
+
     fn attached_repositories() -> Vec<AttachedRepository> {
         vec![AttachedRepository {
             name_with_owner: "openai/workon".to_string(),
@@ -1565,6 +1755,23 @@ mod tests {
             default_branch: "trunk".to_string(),
             url: "https://github.com/openai/workon".to_string(),
         }]
+    }
+
+    fn repo_workspaces() -> Vec<RepositoryWorkspace> {
+        vec![RepositoryWorkspace {
+            path: PathBuf::from("/tmp/repos"),
+        }]
+    }
+
+    fn multiple_repo_workspaces() -> Vec<RepositoryWorkspace> {
+        vec![
+            RepositoryWorkspace {
+                path: PathBuf::from("/tmp/repos"),
+            },
+            RepositoryWorkspace {
+                path: PathBuf::from("/tmp/client-repos"),
+            },
+        ]
     }
 
     fn render_content(state: &TuiState, width: u16, height: u16) -> String {

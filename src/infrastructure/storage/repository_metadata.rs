@@ -75,8 +75,9 @@ mod tests {
         assert!(content.contains("\"name_with_owner\": \"openai/workon\""));
         assert!(content.contains("\"default_branch\": \"main\""));
         assert!(content.contains("\"url\": \"https://github.com/openai/workon\""));
+        assert!(content.contains("\"alias\": \"workon\""));
+        assert!(content.contains("\"target_path\": \"/tmp/workon\""));
         assert!(!content.contains("\"branch\""));
-        assert!(!content.contains("\"path\""));
         assert!(content.ends_with('\n'));
     }
 
@@ -103,7 +104,16 @@ mod tests {
             .read(root.path())
             .expect("legacy metadata should read");
 
-        assert_eq!(repositories, vec![attached_repository()]);
+        assert_eq!(
+            repositories,
+            vec![RepositoryAttachment {
+                name_with_owner: "openai/workon".to_string(),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/workon".to_string(),
+                alias: String::new(),
+                target_path: PathBuf::new(),
+            }]
+        );
     }
 
     fn attached_repository() -> RepositoryAttachment {
@@ -111,6 +121,8 @@ mod tests {
             name_with_owner: "openai/workon".to_string(),
             default_branch: "main".to_string(),
             url: "https://github.com/openai/workon".to_string(),
+            alias: "workon".to_string(),
+            target_path: "/tmp/workon".into(),
         }
     }
 

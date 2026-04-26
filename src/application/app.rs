@@ -25,7 +25,17 @@ impl App {
             Command::AddWorkRepositories {
                 query,
                 repositories,
-            } => repository_context::add(&self.store, &self.intents, &query, &repositories),
+                workspace,
+            } => repository_context::add(
+                &self.store,
+                &self.intents,
+                &query,
+                &repositories,
+                workspace.as_deref(),
+            ),
+            Command::AddRepositoryWorkspaces { paths } => {
+                repository_context::add_workspaces(&self.store, &paths)
+            }
             Command::ArchiveWork { query } => work::archive::execute(&self.store, &query),
             Command::Context => context_status::execute(),
             Command::CreateWork { goal, intent_id } => {
@@ -36,6 +46,10 @@ impl App {
             }
             Command::InstallShell => shell::install::install_shell(),
             Command::ListGitHubRepositories => repository_context::list_available(),
+            Command::ListRepositoryCandidates { query } => {
+                repository_context::discover(&self.store, &query)
+            }
+            Command::ListRepositoryWorkspaces => repository_context::list_workspaces(&self.store),
             Command::ListWorkRepositories { query } => {
                 repository_context::list_attached(&self.store, &query)
             }
@@ -47,6 +61,12 @@ impl App {
                 intent_id.as_deref(),
             ),
             Command::OpenWork { query } => work::open::execute(&self.store, &query),
+            Command::LinkWorkRepositories { query, paths } => {
+                repository_context::link(&self.store, &self.intents, &query, &paths)
+            }
+            Command::RemoveRepositoryWorkspace { path } => {
+                repository_context::remove_workspace(&self.store, &path)
+            }
             Command::RemoveWorkRepositories {
                 query,
                 repositories,

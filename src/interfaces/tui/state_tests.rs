@@ -2,9 +2,12 @@ use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::repo_state::{RepoPane, RepoStatus};
+use super::repo_state::{RepoCatalogRow, RepoPane, RepoStatus};
 use super::state::{Toast, TraceKind, TuiAction, TuiMode, TuiState};
-use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
+use crate::domain::{
+    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryWorkspace, WorkList,
+    WorkSummary,
+};
 
 #[test]
 fn filters_work_by_title_slug_intent_and_goal() {
@@ -271,9 +274,23 @@ fn slash_leader_opens_repo_context_for_highlighted_work() {
     assert_eq!(
         state.repo.status,
         RepoStatus::Loading {
-            message: "Loading GitHub repositories".to_string()
+            message: "Loading repository sources".to_string()
         }
     );
+}
+
+#[test]
+fn repo_context_ignores_text_input_while_loading() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_loading(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Char('w'))), TuiAction::None);
+
+    assert_eq!(state.mode, TuiMode::Repos);
+    assert!(state.repo.filter.is_empty());
 }
 
 #[test]
@@ -283,14 +300,17 @@ fn repo_context_keeps_github_catalog_visible_with_attached_repositories() {
         "billing-retry-audit".to_string(),
         "Billing retry audit".to_string(),
         available_repositories(),
+        Vec::new(),
         attached_repositories(),
+        repo_workspaces(),
     );
 
     assert_eq!(state.mode, TuiMode::Repos);
     let names = state
-        .filtered_available_repositories()
+        .repo
+        .catalog_rows()
         .into_iter()
-        .map(|repository| repository.name_with_owner.clone())
+        .map(|repository| repository.name().to_string())
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -304,13 +324,35 @@ fn repo_context_keeps_github_catalog_visible_with_attached_repositories() {
 }
 
 #[test]
+fn repo_context_prefers_local_catalog_row_over_github_duplicate() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        duplicate_local_candidate(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+    state.repo.filter = "api-docs".to_string();
+
+    let rows = state.repo.catalog_rows();
+
+    assert_eq!(rows.len(), 1);
+    assert!(matches!(rows[0], RepoCatalogRow::Local(_)));
+    assert_eq!(rows[0].name(), "openai/api-docs");
+}
+
+#[test]
 fn repo_context_updates_work_detail_repository_index() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
         "Billing retry audit".to_string(),
         available_repositories(),
+        Vec::new(),
         attached_repositories(),
+        repo_workspaces(),
     );
 
     let selected = state
@@ -336,7 +378,9 @@ fn repo_context_applies_pending_adds_and_removes_from_two_panel_picker() {
         "billing-retry-audit".to_string(),
         "Billing retry audit".to_string(),
         available_repositories(),
+        Vec::new(),
         attached_repositories(),
+        repo_workspaces(),
     );
 
     assert_eq!(state.repo.focus, RepoPane::Catalog);
@@ -349,8 +393,10 @@ fn repo_context_applies_pending_adds_and_removes_from_two_panel_picker() {
         TuiAction::ApplyRepoChanges {
             work_slug: "billing-retry-audit".to_string(),
             add: vec!["openai/api-docs".to_string()],
+            link: Vec::new(),
             remove: vec!["openai/api".to_string()],
             force_remove: false,
+            workspace: Some(PathBuf::from("/tmp/repos")),
         }
     );
 }
@@ -362,7 +408,9 @@ fn repo_context_can_arm_force_remove_for_pending_removals() {
         "billing-retry-audit".to_string(),
         "Billing retry audit".to_string(),
         available_repositories(),
+        Vec::new(),
         attached_repositories(),
+        repo_workspaces(),
     );
     state.repo.focus = RepoPane::Selected;
 
@@ -375,8 +423,359 @@ fn repo_context_can_arm_force_remove_for_pending_removals() {
         TuiAction::ApplyRepoChanges {
             work_slug: "billing-retry-audit".to_string(),
             add: Vec::new(),
+            link: Vec::new(),
             remove: vec!["openai/api".to_string()],
             force_remove: true,
+            workspace: None,
+        }
+    );
+}
+
+#[test]
+fn repo_context_opens_workspace_dialog_when_setup_is_required() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        Vec::new(),
+    );
+
+    assert!(state.repo.workspace_dialog_open());
+
+    for character in "/tmp/repo-space".chars() {
+        state.handle_key(key(KeyCode::Char(character)));
+    }
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::AddRepoWorkspaces {
+            work_slug: "billing-retry-audit".to_string(),
+            paths: vec![PathBuf::from("/tmp/repo-space")],
+        }
+    );
+}
+
+#[test]
+fn repo_context_setup_accepts_multiple_workspace_paths() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        Vec::new(),
+    );
+
+    assert!(state.repo.workspace_dialog_open());
+
+    for character in "/tmp/repo-a, /tmp/repo-b".chars() {
+        state.handle_key(key(KeyCode::Char(character)));
+    }
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::AddRepoWorkspaces {
+            work_slug: "billing-retry-audit".to_string(),
+            paths: vec![PathBuf::from("/tmp/repo-a"), PathBuf::from("/tmp/repo-b")],
+        }
+    );
+}
+
+#[test]
+fn repo_context_uses_workspace_after_required_setup_dialog_closes() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        Vec::new(),
+    );
+    state.update_repo_workspaces(repo_workspaces());
+    assert!(state.repo.workspace_dialog_open());
+    state.repo.mark_workspace_dialog_dirty();
+    assert_eq!(
+        state.handle_key(key(KeyCode::Esc)),
+        TuiAction::RefreshRepoIndex {
+            work_slug: "billing-retry-audit".to_string(),
+        }
+    );
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Char(' ')));
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::ApplyRepoChanges {
+            work_slug: "billing-retry-audit".to_string(),
+            add: vec!["openai/api-docs".to_string()],
+            link: Vec::new(),
+            remove: Vec::new(),
+            force_remove: false,
+            workspace: Some(PathBuf::from("/tmp/repos")),
+        }
+    );
+}
+
+#[test]
+fn repo_context_treats_w_as_filter_text() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Char('w'))), TuiAction::None);
+
+    assert_eq!(state.repo.filter, "w");
+    assert_eq!(
+        state.repo.selected_workspace_path(),
+        Some(PathBuf::from("/tmp/repos"))
+    );
+}
+
+#[test]
+fn repo_context_selects_creation_workspace_without_blocking_filter_text() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        multiple_repo_workspaces(),
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Tab)), TuiAction::None);
+    assert_eq!(state.repo.focus, RepoPane::Workspace);
+    assert_eq!(state.handle_key(key(KeyCode::Down)), TuiAction::None);
+    assert_eq!(
+        state.repo.selected_workspace_path(),
+        Some(PathBuf::from("/tmp/client-repos"))
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Char('w'))), TuiAction::None);
+    assert_eq!(state.repo.focus, RepoPane::Catalog);
+    assert_eq!(state.repo.filter, "w");
+}
+
+#[test]
+fn repo_context_can_add_more_workspaces_from_dialog() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Char('+'))), TuiAction::None);
+    assert!(state.repo.workspace_dialog_open());
+    state.handle_key(key(KeyCode::Tab));
+    for character in "/tmp/more-repos".chars() {
+        state.handle_key(key(KeyCode::Char(character)));
+    }
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::AddRepoWorkspaces {
+            work_slug: "billing-retry-audit".to_string(),
+            paths: vec![PathBuf::from("/tmp/more-repos")],
+        }
+    );
+    assert!(state.repo.workspace_dialog_open());
+}
+
+#[test]
+fn repo_context_can_cancel_add_workspace_dialog() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+
+    state.handle_key(key(KeyCode::Char('+')));
+    state.handle_key(key(KeyCode::Tab));
+    state.handle_key(key(KeyCode::Char('/')));
+    state.handle_key(key(KeyCode::Char('t')));
+
+    assert_eq!(state.handle_key(key(KeyCode::Esc)), TuiAction::None);
+    assert!(!state.repo.workspace_dialog_open());
+    assert_eq!(state.mode, TuiMode::Repos);
+}
+
+#[test]
+fn repo_context_workspace_dialog_keeps_list_selection_while_typing() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        multiple_repo_workspaces(),
+    );
+
+    state.handle_key(key(KeyCode::Char('+')));
+    state.handle_key(key(KeyCode::Char('/')));
+    state.handle_key(key(KeyCode::Down));
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Char(' '))),
+        TuiAction::RemoveRepoWorkspace {
+            work_slug: "billing-retry-audit".to_string(),
+            path: PathBuf::from("/tmp/client-repos"),
+        }
+    );
+}
+
+#[test]
+fn repo_context_can_remove_workspaces_from_dialog() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        multiple_repo_workspaces(),
+    );
+
+    state.handle_key(key(KeyCode::Char('+')));
+    state.handle_key(key(KeyCode::Down));
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::RemoveRepoWorkspace {
+            work_slug: "billing-retry-audit".to_string(),
+            path: PathBuf::from("/tmp/client-repos"),
+        }
+    );
+}
+
+#[test]
+fn repo_context_refreshes_repo_index_when_closing_dirty_workspace_dialog() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+
+    state.handle_key(key(KeyCode::Char('+')));
+    state.repo.mark_workspace_dialog_dirty();
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Esc)),
+        TuiAction::RefreshRepoIndex {
+            work_slug: "billing-retry-audit".to_string(),
+        }
+    );
+    assert!(!state.repo.workspace_dialog_open());
+}
+
+#[test]
+fn repo_context_applies_github_adds_to_selected_workspace() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        multiple_repo_workspaces(),
+    );
+
+    state.handle_key(key(KeyCode::Tab));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Left));
+    state.repo.filter = "api-docs".to_string();
+    state.handle_key(key(KeyCode::Char(' ')));
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::ApplyRepoChanges {
+            work_slug: "billing-retry-audit".to_string(),
+            add: vec!["openai/api-docs".to_string()],
+            link: Vec::new(),
+            remove: Vec::new(),
+            force_remove: false,
+            workspace: Some(PathBuf::from("/tmp/client-repos")),
+        }
+    );
+}
+
+#[test]
+fn repo_context_keeps_github_and_local_selection_for_same_repo_exclusive() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        duplicate_local_candidate(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+    state.repo.filter = "api-docs".to_string();
+
+    state.handle_key(key(KeyCode::Char(' ')));
+    state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Char(' ')));
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::ApplyRepoChanges {
+            work_slug: "billing-retry-audit".to_string(),
+            add: Vec::new(),
+            link: vec![PathBuf::from("/tmp/repos/api-docs")],
+            remove: Vec::new(),
+            force_remove: false,
+            workspace: None,
+        }
+    );
+}
+
+#[test]
+fn repo_context_links_selected_local_candidate() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        local_candidates(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+    state.repo.filter = "local".to_string();
+
+    state.handle_key(key(KeyCode::Char(' ')));
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::ApplyRepoChanges {
+            work_slug: "billing-retry-audit".to_string(),
+            add: Vec::new(),
+            link: vec![PathBuf::from("/tmp/repos/local-tool")],
+            remove: Vec::new(),
+            force_remove: false,
+            workspace: None,
         }
     );
 }
@@ -613,6 +1012,41 @@ fn attached_repositories() -> Vec<AttachedRepository> {
             ),
             default_branch: "trunk".to_string(),
             url: "https://github.com/openai/workon".to_string(),
+        },
+    ]
+}
+
+fn local_candidates() -> Vec<RepositoryCandidate> {
+    vec![RepositoryCandidate {
+        name_with_owner: "openai/local-tool".to_string(),
+        branch: "feature/workon".to_string(),
+        path: PathBuf::from("/tmp/repos/local-tool"),
+        url: "https://github.com/openai/local-tool".to_string(),
+    }]
+}
+
+fn duplicate_local_candidate() -> Vec<RepositoryCandidate> {
+    vec![RepositoryCandidate {
+        name_with_owner: "openai/api-docs".to_string(),
+        branch: "feature/workon".to_string(),
+        path: PathBuf::from("/tmp/repos/api-docs"),
+        url: "https://github.com/openai/api-docs".to_string(),
+    }]
+}
+
+fn repo_workspaces() -> Vec<RepositoryWorkspace> {
+    vec![RepositoryWorkspace {
+        path: PathBuf::from("/tmp/repos"),
+    }]
+}
+
+fn multiple_repo_workspaces() -> Vec<RepositoryWorkspace> {
+    vec![
+        RepositoryWorkspace {
+            path: PathBuf::from("/tmp/repos"),
+        },
+        RepositoryWorkspace {
+            path: PathBuf::from("/tmp/client-repos"),
         },
     ]
 }

@@ -5,6 +5,7 @@ mod keys;
 mod repo_jobs;
 mod repo_state;
 mod repo_ui;
+mod repo_workspaces;
 mod state;
 #[cfg(test)]
 mod state_tests;
@@ -24,7 +25,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 
 use crate::application::{App, Command, CommandOutput};
-use crate::domain::{AttachedRepository, WorkList};
+use crate::domain::{AttachedRepository, WorkSummary};
 use crate::shared::error::{Result, WorkonError};
 
 use self::animation::{input_poll_timeout, AnimationRuntime, AnimationSnapshot};
@@ -43,11 +44,9 @@ pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {
         unreachable!("list works command returns work list");
     };
-    let attached_repositories = load_attached_repository_index(app, &work_list)?;
 
     let mut state = TuiState::new(work_list)
         .with_intents(app.available_intents())
-        .with_attached_repositories(attached_repositories)
         .with_root(root)
         .with_current_directory(std::env::current_dir().ok().as_deref());
     state.push_trace(TraceKind::Run, "list loaded");
@@ -118,15 +117,21 @@ fn run_loop(
     let mut animation = AnimationRuntime::default();
     let mut last_frame = Instant::now();
     let mut repo_load_job: Option<RepoLoadJob> = None;
+    let mut attached_repository_index_job =
+        Some(spawn_attached_repository_index(app.clone(), state));
 
     loop {
         poll_repo_load_job(&mut repo_load_job, state);
+        poll_attached_repository_index_job(&mut attached_repository_index_job, state);
         let elapsed = last_frame.elapsed();
         last_frame = Instant::now();
         draw_frame(terminal, state, &mut animation, elapsed)?;
 
         let Some(key) = read_next_key(
-            animation.is_animating() || state.is_title_activity_active() || repo_load_job.is_some(),
+            animation.is_animating()
+                || state.is_title_activity_active()
+                || repo_load_job.is_some()
+                || attached_repository_index_job.is_some(),
         )?
         else {
             state.advance_activity_frame();
@@ -143,6 +148,8 @@ fn run_loop(
             TuiAction::Archive(slug) => match app.execute(Command::ArchiveWork { query: slug }) {
                 Ok(CommandOutput::WorkArchived(work)) => {
                     reload_work_list(app, state)?;
+                    attached_repository_index_job =
+                        Some(spawn_attached_repository_index(app.clone(), state));
                     state.toast = Some(Toast::info(
                         "Work archived",
                         &work.archive_path.display().to_string(),
@@ -161,6 +168,8 @@ fn run_loop(
                 match app.execute(Command::CreateWork { goal, intent_id }) {
                     Ok(CommandOutput::WorkCreated(work)) => {
                         reload_work_list(app, state)?;
+                        attached_repository_index_job =
+                            Some(spawn_attached_repository_index(app.clone(), state));
                         state.clear_filter_context();
                         state.select_slug(&work.slug);
                         state.toast = Some(Toast::info(
@@ -184,22 +193,147 @@ fn run_loop(
             TuiAction::ApplyRepoChanges {
                 work_slug,
                 add,
+                link,
                 remove,
                 force_remove,
+                workspace,
             } => {
                 let request = RepoChangeRequest {
                     work_slug,
                     add,
+                    link,
                     remove,
                     force_remove,
+                    workspace,
                 };
                 let outcome = apply_repo_changes(app, terminal, state, &mut animation, &request)?;
                 refresh_attached_repositories(app, state, &request.work_slug);
                 show_repo_batch_outcome(state, outcome);
             }
+            TuiAction::AddRepoWorkspaces { work_slug, paths } => {
+                match app.execute(Command::AddRepositoryWorkspaces {
+                    paths: paths.clone(),
+                }) {
+                    Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
+                        let count = workspaces.workspaces.len();
+                        let dialog_open = state.repo.workspace_dialog_open();
+                        state.update_repo_workspaces(workspaces.workspaces);
+                        if dialog_open {
+                            state.repo.mark_workspace_dialog_dirty();
+                        }
+                        let configured = paths
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        state.toast = Some(Toast::info(
+                            "Repo workspace ready",
+                            &format!("{} configured", paths.len()),
+                        ));
+                        state.push_repo_log(
+                            TraceKind::Sync,
+                            format!("repo workspace added {configured}"),
+                        );
+                        state.push_trace(
+                            TraceKind::Sync,
+                            format!("repo workspaces configured: {count}"),
+                        );
+                        if !dialog_open {
+                            refresh_repository_candidates(app, state, &work_slug);
+                        }
+                    }
+                    Ok(_) => unreachable!("add repository workspace returns repository workspaces"),
+                    Err(error) => {
+                        state.toast =
+                            Some(Toast::error("Repo workspace failed", &error.to_string()));
+                        state.push_repo_log(
+                            TraceKind::Err,
+                            format!("repo workspace failed: {error}"),
+                        );
+                        state.push_trace(TraceKind::Err, format!("repo workspace failed: {error}"));
+                    }
+                }
+                if state.repo.work_slug != work_slug {
+                    state.push_trace(
+                        TraceKind::Warn,
+                        format!("repo workspace setup returned for stale work {work_slug}"),
+                    );
+                }
+            }
+            TuiAction::RemoveRepoWorkspace { work_slug, path } => {
+                match app.execute(Command::RemoveRepositoryWorkspace { path: path.clone() }) {
+                    Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
+                        let count = workspaces.workspaces.len();
+                        let dialog_open = state.repo.workspace_dialog_open();
+                        state.update_repo_workspaces(workspaces.workspaces);
+                        if dialog_open {
+                            state.repo.mark_workspace_dialog_dirty();
+                        }
+                        state.toast = Some(Toast::info(
+                            "Repo workspace removed",
+                            &path.display().to_string(),
+                        ));
+                        state.push_repo_log(
+                            TraceKind::Sync,
+                            format!("repo workspace removed {}", path.display()),
+                        );
+                        state.push_trace(
+                            TraceKind::Sync,
+                            format!("repo workspaces configured: {count}"),
+                        );
+                        if !dialog_open {
+                            refresh_repository_candidates(app, state, &work_slug);
+                        }
+                    }
+                    Ok(_) => {
+                        unreachable!("remove repository workspace returns repository workspaces")
+                    }
+                    Err(error) => {
+                        state.toast =
+                            Some(Toast::error("Repo workspace failed", &error.to_string()));
+                        state.push_repo_log(
+                            TraceKind::Err,
+                            format!("repo workspace failed: {error}"),
+                        );
+                        state.push_trace(TraceKind::Err, format!("repo workspace failed: {error}"));
+                    }
+                }
+                if state.repo.work_slug != work_slug {
+                    state.push_trace(
+                        TraceKind::Warn,
+                        format!("repo workspace removal returned for stale work {work_slug}"),
+                    );
+                }
+            }
+            TuiAction::RefreshRepoIndex { work_slug } => {
+                refresh_repository_candidates(app, state, &work_slug);
+            }
         }
         animation.observe_transition(before, AnimationSnapshot::from_state(state));
         last_frame = Instant::now();
+    }
+}
+
+fn refresh_repository_candidates(app: &App, state: &mut TuiState, work_slug: &str) {
+    match app.execute(Command::ListRepositoryCandidates {
+        query: work_slug.to_string(),
+    }) {
+        Ok(CommandOutput::RepositoryCandidates(candidates)) => {
+            let count = candidates.candidates.len();
+            state.update_repo_candidates(candidates.candidates);
+            state.push_repo_log(TraceKind::Sync, format!("discovered {count} local repos"));
+        }
+        Ok(_) => unreachable!("list repository candidates command returns candidates"),
+        Err(error) => {
+            state.push_repo_log(
+                TraceKind::Warn,
+                format!("local repo discovery unavailable: {error}"),
+            );
+            state.push_trace(
+                TraceKind::Warn,
+                format!("local repo discovery unavailable: {error}"),
+            );
+        }
     }
 }
 
@@ -235,19 +369,79 @@ fn reload_work_list(app: &App, state: &mut TuiState) -> Result<()> {
     let CommandOutput::WorkList(work_list) = app.execute(Command::ListWorks)? else {
         unreachable!("list works command returns work list");
     };
-    let attached_repositories = load_attached_repository_index(app, &work_list)?;
     state.set_work_list(work_list);
-    state.set_attached_repositories(attached_repositories);
     Ok(())
+}
+
+struct AttachedRepositoryIndexJob {
+    generation: u64,
+    receiver: Receiver<Result<BTreeMap<String, Vec<AttachedRepository>>>>,
+}
+
+fn spawn_attached_repository_index(app: App, state: &mut TuiState) -> AttachedRepositoryIndexJob {
+    let generation = state.start_repository_index_loading();
+    state.push_trace(TraceKind::Run, "repository index loading");
+    let works = state.works.clone();
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(load_attached_repository_index(&app, &works));
+    });
+
+    AttachedRepositoryIndexJob {
+        generation,
+        receiver,
+    }
+}
+
+fn poll_attached_repository_index_job(
+    job: &mut Option<AttachedRepositoryIndexJob>,
+    state: &mut TuiState,
+) {
+    let Some(active_job) = job else {
+        return;
+    };
+
+    let result = match active_job.receiver.try_recv() {
+        Ok(result) => result,
+        Err(TryRecvError::Empty) => return,
+        Err(TryRecvError::Disconnected) => Err(WorkonError::RepositoryContext {
+            message: "repository index loader stopped before returning a result".to_string(),
+        }),
+    };
+
+    if active_job.generation != state.repository_index_generation {
+        *job = None;
+        return;
+    }
+
+    match result {
+        Ok(repositories) => {
+            let work_count = repositories.len();
+            state.set_attached_repositories(repositories);
+            state.push_trace(
+                TraceKind::Sync,
+                format!("repository index loaded for {work_count} works"),
+            );
+        }
+        Err(error) => {
+            state.finish_repository_index_loading();
+            state.push_trace(
+                TraceKind::Warn,
+                format!("repository index unavailable: {error}"),
+            );
+        }
+    }
+
+    *job = None;
 }
 
 fn load_attached_repository_index(
     app: &App,
-    work_list: &WorkList,
+    works: &[WorkSummary],
 ) -> Result<BTreeMap<String, Vec<AttachedRepository>>> {
     let mut repositories = BTreeMap::new();
 
-    for work in &work_list.works {
+    for work in works {
         let CommandOutput::WorkRepositories(attached) =
             app.execute(Command::ListWorkRepositories {
                 query: work.slug.clone(),
@@ -264,8 +458,11 @@ fn load_attached_repository_index(
 struct RepoContextData {
     work: crate::domain::WorkSummary,
     available: Vec<crate::domain::AvailableRepository>,
+    candidates: Vec<crate::domain::RepositoryCandidate>,
     attached: Vec<crate::domain::AttachedRepository>,
+    workspaces: Vec<crate::domain::RepositoryWorkspace>,
     catalog_error: Option<String>,
+    candidate_error: Option<String>,
 }
 
 struct RepoLoadJob {
@@ -309,17 +506,23 @@ fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>)
     match result {
         Ok(repo_context) => {
             let available_count = repo_context.available.len();
+            let candidate_count = repo_context.candidates.len();
             let attached_count = repo_context.attached.len();
             let catalog_error = repo_context.catalog_error;
+            let candidate_error = repo_context.candidate_error;
             state.enter_repo_context(
                 repo_context.work.slug,
                 repo_context.work.title,
                 repo_context.available,
+                repo_context.candidates,
                 repo_context.attached,
+                repo_context.workspaces,
             );
             state.push_repo_log(
                 TraceKind::Sync,
-                format!("loaded {available_count} GitHub repos, {attached_count} selected"),
+                format!(
+                    "loaded {available_count} GitHub repos, {candidate_count} local repos, {attached_count} selected"
+                ),
             );
             state.push_trace(TraceKind::Run, "repo context loaded");
             if let Some(error) = catalog_error {
@@ -332,6 +535,16 @@ fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>)
                     format!("GitHub catalog unavailable: {error}"),
                 );
                 state.set_repo_failed(format!("GitHub catalog unavailable: {error}"));
+            }
+            if let Some(error) = candidate_error {
+                state.push_trace(
+                    TraceKind::Warn,
+                    format!("local repo discovery unavailable: {error}"),
+                );
+                state.push_repo_log(
+                    TraceKind::Warn,
+                    format!("local repo discovery unavailable: {error}"),
+                );
             }
         }
         Err(error) => {
@@ -356,11 +569,32 @@ fn load_repo_context(app: &App, work_slug: &str) -> Result<RepoContextData> {
         Err(error) => (Vec::new(), Some(error.to_string())),
     };
 
+    let CommandOutput::RepositoryWorkspaces(workspaces) =
+        app.execute(Command::ListRepositoryWorkspaces)?
+    else {
+        unreachable!("list repository workspaces command returns repository workspaces");
+    };
+
+    let (candidates, candidate_error) = if workspaces.workspaces.is_empty() {
+        (Vec::new(), None)
+    } else {
+        match app.execute(Command::ListRepositoryCandidates {
+            query: work_slug.to_string(),
+        }) {
+            Ok(CommandOutput::RepositoryCandidates(candidates)) => (candidates.candidates, None),
+            Ok(_) => unreachable!("list repository candidates command returns candidates"),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        }
+    };
+
     Ok(RepoContextData {
         work: attached.work,
         available,
+        candidates,
         attached: attached.repositories,
+        workspaces: workspaces.workspaces,
         catalog_error,
+        candidate_error,
     })
 }
 
@@ -547,6 +781,8 @@ fn first_error_line(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::mpsc;
     use std::time::Duration;
 
     use crate::domain::{AttachedRepository, WorkList, WorkSummary};
@@ -557,7 +793,8 @@ mod tests {
     };
     use super::state::{Toast, TraceKind, TuiMode, TuiState};
     use super::{
-        apply_repo_load_result, show_repo_batch_outcome, RepoBatchOutcome, RepoContextData,
+        apply_repo_load_result, poll_attached_repository_index_job, show_repo_batch_outcome,
+        AttachedRepositoryIndexJob, RepoBatchOutcome, RepoContextData,
     };
 
     #[test]
@@ -568,7 +805,7 @@ mod tests {
             RepoBatchOutcome {
                 successes: 0,
                 failures: vec![
-                    "example/private-repo: contains modified files\nrepository context command failed: git -C /cache worktree remove /work/repos/repo".to_string(),
+                    "example/private-repo: failed to remove repository link\nrepository context command failed".to_string(),
                 ],
                 cancelled: false,
                 skipped: 0,
@@ -579,7 +816,7 @@ mod tests {
         assert_eq!(toast.title, "Repository context failed");
         assert_eq!(
             toast.message,
-            "example/private-repo: contains modified files"
+            "example/private-repo: failed to remove repository link"
         );
         assert_eq!(state.trace[0].kind, TraceKind::Err);
     }
@@ -594,8 +831,11 @@ mod tests {
             Ok(RepoContextData {
                 work,
                 available: Vec::new(),
+                candidates: Vec::new(),
                 attached: attached_repositories(),
+                workspaces: Vec::new(),
                 catalog_error: Some("gh auth required".to_string()),
+                candidate_error: None,
             }),
         );
 
@@ -609,6 +849,37 @@ mod tests {
             .any(|row| row.name_with_owner == "openai/workon"));
         let toast = state.toast.expect("catalog failure should show a toast");
         assert_eq!(toast.title, "GitHub catalog unavailable");
+    }
+
+    #[test]
+    fn stale_repository_index_job_does_not_overwrite_newer_attached_repositories() {
+        let mut state = TuiState::new(work_list());
+        let generation = state.start_repository_index_loading();
+        state.repo.work_slug = "billing-retry-audit".to_string();
+        state.update_attached_repositories(attached_repositories());
+
+        let (sender, receiver) = mpsc::channel();
+        let mut stale = BTreeMap::new();
+        stale.insert("billing-retry-audit".to_string(), Vec::new());
+        sender
+            .send(Ok(stale))
+            .expect("test repository index should send");
+        let mut job = Some(AttachedRepositoryIndexJob {
+            generation,
+            receiver,
+        });
+
+        poll_attached_repository_index_job(&mut job, &mut state);
+
+        assert!(job.is_none());
+        assert_eq!(
+            state
+                .attached_repositories
+                .get("billing-retry-audit")
+                .expect("newer attached repos should remain")
+                .len(),
+            1
+        );
     }
 
     #[test]

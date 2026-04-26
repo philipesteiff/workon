@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::domain::{AttachedRepository, AvailableRepository, WorkList, WorkSummary};
+use crate::domain::{
+    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryWorkspace, WorkList,
+    WorkSummary,
+};
 
 use super::repo_state::{RepoOperation, RepoPickerState, SelectedRepositoryRow};
 
@@ -19,6 +22,8 @@ pub(super) struct TuiState {
     pub(super) root: PathBuf,
     pub(super) current_work_path: Option<PathBuf>,
     pub(super) attached_repositories: BTreeMap<String, Vec<AttachedRepository>>,
+    pub(super) repository_index_loading: bool,
+    pub(super) repository_index_generation: u64,
     pub(super) trace: Vec<TraceEvent>,
     pub(super) trace_visible: bool,
     pub(super) toast: Option<Toast>,
@@ -77,8 +82,21 @@ pub(super) enum TuiAction {
     ApplyRepoChanges {
         work_slug: String,
         add: Vec<String>,
+        link: Vec<PathBuf>,
         remove: Vec<String>,
         force_remove: bool,
+        workspace: Option<PathBuf>,
+    },
+    AddRepoWorkspaces {
+        work_slug: String,
+        paths: Vec<PathBuf>,
+    },
+    RemoveRepoWorkspace {
+        work_slug: String,
+        path: PathBuf,
+    },
+    RefreshRepoIndex {
+        work_slug: String,
     },
 }
 
@@ -97,6 +115,8 @@ impl TuiState {
             root: PathBuf::new(),
             current_work_path: None,
             attached_repositories: BTreeMap::new(),
+            repository_index_loading: false,
+            repository_index_generation: 0,
             trace: Vec::new(),
             trace_visible: false,
             toast: None,
@@ -114,6 +134,7 @@ impl TuiState {
         self
     }
 
+    #[cfg(test)]
     pub(super) fn with_attached_repositories(
         mut self,
         attached_repositories: BTreeMap<String, Vec<AttachedRepository>>,
@@ -149,6 +170,17 @@ impl TuiState {
         attached_repositories: BTreeMap<String, Vec<AttachedRepository>>,
     ) {
         self.attached_repositories = attached_repositories;
+        self.repository_index_loading = false;
+    }
+
+    pub(super) fn start_repository_index_loading(&mut self) -> u64 {
+        self.repository_index_generation = self.repository_index_generation.wrapping_add(1);
+        self.repository_index_loading = true;
+        self.repository_index_generation
+    }
+
+    pub(super) fn finish_repository_index_loading(&mut self) {
+        self.repository_index_loading = false;
     }
 
     pub(super) fn filtered_works(&self) -> Vec<&WorkSummary> {
@@ -248,13 +280,16 @@ impl TuiState {
         work_slug: String,
         work_title: String,
         available: Vec<AvailableRepository>,
+        candidates: Vec<RepositoryCandidate>,
         attached: Vec<AttachedRepository>,
+        workspaces: Vec<RepositoryWorkspace>,
     ) {
         self.mode = TuiMode::Repos;
         self.attached_repositories
             .insert(work_slug.clone(), attached.clone());
-        self.repo
-            .enter_context(work_slug, work_title, available, attached);
+        self.repo.enter_context(
+            work_slug, work_title, available, candidates, attached, workspaces,
+        );
     }
 
     pub(super) fn enter_repo_loading(&mut self, work_slug: String, work_title: String) {
@@ -273,9 +308,19 @@ impl TuiState {
     }
 
     pub(super) fn update_attached_repositories(&mut self, attached: Vec<AttachedRepository>) {
+        self.repository_index_generation = self.repository_index_generation.wrapping_add(1);
+        self.repository_index_loading = false;
         self.attached_repositories
             .insert(self.repo.work_slug.clone(), attached.clone());
         self.repo.update_attached(attached);
+    }
+
+    pub(super) fn update_repo_workspaces(&mut self, workspaces: Vec<RepositoryWorkspace>) {
+        self.repo.update_workspaces(workspaces);
+    }
+
+    pub(super) fn update_repo_candidates(&mut self, candidates: Vec<RepositoryCandidate>) {
+        self.repo.update_candidates(candidates);
     }
 
     pub(super) fn set_repo_failed(&mut self, message: impl Into<String>) {
@@ -296,20 +341,12 @@ impl TuiState {
         self.repo.push_log(kind, message);
     }
 
-    pub(super) fn filtered_available_repositories(&self) -> Vec<&AvailableRepository> {
-        self.repo.filtered_available()
-    }
-
     pub(super) fn selected_repository_rows(&self) -> Vec<SelectedRepositoryRow> {
         self.repo.selected_rows()
     }
 
     pub(super) fn is_repository_selected(&self, name_with_owner: &str) -> bool {
         self.repo.is_selected(name_with_owner)
-    }
-
-    pub(super) fn pending_repo_change_count(&self) -> usize {
-        self.repo.pending_change_count()
     }
 
     pub(super) fn filtered_indices(&self) -> Vec<usize> {
