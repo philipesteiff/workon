@@ -10,6 +10,7 @@ How AI agents should work in this repo.
 - Do not expand scope or product complexity without asking.
 - Keep artifacts readable by humans first.
 - Challenge vague ideas and state trade-offs briefly.
+- Use relevant skills when necessary.
 
 ## Product Shape
 
