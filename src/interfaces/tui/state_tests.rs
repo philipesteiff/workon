@@ -341,8 +341,8 @@ fn repo_context_keeps_github_catalog_visible_with_attached_repositories() {
         names,
         vec![
             "openai/api".to_string(),
-            "openai/api-docs".to_string(),
             "openai/workon".to_string(),
+            "openai/api-docs".to_string(),
         ]
     );
 }
@@ -409,6 +409,7 @@ fn repo_context_applies_pending_adds_and_removes_from_repository_catalog() {
 
     assert_eq!(state.repo.focus, RepoPane::Catalog);
     state.handle_key(key(KeyCode::Char(' ')));
+    state.handle_key(key(KeyCode::Down));
     state.handle_key(key(KeyCode::Down));
     state.handle_key(key(KeyCode::Char(' ')));
 
@@ -519,6 +520,7 @@ fn repo_context_uses_workspace_after_required_setup_completes() {
         Vec::new(),
     );
     state.update_repo_workspaces_from_load(repo_workspaces());
+    state.handle_key(key(KeyCode::Down));
     state.handle_key(key(KeyCode::Down));
     state.handle_key(key(KeyCode::Char(' ')));
 

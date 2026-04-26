@@ -380,6 +380,11 @@ impl RepoPickerState {
             .iter()
             .map(|repository| repository.name_with_owner.clone())
             .collect::<BTreeSet<_>>();
+        let attached_names = self
+            .attached
+            .iter()
+            .map(|repository| repository.name_with_owner.clone())
+            .collect::<BTreeSet<_>>();
 
         let mut rows = self
             .available
@@ -400,9 +405,13 @@ impl RepoPickerState {
             )
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| {
-            left.name()
-                .cmp(right.name())
-                .then(left.meta().cmp(&right.meta()))
+            let left_attached = attached_names.contains(left.name());
+            let right_attached = attached_names.contains(right.name());
+            right_attached.cmp(&left_attached).then(
+                left.name()
+                    .cmp(right.name())
+                    .then(left.meta().cmp(&right.meta())),
+            )
         });
         rows
     }
@@ -774,7 +783,6 @@ mod tests {
     #[test]
     fn repo_picker_arms_force_only_for_pending_removals() {
         let mut picker = picker();
-        picker.handle_key(key(KeyCode::Down));
         picker.handle_key(key(KeyCode::Char(' ')));
         picker.handle_key(key(KeyCode::Char('!')));
 
@@ -809,6 +817,22 @@ mod tests {
 
         assert_eq!(rows.len(), attached_repositories().len());
         assert!(rows.iter().any(|row| row.name() == "openai/workon"));
+    }
+
+    #[test]
+    fn repo_picker_sorts_attached_repositories_before_unattached_rows() {
+        let picker = picker();
+
+        let names = picker
+            .catalog_rows()
+            .into_iter()
+            .map(|row| row.name().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec!["openai/workon".to_string(), "openai/api".to_string()]
+        );
     }
 
     #[test]

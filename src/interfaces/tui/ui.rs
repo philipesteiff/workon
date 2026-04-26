@@ -1376,7 +1376,7 @@ mod tests {
             attached_repositories(),
             repo_workspaces(),
         );
-        state.repo.selected_catalog = 24;
+        state.repo.selected_catalog = 25;
 
         let content = render_content(&state, 100, 18);
 
