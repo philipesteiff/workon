@@ -2,8 +2,11 @@ use crate::application::command::{IntentProfileInput, IntentProfilePatch};
 use crate::application::CommandOutput;
 use crate::domain::{
     IntentCatalog, IntentList, IntentProfile, IntentProfileChange, IntentSource, WorkIntentSwitch,
+    WorkSummary,
 };
-use crate::infrastructure::agent_files::write_agent_files_with_repos;
+use crate::infrastructure::agent_files::{
+    validate_agent_files_context_blocks, write_agent_files_with_repos_replacing_intent,
+};
 use crate::infrastructure::git_worktree::{GitWorktree, WorktreeInspector};
 use crate::infrastructure::process::StdProcessRunner;
 use crate::infrastructure::storage::WorkStore;
@@ -121,13 +124,25 @@ pub(crate) fn switch_work_intent(
         });
     };
 
+    let current_work: WorkSummary = store.open(query)?.into();
+    validate_agent_files_context_blocks(&current_work.path)?;
+
     let (previous_intent_id, work) = store.update_intent(query, &intent.id)?;
+    let previous_intent = intents
+        .find(&previous_intent_id)
+        .unwrap_or_else(|| intent.clone());
     let metadata = JsonRepoMetadataStore;
     let runner = StdProcessRunner;
     let inspector = GitWorktree::new(&runner);
     let repository_metadata = metadata.read(&work.path)?;
     let repositories = inspector.scan(&work.path, &repository_metadata)?;
-    write_agent_files_with_repos(&work.path, &work.goal, &intent, &repositories)?;
+    write_agent_files_with_repos_replacing_intent(
+        &work.path,
+        &work.goal,
+        &intent,
+        &repositories,
+        &previous_intent,
+    )?;
 
     Ok(CommandOutput::WorkIntentSwitched(WorkIntentSwitch {
         work,

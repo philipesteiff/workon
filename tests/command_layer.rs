@@ -365,6 +365,110 @@ fn switching_work_intent_updates_metadata_and_agent_files() {
 }
 
 #[test]
+fn switching_work_intent_preserves_user_instructions_inside_context_block() {
+    let root = temp_root("intent_switch_preserves_user_instructions");
+    let app = App::new(root.path().to_path_buf());
+
+    app.execute(Command::CreateIntent {
+        input: IntentProfileInput {
+            id: "shape-context".to_string(),
+            name: "Shape Context".to_string(),
+            summary: "Shape reusable context before implementation.".to_string(),
+            skill_weights: vec!["brainstorming".to_string()],
+            mcp_weights: Vec::new(),
+            instructions: vec!["Clarify purpose before changing code.".to_string()],
+        },
+    })
+    .expect("custom intent should create");
+
+    let work = create_investigate(&app, "Preserve hand-written agent instructions");
+    let agents_path = work.path.join("AGENTS.md");
+    let custom_instructions =
+        "- User instruction: keep the migration notes with the intent defaults.\n";
+    append_instruction_before_context_end(&agents_path, custom_instructions);
+
+    app.execute(Command::SwitchWorkIntent {
+        query: work.slug,
+        intent_id: "shape-context".to_string(),
+    })
+    .expect("work intent should switch");
+
+    let agents = fs::read_to_string(agents_path).expect("agent file should exist");
+    assert!(agents.contains("Shape Context"));
+    assert!(agents.contains("Clarify purpose before changing code."));
+    assert!(!agents.contains("Investigate before answering."));
+    assert_eq!(agents.matches("<!-- wo:context:begin -->").count(), 1);
+    assert_eq!(agents.matches("<!-- wo:context:end -->").count(), 1);
+    assert!(!agents.contains("<!-- wo:intent:"));
+    assert!(agents.contains(custom_instructions));
+}
+
+#[test]
+fn switching_work_intent_rejects_duplicate_context_blocks() {
+    let root = temp_root("intent_switch_rejects_duplicate_context_blocks");
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Reject duplicate context markers");
+    let agents_path = work.path.join("AGENTS.md");
+    let mut agents = fs::read_to_string(&agents_path).expect("agent file should exist");
+    agents.push_str("\n<!-- wo:context:begin -->\nextra\n<!-- wo:context:end -->\n");
+    fs::write(&agents_path, agents).expect("agent file should update");
+
+    let error = app
+        .execute(Command::SwitchWorkIntent {
+            query: work.slug,
+            intent_id: "brainstorm".to_string(),
+        })
+        .expect_err("duplicate context blocks should fail");
+
+    assert!(error
+        .to_string()
+        .contains("AGENTS.md contains multiple wo:context blocks"));
+
+    let meta = fs::read_to_string(work.path.join("workon.meta")).expect("metadata should exist");
+    assert!(meta.contains("intent_id=investigate"));
+    assert!(!meta.contains("intent_id=brainstorm"));
+}
+
+#[test]
+fn switching_work_intent_migrates_legacy_intent_block_and_preserves_user_instructions() {
+    let root = temp_root("intent_switch_migrates_legacy_intent_block");
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Migrate legacy intent markers");
+    let agents_path = work.path.join("AGENTS.md");
+    let mut agents = fs::read_to_string(&agents_path).expect("agent file should exist");
+    agents = agents.replace("<!-- wo:context:begin -->\n", "");
+    agents = agents.replace("<!-- wo:context:end -->\n", "");
+    let previous_defaults = [
+        "- Investigate before answering.",
+        "- Prefer evidence over guesses.",
+        "- Cite files, commits, docs, tickets, or messages when available.",
+        "- Keep caveats visible.",
+        "- Write a concise answer the manager can use.",
+    ]
+    .join("\n");
+    let legacy_instructions = format!(
+        "<!-- wo:intent:begin -->\n{previous_defaults}\n<!-- wo:intent:end -->\n- User instruction: preserve during legacy migration."
+    );
+    assert!(agents.contains(&previous_defaults));
+    agents = agents.replace(&previous_defaults, &legacy_instructions);
+    fs::write(&agents_path, agents).expect("agent file should update");
+
+    app.execute(Command::SwitchWorkIntent {
+        query: work.slug,
+        intent_id: "review-pr".to_string(),
+    })
+    .expect("work intent should switch");
+
+    let agents = fs::read_to_string(agents_path).expect("agent file should exist");
+    assert!(agents.contains("Review Peer PR"));
+    assert!(agents.contains("Prioritize correctness, regressions, and missing tests."));
+    assert!(!agents.contains("Investigate before answering."));
+    assert!(agents.contains("- User instruction: preserve during legacy migration."));
+    assert_eq!(agents.matches("<!-- wo:context:begin -->").count(), 1);
+    assert_eq!(agents.matches("<!-- wo:context:end -->").count(), 1);
+}
+
+#[test]
 fn install_shell_is_a_command_layer_feature() {
     let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
     let home = temp_root("install_shell_is_a_command_layer_feature_home");
@@ -553,6 +657,8 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     let app = App::new(root.path().to_path_buf());
     let repo_workspace = configure_repo_workspace(&app, root.path());
     let work = create_investigate(&app, "Investigate repository context");
+    let custom_instruction = "- User instruction: keep repo-specific caveats visible.\n";
+    append_instruction_before_context_end(&work.path.join("AGENTS.md"), custom_instruction);
 
     let CommandOutput::WorkRepositoriesAdded(change) = app
         .execute(Command::AddWorkRepositories {
@@ -594,6 +700,7 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
         fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
     assert!(agents.contains("- openai/workon"));
     assert!(agents.contains("repos/workon"));
+    assert!(agents.contains(custom_instruction));
 
     let log = fs::read_to_string(root.path().join("tool.log")).expect("tool log should exist");
     assert!(log.contains("gh repo view openai/workon"));
@@ -931,6 +1038,21 @@ fn create_investigate(app: &App, goal: &str) -> workon::CreatedWork {
         panic!("expected WorkCreated output");
     };
     work
+}
+
+fn append_instruction_before_context_end(path: &Path, content: &str) {
+    let original = fs::read_to_string(path).expect("agent file should exist");
+    let marker = "<!-- wo:context:end -->";
+    let marker_index = original
+        .find(marker)
+        .expect("agent file should contain context block end marker");
+    let updated = format!(
+        "{}{}{}",
+        &original[..marker_index],
+        content,
+        &original[marker_index..]
+    );
+    fs::write(path, updated).expect("agent file should update");
 }
 
 fn configure_repo_workspace(app: &App, root: &Path) -> PathBuf {
