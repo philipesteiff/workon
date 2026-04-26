@@ -75,6 +75,7 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
     let mut lines = vec![repo_catalog_context_line(state, rows.is_empty())];
 
     if !rows.is_empty() {
+        lines.push(catalog_header_row(catalog_area.width));
         let line_budget = catalog_area.height.saturating_sub(lines.len() as u16) as usize;
         let reserve_detail = line_budget > 1;
         let visible_rows = if reserve_detail {
@@ -321,6 +322,45 @@ fn catalog_repo_row(data: RepoRowRenderData, selected: bool, width: u16) -> Line
         status,
         columns.status,
         theme::style_command(),
+        Truncate::End,
+    );
+    Line::from(spans)
+}
+
+fn catalog_header_row(width: u16) -> Line<'static> {
+    let columns = repo_columns(usize::from(width));
+    let mut spans = vec![
+        Span::styled("  ".to_string(), theme::style_command()),
+        Span::raw(" "),
+        Span::styled("   ".to_string(), theme::style_muted_text()),
+        Span::raw(" "),
+    ];
+    push_column(
+        &mut spans,
+        "REPOSITORY",
+        columns.name,
+        theme::style_muted_text(),
+        Truncate::End,
+    );
+    push_column(
+        &mut spans,
+        "SOURCE",
+        columns.source,
+        theme::style_muted_text(),
+        Truncate::End,
+    );
+    push_column(
+        &mut spans,
+        "BRANCH",
+        columns.branch,
+        theme::style_muted_text(),
+        Truncate::End,
+    );
+    push_column(
+        &mut spans,
+        "STATE",
+        columns.status,
+        theme::style_muted_text(),
         Truncate::End,
     );
     Line::from(spans)

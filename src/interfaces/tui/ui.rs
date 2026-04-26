@@ -1428,9 +1428,14 @@ mod tests {
         let content = render_content(&state, 160, 36);
         let buffer = render_buffer(&state, 160, 36);
         let row = row_containing(&buffer, "openai/local-tool");
+        let header_text = row_text(&buffer, row - 1);
         let local_row_text = row_text(&buffer, row);
         let detail_text = row_text(&buffer, row + 1);
 
+        assert!(header_text.contains("REPOSITORY"));
+        assert!(header_text.contains("SOURCE"));
+        assert!(header_text.contains("BRANCH"));
+        assert!(header_text.contains("STATE"));
         assert!(local_row_text.contains("openai/local-tool"));
         assert!(local_row_text.contains("local"));
         assert!(local_row_text.contains("feature/workon"));
