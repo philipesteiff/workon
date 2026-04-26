@@ -195,7 +195,7 @@ impl RepoPickerState {
         self.force_remove = false;
         self.logs.clear();
         self.status = RepoStatus::Loading {
-            message: "Loading repository sources".to_string(),
+            message: "Loading: attached, workspaces, local, GitHub".to_string(),
         };
         self.activity_frame = 0;
         self.push_log(TraceKind::Run, "repository context load started");
@@ -208,6 +208,12 @@ impl RepoPickerState {
         };
         self.activity_frame = 0;
         self.push_log(TraceKind::Run, message);
+    }
+
+    pub(super) fn update_loading_message(&mut self, message: impl Into<String>) {
+        if let RepoStatus::Loading { message: current } = &mut self.status {
+            *current = message.into();
+        }
     }
 
     pub(super) fn finish_loading(&mut self) {

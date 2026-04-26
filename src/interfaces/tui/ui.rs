@@ -1570,9 +1570,9 @@ mod tests {
             .find(|line| line.contains("WORKON // CONTROL // REPO"))
             .expect("control title should render");
 
-        assert!(title.contains("Loading repository sources"));
-        assert!(content.contains("Loading repository sources"));
-        assert!(!content.contains("LOAD Loading repository sources"));
+        assert!(title.contains("Loading: attached, workspaces, local, GitHub"));
+        assert!(content.contains("Loading: attached, workspaces, local, GitHub"));
+        assert!(!content.contains("LOAD Loading: attached, workspaces, local, GitHub"));
         assert!(!content.contains("REPO WORKSPACE SETUP"));
         assert!(!content.contains("repo workspace setup required"));
     }
@@ -1626,8 +1626,8 @@ mod tests {
         assert!(!second_title.contains("MAGI"));
         assert!(!first_title.contains("[-]"));
         assert!(!second_title.contains("[\\]"));
-        assert!(first_title.contains("Loading repository sources"));
-        assert!(second_title.contains("Loading repository sources"));
+        assert!(first_title.contains("Loading: attached, workspaces, local, GitHub"));
+        assert!(second_title.contains("Loading: attached, workspaces, local, GitHub"));
     }
 
     #[test]

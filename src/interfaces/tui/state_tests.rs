@@ -274,7 +274,7 @@ fn slash_leader_opens_repo_context_for_highlighted_work() {
     assert_eq!(
         state.repo.status,
         RepoStatus::Loading {
-            message: "Loading repository sources".to_string()
+            message: "Loading: attached, workspaces, local, GitHub".to_string()
         }
     );
 }

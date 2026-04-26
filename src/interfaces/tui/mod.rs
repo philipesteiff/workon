@@ -492,7 +492,7 @@ fn apply_repo_workspace_message(
                     record_repo_workspace_removed(state, path, count);
                 }
             }
-            state.start_repo_loading("Loading repository sources");
+            state.start_repo_loading(repo_loading_sources_message(&["local"]));
         }
         RepoWorkspaceMessage::Workspaces(Err(error)) => {
             state.toast = Some(Toast::error("Repo workspace failed", &error.to_string()));
@@ -650,6 +650,13 @@ fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
             state.repo.work_slug = attached.work.slug;
             state.repo.work_title = attached.work.title;
             state.update_repo_attached_from_load(attached.attached);
+            state
+                .repo
+                .update_loading_message(repo_loading_sources_message(&[
+                    "workspaces",
+                    "local",
+                    "GitHub",
+                ]));
             state.push_repo_log(TraceKind::Sync, format!("loaded {count} attached repos"));
         }
         RepoLoadMessage::Attached(Err(error)) => {
@@ -659,10 +666,19 @@ fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
         }
         RepoLoadMessage::Workspaces(Ok(workspaces)) => {
             let count = workspaces.len();
+            let loading_sources = if workspaces.is_empty() {
+                repo_loading_sources_message(&["GitHub"])
+            } else {
+                repo_loading_sources_message(&["local", "GitHub"])
+            };
             state.update_repo_workspaces_from_load(workspaces);
+            state.repo.update_loading_message(loading_sources);
             state.push_repo_log(TraceKind::Sync, format!("loaded {count} repo workspaces"));
         }
         RepoLoadMessage::Workspaces(Err(error)) => {
+            state
+                .repo
+                .update_loading_message(repo_loading_sources_message(&["GitHub"]));
             state.push_repo_log(
                 TraceKind::Warn,
                 format!("repo workspaces unavailable: {error}"),
@@ -675,9 +691,15 @@ fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
         RepoLoadMessage::Candidates(Ok(candidates)) => {
             let count = candidates.len();
             state.update_repo_candidates_from_load(candidates);
+            state
+                .repo
+                .update_loading_message(repo_loading_sources_message(&["GitHub"]));
             state.push_repo_log(TraceKind::Sync, format!("discovered {count} local repos"));
         }
         RepoLoadMessage::Candidates(Err(error)) => {
+            state
+                .repo
+                .update_loading_message(repo_loading_sources_message(&["GitHub"]));
             state.push_repo_log(
                 TraceKind::Warn,
                 format!("local repo discovery unavailable: {error}"),
@@ -705,6 +727,10 @@ fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
         }
         RepoLoadMessage::Finished => {}
     }
+}
+
+fn repo_loading_sources_message(sources: &[&str]) -> String {
+    format!("Loading: {}", sources.join(", "))
 }
 
 fn load_repo_context_sources(app: &App, work_slug: &str, sender: Sender<RepoLoadMessage>) {
@@ -1072,6 +1098,63 @@ mod tests {
     }
 
     #[test]
+    fn repo_load_title_removes_sources_as_they_finish() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
+
+        assert!(repo_loading_message(&state).contains("attached, workspaces, local, GitHub"));
+
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Attached(Ok(RepoAttachedData {
+                work,
+                attached: attached_repositories(),
+            })),
+        );
+        assert!(repo_loading_message(&state).contains("workspaces, local, GitHub"));
+        assert!(!repo_loading_message(&state).contains("attached"));
+
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Workspaces(Ok(vec![crate::domain::RepositoryWorkspace {
+                path: "/tmp/repos".into(),
+            }])),
+        );
+        assert!(repo_loading_message(&state).contains("local, GitHub"));
+        assert!(!repo_loading_message(&state).contains("workspaces"));
+
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Candidates(Ok(vec![crate::domain::RepositoryCandidate {
+                name_with_owner: "openai/local-tool".to_string(),
+                branch: "main".to_string(),
+                path: "/tmp/repos/local-tool".into(),
+                url: "https://github.com/openai/local-tool".to_string(),
+            }])),
+        );
+        assert_eq!(repo_loading_message(&state), "Loading: GitHub");
+    }
+
+    #[test]
+    fn repo_load_title_skips_local_when_no_workspaces_exist() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
+
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Attached(Ok(RepoAttachedData {
+                work,
+                attached: attached_repositories(),
+            })),
+        );
+        apply_repo_load_message(&mut state, RepoLoadMessage::Workspaces(Ok(Vec::new())));
+
+        assert_eq!(repo_loading_message(&state), "Loading: GitHub");
+    }
+
+    #[test]
     fn repo_workspace_job_applies_paths_before_candidate_refresh_finishes() {
         let mut state = TuiState::new(work_list());
         let work = work_list().works[0].clone();
@@ -1335,5 +1418,12 @@ mod tests {
             default_branch: "main".to_string(),
             url: "https://github.com/openai/workon".to_string(),
         }]
+    }
+
+    fn repo_loading_message(state: &TuiState) -> &str {
+        let super::repo_state::RepoStatus::Loading { message } = &state.repo.status else {
+            panic!("expected repo loading status");
+        };
+        message
     }
 }
