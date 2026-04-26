@@ -1618,10 +1618,10 @@ mod tests {
             .expect("control title should render");
 
         assert_ne!(first_title, second_title);
-        assert!(first_title.contains("SYNC"));
-        assert!(second_title.contains("SYNC"));
-        assert!(first_title.contains("::"));
-        assert!(second_title.contains("::"));
+        assert!(first_title.contains("⣾▉"));
+        assert!(second_title.contains("⣽▊"));
+        assert!(!first_title.contains("SYNC"));
+        assert!(!second_title.contains("SYNC"));
         assert!(!first_title.contains("MAGI"));
         assert!(!second_title.contains("MAGI"));
         assert!(!first_title.contains("[-]"));
@@ -1662,8 +1662,10 @@ mod tests {
             .expect("control title should render");
 
         assert_ne!(first_title, second_title);
-        assert!(first_title.contains("SYNC"));
-        assert!(second_title.contains("SYNC"));
+        assert!(first_title.contains("⣾▉"));
+        assert!(second_title.contains("⣽▊"));
+        assert!(!first_title.contains("SYNC"));
+        assert!(!second_title.contains("SYNC"));
         assert!(first_title.contains("1/1 Removing openai/workon"));
         assert!(second_title.contains("1/1 Removing openai/workon"));
     }

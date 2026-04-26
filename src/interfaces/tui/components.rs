@@ -45,14 +45,14 @@ impl TitleActivity {
 
     fn frame_label(&self) -> &'static str {
         const FRAMES: [&str; 8] = [
-            "SYNC :: .  .  .  . ",
-            "SYNC :: .. .  .  . ",
-            "SYNC :: ...   .  . ",
-            "SYNC :: ....     . ",
-            "SYNC :: .  ....    ",
-            "SYNC :: .  .  ...  ",
-            "SYNC :: .  .  .  ..",
-            "SYNC :: .  .  .  . ",
+            "⣾▉▊▋▌▍▎▏▎▍▌▋▊▉⣾ ",
+            "⣽▊▋▌▍▎▏▎▍▌▋▊▉▉⣽ ",
+            "⣻▋▌▍▎▏▎▍▌▋▊▉▉▊⣻ ",
+            "⢿▌▍▎▏▎▍▌▋▊▉▉▊▋⢿ ",
+            "⡿▍▎▏▎▍▌▋▊▉▉▊▋▌⡿ ",
+            "⣟▎▏▎▍▌▋▊▉▉▊▋▌▍⣟ ",
+            "⣯▏▎▍▌▋▊▉▉▊▋▌▍▎⣯ ",
+            "⣷▎▍▌▋▊▉▉▊▋▌▍▎▏⣷ ",
         ];
         FRAMES[self.frame % FRAMES.len()]
     }
@@ -120,4 +120,49 @@ pub(super) fn render_popup(
         Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TitleActivity;
+
+    #[test]
+    fn loading_activity_uses_braille_capped_block_wave_frames() {
+        let expected = ["⣾▉▊▋▌▍▎▏▎▍▌▋▊▉⣾ ", "⣽▊▋▌▍▎▏▎▍▌▋▊▉▉⣽ ", "⣷▎▍▌▋▊▉▉▊▋▌▍▎▏⣷ "];
+
+        let actual = [0, 1, 7]
+            .map(|frame| TitleActivity::loading("loading repositories", frame).frame_label());
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn loading_activity_frames_do_not_use_letters_or_numbers() {
+        for frame in 0..32 {
+            let label = TitleActivity::loading("loading repositories", frame).frame_label();
+
+            assert!(
+                label.chars().all(|character| !character.is_alphanumeric()),
+                "{label} should be symbol-only"
+            );
+        }
+    }
+
+    #[test]
+    fn loading_activity_frames_keep_title_width_stable() {
+        let first_width = TitleActivity::loading("loading repositories", 0)
+            .frame_label()
+            .chars()
+            .count();
+
+        for frame in 1..32 {
+            assert_eq!(
+                TitleActivity::loading("loading repositories", frame)
+                    .frame_label()
+                    .chars()
+                    .count(),
+                first_width
+            );
+        }
+    }
 }
