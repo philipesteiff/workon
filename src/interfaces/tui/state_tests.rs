@@ -372,7 +372,7 @@ fn repo_context_updates_work_detail_repository_index() {
 }
 
 #[test]
-fn repo_context_applies_pending_adds_and_removes_from_two_panel_picker() {
+fn repo_context_applies_pending_adds_and_removes_from_repository_catalog() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -412,8 +412,6 @@ fn repo_context_can_arm_force_remove_for_pending_removals() {
         attached_repositories(),
         repo_workspaces(),
     );
-    state.repo.focus = RepoPane::Selected;
-
     state.handle_key(key(KeyCode::Char(' ')));
     state.handle_key(key(KeyCode::Char('!')));
 

@@ -1292,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_repo_context_view_as_two_panel_picker() {
+    fn renders_repo_context_view_as_repository_catalog() {
         let mut state = TuiState::new(work_list());
         state.enter_repo_context(
             "billing-retry-audit".to_string(),
@@ -1307,7 +1307,8 @@ mod tests {
         assert!(attached.contains("WORKON // CONTROL // REPO"));
         assert!(!attached.contains("REPO CONTEXT"));
         assert!(attached.contains("REPOSITORIES"));
-        assert!(attached.contains("SELECTED FOR WORK"));
+        assert!(!attached.contains("SELECTED FOR WORK"));
+        assert!(!attached.contains("No repositories selected for this Work."));
         assert!(attached.contains("openai/workon"));
         assert!(attached.contains("GitHub repos create in /tmp/repos"));
         assert!(!attached.contains("type filters repos"));
@@ -1318,7 +1319,7 @@ mod tests {
         assert!(add.contains("Showing repositories matching `api`."));
         assert!(add.contains("openai/api"));
         assert!(add.contains("openai/api-docs"));
-        assert!(add.contains("openai/workon"));
+        assert!(!add.contains("openai/workon"));
     }
 
     #[test]
@@ -1344,8 +1345,7 @@ mod tests {
             content.contains("Configure repo workspaces before creating or linking repositories.")
         );
         assert!(content.contains("<type folder path>"));
-        assert!(content.contains("SELECTED FOR WORK"));
-        assert!(content.contains("openai/workon"));
+        assert!(!content.contains("SELECTED FOR WORK"));
         assert!(!content.contains("wo repos workspace add"));
         assert!(!content.contains("space selects repos"));
         assert!(!content.contains("type workspace path"));

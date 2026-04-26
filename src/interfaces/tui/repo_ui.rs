@@ -1,10 +1,10 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::{Frame, Line, Span, Stylize};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::animation::{AnimationTarget, RenderRegions};
 use super::components::{panel_block_with_title, section, status_badge};
-use super::repo_state::{RepoCatalogRow, RepoOperation, RepoPane, RepoSelectionState, RepoStatus};
+use super::repo_state::{RepoCatalogRow, RepoOperation, RepoPane, RepoStatus};
 use super::repo_workspaces;
 use super::state::{TraceKind, TuiState};
 use super::theme;
@@ -19,17 +19,7 @@ pub(super) fn render_repo_context(
         regions.set(AnimationTarget::WorkQueue, area);
     }
 
-    if area.width < 72 {
-        let [catalog, selected] =
-            Layout::vertical([Constraint::Percentage(55), Constraint::Fill(1)]).areas(area);
-        render_repo_catalog_panel(frame, catalog, state);
-        render_repo_selected_panel(frame, selected, state);
-    } else {
-        let [catalog, selected] =
-            Layout::horizontal([Constraint::Percentage(60), Constraint::Fill(1)]).areas(area);
-        render_repo_catalog_panel(frame, catalog, state);
-        render_repo_selected_panel(frame, selected, state);
-    }
+    render_repo_catalog_panel(frame, area, state);
 
     if state.repo.workspace_dialog_open() {
         repo_workspaces::render(
@@ -68,15 +58,26 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
         Span::styled(focus_label(catalog_focused), theme::style_command()),
     ]);
     let block = panel_block_with_title(title, catalog_focused);
-    if state.repo.requires_workspace_setup() {
-        render_repo_workspace_setup(frame, area, state, block);
-        return;
-    }
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let mut lines = vec![repo_catalog_context_line(state, rows.is_empty())];
+    let log_height = if inner.height >= 12 { 6 } else { 0 };
+    let (catalog_area, log_area) = if log_height == 0 {
+        (inner, None)
+    } else {
+        let [catalog, log] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(log_height)]).areas(inner);
+        (catalog, Some(log))
+    };
+
+    let mut lines = if state.repo.requires_workspace_setup() {
+        repo_workspace_setup_lines()
+    } else {
+        vec![repo_catalog_context_line(state, rows.is_empty())]
+    };
 
     if !matches!(state.repo.status, RepoStatus::Loading { .. }) && !rows.is_empty() {
-        let visible_rows = block.inner(area).height.saturating_sub(lines.len() as u16) as usize;
+        let visible_rows = catalog_area.height.saturating_sub(lines.len() as u16) as usize;
         let start = scroll_start(state.repo.selected_catalog, rows.len(), visible_rows);
         lines.extend(
             rows.iter()
@@ -87,16 +88,15 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState
         );
     }
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(Paragraph::new(lines), catalog_area);
+
+    if let Some(log_area) = log_area {
+        render_repo_log(frame, log_area, state);
+    }
 }
 
-fn render_repo_workspace_setup(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    _state: &TuiState,
-    block: Block<'_>,
-) {
-    let lines = vec![
+fn repo_workspace_setup_lines() -> Vec<Line<'static>> {
+    vec![
         Line::from("Configure repo workspaces before creating or linking repositories.".dim()),
         section("REPO WORKSPACE SETUP"),
         Line::from(vec![
@@ -107,12 +107,7 @@ fn render_repo_workspace_setup(
                 theme::style_primary_text(),
             ),
         ]),
-    ];
-
-    frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: true }),
-        area,
-    );
+    ]
 }
 
 fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static> {
@@ -156,59 +151,6 @@ fn repo_catalog_context_line(state: &TuiState, rows_empty: bool) -> Line<'static
     }
 }
 
-fn render_repo_selected_panel(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
-    let rows = state.selected_repository_rows();
-    let title = Line::from(vec![
-        Span::raw(" "),
-        Span::styled("SELECTED FOR WORK", theme::style_panel_title()),
-        Span::raw(" "),
-        Span::styled(rows.len().to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(
-            focus_label(state.repo.focus == RepoPane::Selected),
-            theme::style_command(),
-        ),
-    ]);
-    let block = panel_block_with_title(title, state.repo.focus == RepoPane::Selected);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let log_height = if inner.height >= 12 { 6 } else { 0 };
-    let (selected_area, log_area) = if log_height == 0 {
-        (inner, None)
-    } else {
-        let [selected, log] =
-            Layout::vertical([Constraint::Fill(1), Constraint::Length(log_height)]).areas(inner);
-        (selected, Some(log))
-    };
-
-    let lines = if rows.is_empty() {
-        vec![Line::from("No repositories selected for this Work.".dim())]
-    } else {
-        let visible_rows = selected_area.height as usize;
-        let start = scroll_start(state.repo.selected_work, rows.len(), visible_rows);
-        rows.iter()
-            .enumerate()
-            .skip(start)
-            .take(visible_rows)
-            .map(|(index, repository)| {
-                selected_repo_row(
-                    &repository.name_with_owner,
-                    &repository.meta,
-                    repository.state,
-                    index == state.repo.selected_work && state.repo.focus == RepoPane::Selected,
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-
-    frame.render_widget(Paragraph::new(lines), selected_area);
-
-    if let Some(log_area) = log_area {
-        render_repo_log(frame, log_area, state);
-    }
-}
-
 fn render_repo_log(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
     let mut lines = vec![section("OPERATION LOG")];
     if state.repo.logs.is_empty() {
@@ -236,7 +178,7 @@ fn scroll_start(selected: usize, total: usize, visible_rows: usize) -> usize {
 fn catalog_repo_row(
     name: &str,
     meta: &str,
-    selected_for_work: bool,
+    attached_to_work: bool,
     pending_add: bool,
     pending_remove: bool,
     force_remove: bool,
@@ -246,7 +188,7 @@ fn catalog_repo_row(
         "[!]"
     } else if pending_remove {
         "[-]"
-    } else if pending_add || selected_for_work {
+    } else if pending_add || attached_to_work {
         "[x]"
     } else {
         "[ ]"
@@ -257,8 +199,8 @@ fn catalog_repo_row(
         "FORCE"
     } else if pending_remove {
         "REMOVE"
-    } else if selected_for_work {
-        "SELECTED"
+    } else if attached_to_work {
+        "ATTACHED"
     } else {
         ""
     };
@@ -302,33 +244,19 @@ fn catalog_row(row: &RepoCatalogRow, state: &TuiState, index: usize) -> Line<'st
             state.repo.force_remove,
             index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
         ),
+        RepoCatalogRow::Attached(repository) => catalog_repo_row(
+            &repository.name_with_owner,
+            &format!("attached {}", repository.branch),
+            state.is_repository_selected(&repository.name_with_owner),
+            false,
+            state
+                .repo
+                .pending_remove
+                .contains(&repository.name_with_owner),
+            state.repo.force_remove,
+            index == state.repo.selected_catalog && state.repo.focus == RepoPane::Catalog,
+        ),
     }
-}
-
-fn selected_repo_row(
-    name: &str,
-    meta: &str,
-    state: RepoSelectionState,
-    selected: bool,
-) -> Line<'static> {
-    let (marker, status) = match state {
-        RepoSelectionState::Attached => ("[x]", "ATTACHED"),
-        RepoSelectionState::PendingAdd => ("[+]", "ADD"),
-        RepoSelectionState::PendingRemove => ("[-]", "REMOVE"),
-        RepoSelectionState::PendingForceRemove => ("[!]", "FORCE"),
-    };
-    let anchor = if selected { ">>" } else { "  " };
-    Line::from(vec![
-        Span::styled(anchor.to_string(), theme::style_command()),
-        Span::raw(" "),
-        Span::styled(marker.to_string(), theme::style_muted_text()),
-        Span::raw(" "),
-        Span::styled(name.to_string(), theme::style_primary_text()),
-        Span::raw("  "),
-        Span::styled(meta.to_string(), theme::style_meta_value()),
-        Span::raw(" "),
-        Span::styled(status.to_string(), theme::style_command()),
-    ])
 }
 
 fn trace_badge(kind: TraceKind) -> Span<'static> {

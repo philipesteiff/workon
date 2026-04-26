@@ -6,7 +6,7 @@ use crate::domain::{
     WorkSummary,
 };
 
-use super::repo_state::{RepoOperation, RepoPickerState, SelectedRepositoryRow};
+use super::repo_state::{RepoOperation, RepoPickerState};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TuiState {
@@ -339,10 +339,6 @@ impl TuiState {
 
     pub(super) fn push_repo_log(&mut self, kind: TraceKind, message: impl Into<String>) {
         self.repo.push_log(kind, message);
-    }
-
-    pub(super) fn selected_repository_rows(&self) -> Vec<SelectedRepositoryRow> {
-        self.repo.selected_rows()
     }
 
     pub(super) fn is_repository_selected(&self, name_with_owner: &str) -> bool {

@@ -22,7 +22,6 @@ pub(super) struct RepoPickerState {
     pub(super) workspaces: Vec<RepositoryWorkspace>,
     pub(super) selected_workspace: usize,
     pub(super) selected_catalog: usize,
-    pub(super) selected_work: usize,
     pub(super) filter: String,
     pub(super) workspace_dialog: RepoWorkspaceDialogState,
     pub(super) pending_add: BTreeSet<String>,
@@ -38,7 +37,6 @@ pub(super) struct RepoPickerState {
 pub(super) enum RepoPane {
     Catalog,
     Workspace,
-    Selected,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,25 +64,11 @@ pub(super) enum RepoOperation {
     Refresh,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum RepoSelectionState {
-    Attached,
-    PendingAdd,
-    PendingRemove,
-    PendingForceRemove,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SelectedRepositoryRow {
-    pub(super) name_with_owner: String,
-    pub(super) meta: String,
-    pub(super) state: RepoSelectionState,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum RepoCatalogRow {
     GitHub(AvailableRepository),
     Local(RepositoryCandidate),
+    Attached(AttachedRepository),
 }
 
 impl RepoCatalogRow {
@@ -92,6 +76,7 @@ impl RepoCatalogRow {
         match self {
             Self::GitHub(repository) => &repository.name_with_owner,
             Self::Local(candidate) => &candidate.name_with_owner,
+            Self::Attached(repository) => &repository.name_with_owner,
         }
     }
 
@@ -101,6 +86,7 @@ impl RepoCatalogRow {
             Self::Local(candidate) => {
                 format!("local {} {}", candidate.branch, candidate.path.display())
             }
+            Self::Attached(repository) => format!("attached {}", repository.branch),
         }
     }
 }
@@ -144,7 +130,6 @@ impl Default for RepoPickerState {
             workspaces: Vec::new(),
             selected_workspace: 0,
             selected_catalog: 0,
-            selected_work: 0,
             filter: String::new(),
             workspace_dialog: RepoWorkspaceDialogState::default(),
             pending_add: BTreeSet::new(),
@@ -177,7 +162,6 @@ impl RepoPickerState {
         self.workspaces = workspaces;
         self.selected_workspace = 0;
         self.selected_catalog = 0;
-        self.selected_work = 0;
         self.filter.clear();
         self.workspace_dialog = RepoWorkspaceDialogState::default();
         self.pending_add.clear();
@@ -198,7 +182,6 @@ impl RepoPickerState {
         self.workspaces.clear();
         self.selected_workspace = 0;
         self.selected_catalog = 0;
-        self.selected_work = 0;
         self.filter.clear();
         self.workspace_dialog = RepoWorkspaceDialogState::default();
         self.pending_add.clear();
@@ -221,7 +204,6 @@ impl RepoPickerState {
         self.force_remove = false;
         self.status = RepoStatus::Ready;
         self.clamp_selection();
-        self.clamp_selected_selection();
     }
 
     pub(super) fn update_workspaces(&mut self, workspaces: Vec<RepositoryWorkspace>) {
@@ -366,6 +348,11 @@ impl RepoPickerState {
             .iter()
             .map(|row| row.name().to_string())
             .collect::<BTreeSet<_>>();
+        let available_names = self
+            .available
+            .iter()
+            .map(|repository| repository.name_with_owner.clone())
+            .collect::<BTreeSet<_>>();
 
         let mut rows = self
             .available
@@ -374,59 +361,22 @@ impl RepoPickerState {
             .filter(|repository| !local_names.contains(&repository.name_with_owner))
             .map(|repository| RepoCatalogRow::GitHub(repository.clone()))
             .chain(local_rows)
+            .chain(
+                self.attached
+                    .iter()
+                    .filter(|repository| {
+                        repository_matches(&repository.name_with_owner, &query)
+                            && !available_names.contains(&repository.name_with_owner)
+                            && !local_names.contains(&repository.name_with_owner)
+                    })
+                    .map(|repository| RepoCatalogRow::Attached(repository.clone())),
+            )
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| {
             left.name()
                 .cmp(right.name())
                 .then(left.meta().cmp(&right.meta()))
         });
-        rows
-    }
-
-    pub(super) fn selected_rows(&self) -> Vec<SelectedRepositoryRow> {
-        let mut rows = self
-            .attached
-            .iter()
-            .map(|repository| SelectedRepositoryRow {
-                name_with_owner: repository.name_with_owner.clone(),
-                meta: repository.branch.clone(),
-                state: if self.pending_remove.contains(&repository.name_with_owner) {
-                    if self.force_remove {
-                        RepoSelectionState::PendingForceRemove
-                    } else {
-                        RepoSelectionState::PendingRemove
-                    }
-                } else {
-                    RepoSelectionState::Attached
-                },
-            })
-            .collect::<Vec<_>>();
-
-        let attached = self.attached_repository_names();
-        for repository in &self.available {
-            if self.pending_add.contains(&repository.name_with_owner)
-                && !attached.contains(&repository.name_with_owner)
-            {
-                rows.push(SelectedRepositoryRow {
-                    name_with_owner: repository.name_with_owner.clone(),
-                    meta: format!("default {}", repository.default_branch),
-                    state: RepoSelectionState::PendingAdd,
-                });
-            }
-        }
-        for candidate in &self.candidates {
-            if self.pending_link.contains(&candidate.path)
-                && !attached.contains(&candidate.name_with_owner)
-            {
-                rows.push(SelectedRepositoryRow {
-                    name_with_owner: candidate.name_with_owner.clone(),
-                    meta: format!("link {}", candidate.branch),
-                    state: RepoSelectionState::PendingAdd,
-                });
-            }
-        }
-
-        rows.sort_by(|left, right| left.name_with_owner.cmp(&right.name_with_owner));
         rows
     }
 
@@ -472,7 +422,6 @@ impl RepoPickerState {
         if !self.workspaces.is_empty() {
             order.push(RepoPane::Workspace);
         }
-        order.push(RepoPane::Selected);
         order
     }
 
@@ -499,17 +448,14 @@ impl RepoPickerState {
                         self.toggle_repository_selection(&repository.name_with_owner)
                     }
                     RepoCatalogRow::Local(candidate) => self.toggle_candidate_selection(&candidate),
+                    RepoCatalogRow::Attached(repository) => {
+                        self.toggle_repository_selection(&repository.name_with_owner)
+                    }
                 }
             }
             RepoPane::Workspace => {}
-            RepoPane::Selected => {
-                let Some(name) = self.selected_work_repo_name() else {
-                    return;
-                };
-                self.toggle_repository_selection(&name);
-            }
         }
-        self.clamp_selected_selection();
+        self.clamp_selection();
     }
 
     fn apply_action(&mut self) -> RepoPickerAction {
@@ -629,17 +575,10 @@ impl RepoPickerState {
         RepoPickerAction::None
     }
 
-    fn selected_work_repo_name(&self) -> Option<String> {
-        self.selected_rows()
-            .get(self.selected_work)
-            .map(|repository| repository.name_with_owner.clone())
-    }
-
     fn current_selection(&self) -> usize {
         match self.focus {
             RepoPane::Catalog => self.selected_catalog,
             RepoPane::Workspace => self.selected_workspace,
-            RepoPane::Selected => self.selected_work,
         }
     }
 
@@ -647,7 +586,6 @@ impl RepoPickerState {
         match self.focus {
             RepoPane::Catalog => self.selected_catalog = selected,
             RepoPane::Workspace => self.selected_workspace = selected,
-            RepoPane::Selected => self.selected_work = selected,
         }
     }
 
@@ -655,7 +593,6 @@ impl RepoPickerState {
         match self.focus {
             RepoPane::Catalog => self.catalog_rows().len(),
             RepoPane::Workspace => self.workspaces.len(),
-            RepoPane::Selected => self.selected_rows().len(),
         }
     }
 
@@ -673,22 +610,6 @@ impl RepoPickerState {
         } else if self.selected_workspace >= workspace_count {
             self.selected_workspace = workspace_count - 1;
         }
-    }
-
-    fn clamp_selected_selection(&mut self) {
-        let count = self.selected_rows().len();
-        if count == 0 {
-            self.selected_work = 0;
-        } else if self.selected_work >= count {
-            self.selected_work = count - 1;
-        }
-    }
-
-    fn attached_repository_names(&self) -> BTreeSet<String> {
-        self.attached
-            .iter()
-            .map(|repository| repository.name_with_owner.clone())
-            .collect()
     }
 
     fn open_workspace_dialog(&mut self) {
@@ -776,7 +697,7 @@ mod tests {
 
     use crate::domain::{AttachedRepository, AvailableRepository};
 
-    use super::{RepoPane, RepoPickerAction, RepoPickerState, RepoSelectionState};
+    use super::{RepoPane, RepoPickerAction, RepoPickerState};
 
     #[test]
     fn repo_picker_applies_pending_adds_and_removes() {
@@ -801,16 +722,12 @@ mod tests {
     #[test]
     fn repo_picker_arms_force_only_for_pending_removals() {
         let mut picker = picker();
-        picker.focus = RepoPane::Selected;
-        picker.selected_work = 0;
+        picker.handle_key(key(KeyCode::Down));
         picker.handle_key(key(KeyCode::Char(' ')));
         picker.handle_key(key(KeyCode::Char('!')));
 
         assert!(picker.force_remove);
-        assert_eq!(
-            picker.selected_rows()[0].state,
-            RepoSelectionState::PendingForceRemove
-        );
+        assert!(picker.pending_remove.contains("openai/workon"));
     }
 
     #[test]
@@ -820,6 +737,37 @@ mod tests {
         let action = picker.handle_key(key(KeyCode::Char('!')));
 
         assert!(matches!(action, RepoPickerAction::Notify(_)));
+    }
+
+    #[test]
+    fn repo_picker_keeps_attached_repositories_in_catalog_when_sources_are_empty() {
+        let mut picker = RepoPickerState::default();
+        picker.enter_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            Vec::new(),
+            Vec::new(),
+            attached_repositories(),
+            vec![crate::domain::RepositoryWorkspace {
+                path: "/tmp/repos".into(),
+            }],
+        );
+
+        let rows = picker.catalog_rows();
+
+        assert_eq!(rows.len(), attached_repositories().len());
+        assert!(rows.iter().any(|row| row.name() == "openai/workon"));
+    }
+
+    #[test]
+    fn repo_picker_focus_stays_with_repositories_and_workspace_selector() {
+        let mut picker = picker();
+
+        picker.handle_key(key(KeyCode::Right));
+        assert_eq!(picker.focus, RepoPane::Workspace);
+
+        picker.handle_key(key(KeyCode::Right));
+        assert_eq!(picker.focus, RepoPane::Catalog);
     }
 
     fn picker() -> RepoPickerState {

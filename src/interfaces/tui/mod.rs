@@ -521,7 +521,7 @@ fn apply_repo_load_result(state: &mut TuiState, result: Result<RepoContextData>)
             state.push_repo_log(
                 TraceKind::Sync,
                 format!(
-                    "loaded {available_count} GitHub repos, {candidate_count} local repos, {attached_count} selected"
+                    "loaded {available_count} GitHub repos, {candidate_count} local repos, {attached_count} attached"
                 ),
             );
             state.push_trace(TraceKind::Run, "repo context loaded");
@@ -606,7 +606,7 @@ fn refresh_attached_repositories(app: &App, state: &mut TuiState, work_slug: &st
         Ok(CommandOutput::WorkRepositories(attached)) => {
             let count = attached.repositories.len();
             state.update_attached_repositories(attached.repositories);
-            state.push_repo_log(TraceKind::Sync, format!("refreshed {count} selected repos"));
+            state.push_repo_log(TraceKind::Sync, format!("refreshed {count} attached repos"));
         }
         Ok(_) => unreachable!("list work repositories command returns work repositories"),
         Err(error) => {
@@ -844,9 +844,9 @@ mod tests {
         assert_eq!(state.repo.attached[0].name_with_owner, "openai/workon");
         assert!(state
             .repo
-            .selected_rows()
+            .catalog_rows()
             .iter()
-            .any(|row| row.name_with_owner == "openai/workon"));
+            .any(|row| row.name() == "openai/workon"));
         let toast = state.toast.expect("catalog failure should show a toast");
         assert_eq!(toast.title, "GitHub catalog unavailable");
     }
