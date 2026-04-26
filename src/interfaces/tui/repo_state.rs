@@ -405,9 +405,9 @@ impl RepoPickerState {
             )
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| {
-            let left_attached = attached_names.contains(left.name());
-            let right_attached = attached_names.contains(right.name());
-            right_attached.cmp(&left_attached).then(
+            let left_rank = catalog_row_rank(left, &attached_names);
+            let right_rank = catalog_row_rank(right, &attached_names);
+            left_rank.cmp(&right_rank).then(
                 left.name()
                     .cmp(right.name())
                     .then(left.meta().cmp(&right.meta())),
@@ -717,6 +717,16 @@ impl RepoPickerState {
     }
 }
 
+fn catalog_row_rank(row: &RepoCatalogRow, attached_names: &BTreeSet<String>) -> u8 {
+    if attached_names.contains(row.name()) {
+        return 0;
+    }
+    match row {
+        RepoCatalogRow::Local(_) => 1,
+        RepoCatalogRow::GitHub(_) | RepoCatalogRow::Attached(_) => 2,
+    }
+}
+
 fn repository_matches(name_with_owner: &str, query: &str) -> bool {
     query.is_empty() || name_with_owner.to_ascii_lowercase().contains(query)
 }
@@ -758,9 +768,9 @@ fn parse_paths(input: &str) -> Vec<PathBuf> {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::domain::{AttachedRepository, AvailableRepository};
+    use crate::domain::{AttachedRepository, AvailableRepository, RepositoryCandidate};
 
-    use super::{RepoPane, RepoPickerAction, RepoPickerState};
+    use super::{RepoCatalogRow, RepoPane, RepoPickerAction, RepoPickerState};
 
     #[test]
     fn repo_picker_applies_pending_adds_and_removes() {
@@ -820,18 +830,38 @@ mod tests {
     }
 
     #[test]
-    fn repo_picker_sorts_attached_repositories_before_unattached_rows() {
-        let picker = picker();
+    fn repo_picker_sorts_attached_then_local_then_github_rows() {
+        let mut picker = picker();
+        picker.candidates = vec![RepositoryCandidate {
+            name_with_owner: "openai/local-tool".to_string(),
+            branch: "feature/workon".to_string(),
+            path: "/tmp/repos/local-tool".into(),
+            url: "https://github.com/openai/local-tool".to_string(),
+        }];
 
         let names = picker
             .catalog_rows()
             .into_iter()
-            .map(|row| row.name().to_string())
+            .map(|row| match row {
+                RepoCatalogRow::GitHub(repository) => {
+                    format!("github:{}", repository.name_with_owner)
+                }
+                RepoCatalogRow::Local(candidate) => {
+                    format!("local:{}", candidate.name_with_owner)
+                }
+                RepoCatalogRow::Attached(repository) => {
+                    format!("attached:{}", repository.name_with_owner)
+                }
+            })
             .collect::<Vec<_>>();
 
         assert_eq!(
             names,
-            vec!["openai/workon".to_string(), "openai/api".to_string()]
+            vec![
+                "github:openai/workon".to_string(),
+                "local:openai/local-tool".to_string(),
+                "github:openai/api".to_string(),
+            ]
         );
     }
 
