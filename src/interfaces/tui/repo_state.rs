@@ -195,6 +195,21 @@ impl RepoPickerState {
         self.push_log(TraceKind::Run, "repository context load started");
     }
 
+    pub(super) fn start_loading(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.status = RepoStatus::Loading {
+            message: message.clone(),
+        };
+        self.activity_frame = 0;
+        self.push_log(TraceKind::Run, message);
+    }
+
+    pub(super) fn finish_loading(&mut self) {
+        if matches!(self.status, RepoStatus::Loading { .. }) {
+            self.status = RepoStatus::Ready;
+        }
+    }
+
     pub(super) fn update_attached(&mut self, attached: Vec<AttachedRepository>) {
         self.attached = attached;
         self.pending_add.clear();
@@ -222,6 +237,7 @@ impl RepoPickerState {
     pub(super) fn update_candidates(&mut self, candidates: Vec<RepositoryCandidate>) {
         self.candidates = candidates;
         self.pending_link.clear();
+        self.finish_loading();
         self.clamp_selection();
     }
 
@@ -535,28 +551,27 @@ impl RepoPickerState {
     fn add_workspace_action(&mut self) -> RepoPickerAction {
         let paths = parse_paths(&self.workspace_input);
         if paths.is_empty() {
-            return RepoPickerAction::Notify(Toast::error(
-                "Repo workspace required",
-                "Type one or more folders Workon can scan and create repos in.",
-            ));
+            return RepoPickerAction::None;
         }
         self.workspace_input.clear();
+        self.start_loading("Adding repository workspace");
         RepoPickerAction::AddWorkspaces {
             work_slug: self.work_slug.clone(),
             paths,
         }
     }
 
-    fn remove_workspace_action(&self) -> RepoPickerAction {
+    fn remove_workspace_action(&mut self) -> RepoPickerAction {
         match self.workspaces.get(self.selected_workspace) {
-            Some(workspace) => RepoPickerAction::RemoveWorkspace {
-                work_slug: self.work_slug.clone(),
-                path: workspace.path.clone(),
-            },
-            None => RepoPickerAction::Notify(Toast::error(
-                "No repo workspace selected",
-                "Add a repo workspace before removing one.",
-            )),
+            Some(workspace) => {
+                let path = workspace.path.clone();
+                self.start_loading("Removing repository workspace");
+                RepoPickerAction::RemoveWorkspace {
+                    work_slug: self.work_slug.clone(),
+                    path,
+                }
+            }
+            None => RepoPickerAction::None,
         }
     }
 

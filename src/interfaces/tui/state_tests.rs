@@ -589,6 +589,39 @@ fn repo_context_can_add_more_workspaces_from_add_path_panel() {
 }
 
 #[test]
+fn repo_context_shows_loader_after_add_path_submit() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Tab)), TuiAction::None);
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
+    for character in "/tmp/more-repos".chars() {
+        state.handle_key(key(KeyCode::Char(character)));
+    }
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::AddRepoWorkspaces {
+            work_slug: "billing-retry-audit".to_string(),
+            paths: vec![PathBuf::from("/tmp/more-repos")],
+        }
+    );
+    assert_eq!(
+        state.repo.status,
+        RepoStatus::Loading {
+            message: "Adding repository workspace".to_string(),
+        }
+    );
+}
+
+#[test]
 fn repo_context_add_path_panel_keeps_repo_context_on_empty_input() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
@@ -605,8 +638,26 @@ fn repo_context_add_path_panel_keeps_repo_context_on_empty_input() {
     assert_eq!(state.handle_key(key(KeyCode::Enter)), TuiAction::None);
     assert_eq!(state.mode, TuiMode::Repos);
     assert_eq!(state.repo.focus, RepoPane::AddPath);
-    let toast = state.toast.expect("empty add path should notify");
-    assert_eq!(toast.title, "Repo workspace required");
+    assert_eq!(state.toast, None);
+}
+
+#[test]
+fn repo_context_configured_paths_panel_keeps_repo_context_without_toast_when_empty() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        Vec::new(),
+    );
+    state.repo.focus = RepoPane::ConfiguredPaths;
+
+    assert_eq!(state.handle_key(key(KeyCode::Enter)), TuiAction::None);
+    assert_eq!(state.mode, TuiMode::Repos);
+    assert_eq!(state.repo.focus, RepoPane::ConfiguredPaths);
+    assert_eq!(state.toast, None);
 }
 
 #[test]

@@ -320,6 +320,14 @@ impl TuiState {
         self.repo.update_candidates(candidates);
     }
 
+    pub(super) fn start_repo_loading(&mut self, message: impl Into<String>) {
+        self.repo.start_loading(message);
+    }
+
+    pub(super) fn finish_repo_loading(&mut self) {
+        self.repo.finish_loading();
+    }
+
     pub(super) fn set_repo_failed(&mut self, message: impl Into<String>) {
         self.repo.set_failed(message);
     }

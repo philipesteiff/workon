@@ -13,7 +13,7 @@ mod ui;
 
 use std::collections::BTreeMap;
 use std::io::{self, Stdout};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -210,29 +210,16 @@ fn run_loop(
                 show_repo_batch_outcome(state, outcome);
             }
             TuiAction::AddRepoWorkspaces { work_slug, paths } => {
+                draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
                 match app.execute(Command::AddRepositoryWorkspaces {
                     paths: paths.clone(),
                 }) {
                     Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
                         let count = workspaces.workspaces.len();
                         state.update_repo_workspaces(workspaces.workspaces);
-                        let configured = paths
-                            .iter()
-                            .map(|path| path.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        state.toast = Some(Toast::info(
-                            "Repo workspace ready",
-                            &format!("{} configured", paths.len()),
-                        ));
-                        state.push_repo_log(
-                            TraceKind::Sync,
-                            format!("repo workspace added {configured}"),
-                        );
-                        state.push_trace(
-                            TraceKind::Sync,
-                            format!("repo workspaces configured: {count}"),
-                        );
+                        record_repo_workspace_added(state, &paths, count);
+                        state.start_repo_loading("Loading repository sources");
+                        draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
                         refresh_repository_candidates(app, state, &work_slug);
                     }
                     Ok(_) => unreachable!("add repository workspace returns repository workspaces"),
@@ -254,22 +241,14 @@ fn run_loop(
                 }
             }
             TuiAction::RemoveRepoWorkspace { work_slug, path } => {
+                draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
                 match app.execute(Command::RemoveRepositoryWorkspace { path: path.clone() }) {
                     Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
                         let count = workspaces.workspaces.len();
                         state.update_repo_workspaces(workspaces.workspaces);
-                        state.toast = Some(Toast::info(
-                            "Repo workspace removed",
-                            &path.display().to_string(),
-                        ));
-                        state.push_repo_log(
-                            TraceKind::Sync,
-                            format!("repo workspace removed {}", path.display()),
-                        );
-                        state.push_trace(
-                            TraceKind::Sync,
-                            format!("repo workspaces configured: {count}"),
-                        );
+                        record_repo_workspace_removed(state, &path, count);
+                        state.start_repo_loading("Loading repository sources");
+                        draw_frame(terminal, state, &mut animation, Duration::ZERO)?;
                         refresh_repository_candidates(app, state, &work_slug);
                     }
                     Ok(_) => {
@@ -298,6 +277,33 @@ fn run_loop(
     }
 }
 
+fn record_repo_workspace_added(state: &mut TuiState, paths: &[PathBuf], workspace_count: usize) {
+    let configured = paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    state.push_repo_log(
+        TraceKind::Sync,
+        format!("repo workspace added {configured}"),
+    );
+    state.push_trace(
+        TraceKind::Sync,
+        format!("repo workspaces configured: {workspace_count}"),
+    );
+}
+
+fn record_repo_workspace_removed(state: &mut TuiState, path: &Path, workspace_count: usize) {
+    state.push_repo_log(
+        TraceKind::Sync,
+        format!("repo workspace removed {}", path.display()),
+    );
+    state.push_trace(
+        TraceKind::Sync,
+        format!("repo workspaces configured: {workspace_count}"),
+    );
+}
+
 fn refresh_repository_candidates(app: &App, state: &mut TuiState, work_slug: &str) {
     match app.execute(Command::ListRepositoryCandidates {
         query: work_slug.to_string(),
@@ -317,6 +323,7 @@ fn refresh_repository_candidates(app: &App, state: &mut TuiState, work_slug: &st
                 TraceKind::Warn,
                 format!("local repo discovery unavailable: {error}"),
             );
+            state.finish_repo_loading();
         }
     }
 }
@@ -777,8 +784,9 @@ mod tests {
     };
     use super::state::{Toast, TraceKind, TuiMode, TuiState};
     use super::{
-        apply_repo_load_result, poll_attached_repository_index_job, show_repo_batch_outcome,
-        AttachedRepositoryIndexJob, RepoBatchOutcome, RepoContextData,
+        apply_repo_load_result, poll_attached_repository_index_job, record_repo_workspace_added,
+        record_repo_workspace_removed, show_repo_batch_outcome, AttachedRepositoryIndexJob,
+        RepoBatchOutcome, RepoContextData,
     };
 
     #[test]
@@ -833,6 +841,42 @@ mod tests {
             .any(|row| row.name() == "openai/workon"));
         let toast = state.toast.expect("catalog failure should show a toast");
         assert_eq!(toast.title, "GitHub catalog unavailable");
+    }
+
+    #[test]
+    fn repo_workspace_add_records_logs_without_toast() {
+        let mut state = TuiState::new(work_list());
+
+        record_repo_workspace_added(&mut state, &["/tmp/repos".into()], 1);
+
+        assert_eq!(state.toast, None);
+        assert!(state
+            .repo
+            .logs
+            .iter()
+            .any(|event| event.message == "repo workspace added /tmp/repos"));
+        assert!(state
+            .trace
+            .iter()
+            .any(|event| event.message == "repo workspaces configured: 1"));
+    }
+
+    #[test]
+    fn repo_workspace_remove_records_logs_without_toast() {
+        let mut state = TuiState::new(work_list());
+
+        record_repo_workspace_removed(&mut state, std::path::Path::new("/tmp/repos"), 0);
+
+        assert_eq!(state.toast, None);
+        assert!(state
+            .repo
+            .logs
+            .iter()
+            .any(|event| event.message == "repo workspace removed /tmp/repos"));
+        assert!(state
+            .trace
+            .iter()
+            .any(|event| event.message == "repo workspaces configured: 0"));
     }
 
     #[test]
