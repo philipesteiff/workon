@@ -220,16 +220,6 @@ impl TuiState {
             RepoPickerAction::RemoveWorkspace { work_slug, path } => {
                 TuiAction::RemoveRepoWorkspace { work_slug, path }
             }
-            RepoPickerAction::CloseWorkspaceDialog { work_slug, refresh } => {
-                if refresh {
-                    TuiAction::RefreshRepoIndex { work_slug }
-                } else if self.repo.requires_workspace_setup() {
-                    self.restore_queue_mode();
-                    TuiAction::None
-                } else {
-                    TuiAction::None
-                }
-            }
             RepoPickerAction::Apply {
                 work_slug,
                 add,

@@ -5,7 +5,6 @@ mod keys;
 mod repo_jobs;
 mod repo_state;
 mod repo_ui;
-mod repo_workspaces;
 mod state;
 #[cfg(test)]
 mod state_tests;
@@ -216,11 +215,7 @@ fn run_loop(
                 }) {
                     Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
                         let count = workspaces.workspaces.len();
-                        let dialog_open = state.repo.workspace_dialog_open();
                         state.update_repo_workspaces(workspaces.workspaces);
-                        if dialog_open {
-                            state.repo.mark_workspace_dialog_dirty();
-                        }
                         let configured = paths
                             .iter()
                             .map(|path| path.display().to_string())
@@ -238,9 +233,7 @@ fn run_loop(
                             TraceKind::Sync,
                             format!("repo workspaces configured: {count}"),
                         );
-                        if !dialog_open {
-                            refresh_repository_candidates(app, state, &work_slug);
-                        }
+                        refresh_repository_candidates(app, state, &work_slug);
                     }
                     Ok(_) => unreachable!("add repository workspace returns repository workspaces"),
                     Err(error) => {
@@ -264,11 +257,7 @@ fn run_loop(
                 match app.execute(Command::RemoveRepositoryWorkspace { path: path.clone() }) {
                     Ok(CommandOutput::RepositoryWorkspaces(workspaces)) => {
                         let count = workspaces.workspaces.len();
-                        let dialog_open = state.repo.workspace_dialog_open();
                         state.update_repo_workspaces(workspaces.workspaces);
-                        if dialog_open {
-                            state.repo.mark_workspace_dialog_dirty();
-                        }
                         state.toast = Some(Toast::info(
                             "Repo workspace removed",
                             &path.display().to_string(),
@@ -281,9 +270,7 @@ fn run_loop(
                             TraceKind::Sync,
                             format!("repo workspaces configured: {count}"),
                         );
-                        if !dialog_open {
-                            refresh_repository_candidates(app, state, &work_slug);
-                        }
+                        refresh_repository_candidates(app, state, &work_slug);
                     }
                     Ok(_) => {
                         unreachable!("remove repository workspace returns repository workspaces")
@@ -304,9 +291,6 @@ fn run_loop(
                         format!("repo workspace removal returned for stale work {work_slug}"),
                     );
                 }
-            }
-            TuiAction::RefreshRepoIndex { work_slug } => {
-                refresh_repository_candidates(app, state, &work_slug);
             }
         }
         animation.observe_transition(before, AnimationSnapshot::from_state(state));

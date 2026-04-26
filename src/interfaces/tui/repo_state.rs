@@ -8,7 +8,6 @@ use crate::domain::{
 };
 
 use super::keys::is_plain_character;
-use super::repo_workspaces::{RepoWorkspaceDialogAction, RepoWorkspaceDialogState};
 use super::state::{Toast, TraceEvent, TraceKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +21,8 @@ pub(super) struct RepoPickerState {
     pub(super) workspaces: Vec<RepositoryWorkspace>,
     pub(super) selected_workspace: usize,
     pub(super) selected_catalog: usize,
+    workspace_input: String,
     pub(super) filter: String,
-    pub(super) workspace_dialog: RepoWorkspaceDialogState,
     pub(super) pending_add: BTreeSet<String>,
     pub(super) pending_link: BTreeSet<PathBuf>,
     pub(super) pending_remove: BTreeSet<String>,
@@ -36,7 +35,8 @@ pub(super) struct RepoPickerState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum RepoPane {
     Catalog,
-    Workspace,
+    AddPath,
+    ConfiguredPaths,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,10 +104,6 @@ pub(super) enum RepoPickerAction {
         work_slug: String,
         path: PathBuf,
     },
-    CloseWorkspaceDialog {
-        work_slug: String,
-        refresh: bool,
-    },
     Apply {
         work_slug: String,
         add: Vec<String>,
@@ -130,8 +126,8 @@ impl Default for RepoPickerState {
             workspaces: Vec::new(),
             selected_workspace: 0,
             selected_catalog: 0,
+            workspace_input: String::new(),
             filter: String::new(),
-            workspace_dialog: RepoWorkspaceDialogState::default(),
             pending_add: BTreeSet::new(),
             pending_link: BTreeSet::new(),
             pending_remove: BTreeSet::new(),
@@ -153,7 +149,11 @@ impl RepoPickerState {
         attached: Vec<AttachedRepository>,
         workspaces: Vec<RepositoryWorkspace>,
     ) {
-        self.focus = RepoPane::Catalog;
+        self.focus = if workspaces.is_empty() {
+            RepoPane::AddPath
+        } else {
+            RepoPane::Catalog
+        };
         self.work_slug = work_slug;
         self.work_title = work_title;
         self.available = available;
@@ -162,14 +162,13 @@ impl RepoPickerState {
         self.workspaces = workspaces;
         self.selected_workspace = 0;
         self.selected_catalog = 0;
+        self.workspace_input.clear();
         self.filter.clear();
-        self.workspace_dialog = RepoWorkspaceDialogState::default();
         self.pending_add.clear();
         self.pending_link.clear();
         self.pending_remove.clear();
         self.force_remove = false;
         self.status = RepoStatus::Ready;
-        self.open_required_workspace_dialog();
     }
 
     pub(super) fn enter_loading(&mut self, work_slug: String, work_title: String) {
@@ -182,8 +181,8 @@ impl RepoPickerState {
         self.workspaces.clear();
         self.selected_workspace = 0;
         self.selected_catalog = 0;
+        self.workspace_input.clear();
         self.filter.clear();
-        self.workspace_dialog = RepoWorkspaceDialogState::default();
         self.pending_add.clear();
         self.pending_link.clear();
         self.pending_remove.clear();
@@ -207,13 +206,17 @@ impl RepoPickerState {
     }
 
     pub(super) fn update_workspaces(&mut self, workspaces: Vec<RepositoryWorkspace>) {
+        let was_empty = self.workspaces.is_empty();
         self.workspaces = workspaces;
         self.clamp_selection();
-        self.workspace_dialog.sync_workspaces(&self.workspaces);
         if matches!(self.status, RepoStatus::Loading { .. }) {
             self.status = RepoStatus::Ready;
         }
-        self.open_required_workspace_dialog();
+        if was_empty && !self.workspaces.is_empty() {
+            self.focus = RepoPane::Catalog;
+        } else if self.workspaces.is_empty() && self.focus == RepoPane::ConfiguredPaths {
+            self.focus = RepoPane::AddPath;
+        }
     }
 
     pub(super) fn update_candidates(&mut self, candidates: Vec<RepositoryCandidate>) {
@@ -281,11 +284,6 @@ impl RepoPickerState {
             };
         }
 
-        if self.workspace_dialog.is_open() {
-            let action = self.workspace_dialog.handle_key(key, &self.workspaces);
-            return self.handle_workspace_dialog_action(action);
-        }
-
         match key.code {
             KeyCode::Esc => {
                 self.pending_add.clear();
@@ -311,27 +309,31 @@ impl RepoPickerState {
                 self.move_selection(-1);
                 RepoPickerAction::None
             }
+            KeyCode::Backspace if self.focus == RepoPane::AddPath => {
+                self.workspace_input.pop();
+                RepoPickerAction::None
+            }
             KeyCode::Backspace if !self.filter.is_empty() => {
                 self.filter.pop();
                 self.selected_catalog = 0;
                 RepoPickerAction::None
             }
+            KeyCode::Char(character)
+                if self.focus == RepoPane::AddPath && is_plain_character(key) =>
+            {
+                self.workspace_input.push(character);
+                RepoPickerAction::None
+            }
             KeyCode::Char('+') if is_plain_character(key) => {
-                self.open_workspace_dialog();
+                self.focus = RepoPane::AddPath;
                 RepoPickerAction::None
             }
-            KeyCode::Char(' ') if is_plain_character(key) => {
-                self.toggle_focused_repository();
-                RepoPickerAction::None
+            KeyCode::Char(' ') if is_plain_character(key) => self.handle_space(),
+            KeyCode::Char('!') if self.focus == RepoPane::Catalog && is_plain_character(key) => {
+                self.toggle_force_remove()
             }
-            KeyCode::Char('!') if is_plain_character(key) => self.toggle_force_remove(),
-            KeyCode::Enter => self.apply_action(),
-            KeyCode::Char(character) if is_plain_character(key) => {
-                self.focus = RepoPane::Catalog;
-                self.filter.push(character);
-                self.selected_catalog = 0;
-                RepoPickerAction::None
-            }
+            KeyCode::Enter => self.handle_enter(),
+            KeyCode::Char(character) if is_plain_character(key) => self.handle_character(character),
             _ => RepoPickerAction::None,
         }
     }
@@ -399,6 +401,10 @@ impl RepoPickerState {
         self.workspaces.is_empty() && !matches!(self.status, RepoStatus::Loading { .. })
     }
 
+    pub(super) fn workspace_input(&self) -> &str {
+        &self.workspace_input
+    }
+
     fn next_focus(&mut self) {
         self.shift_focus(1);
     }
@@ -418,11 +424,11 @@ impl RepoPickerState {
     }
 
     fn focus_order(&self) -> Vec<RepoPane> {
-        let mut order = vec![RepoPane::Catalog];
-        if !self.workspaces.is_empty() {
-            order.push(RepoPane::Workspace);
-        }
-        order
+        vec![
+            RepoPane::Catalog,
+            RepoPane::AddPath,
+            RepoPane::ConfiguredPaths,
+        ]
     }
 
     fn move_selection(&mut self, delta: isize) {
@@ -453,9 +459,43 @@ impl RepoPickerState {
                     }
                 }
             }
-            RepoPane::Workspace => {}
+            RepoPane::AddPath | RepoPane::ConfiguredPaths => {}
         }
         self.clamp_selection();
+    }
+
+    fn handle_space(&mut self) -> RepoPickerAction {
+        match self.focus {
+            RepoPane::Catalog => {
+                self.toggle_focused_repository();
+                RepoPickerAction::None
+            }
+            RepoPane::AddPath => {
+                self.workspace_input.push(' ');
+                RepoPickerAction::None
+            }
+            RepoPane::ConfiguredPaths => self.remove_workspace_action(),
+        }
+    }
+
+    fn handle_enter(&mut self) -> RepoPickerAction {
+        match self.focus {
+            RepoPane::Catalog => self.apply_action(),
+            RepoPane::AddPath => self.add_workspace_action(),
+            RepoPane::ConfiguredPaths => self.remove_workspace_action(),
+        }
+    }
+
+    fn handle_character(&mut self, character: char) -> RepoPickerAction {
+        match self.focus {
+            RepoPane::Catalog => {
+                self.filter.push(character);
+                self.selected_catalog = 0;
+            }
+            RepoPane::AddPath => self.workspace_input.push(character),
+            RepoPane::ConfiguredPaths => {}
+        }
+        RepoPickerAction::None
     }
 
     fn apply_action(&mut self) -> RepoPickerAction {
@@ -490,6 +530,34 @@ impl RepoPickerState {
         self.workspaces
             .get(self.selected_workspace)
             .map(|workspace| workspace.path.clone())
+    }
+
+    fn add_workspace_action(&mut self) -> RepoPickerAction {
+        let paths = parse_paths(&self.workspace_input);
+        if paths.is_empty() {
+            return RepoPickerAction::Notify(Toast::error(
+                "Repo workspace required",
+                "Type one or more folders Workon can scan and create repos in.",
+            ));
+        }
+        self.workspace_input.clear();
+        RepoPickerAction::AddWorkspaces {
+            work_slug: self.work_slug.clone(),
+            paths,
+        }
+    }
+
+    fn remove_workspace_action(&self) -> RepoPickerAction {
+        match self.workspaces.get(self.selected_workspace) {
+            Some(workspace) => RepoPickerAction::RemoveWorkspace {
+                work_slug: self.work_slug.clone(),
+                path: workspace.path.clone(),
+            },
+            None => RepoPickerAction::Notify(Toast::error(
+                "No repo workspace selected",
+                "Add a repo workspace before removing one.",
+            )),
+        }
     }
 
     fn toggle_repository_selection(&mut self, name: &str) {
@@ -578,21 +646,24 @@ impl RepoPickerState {
     fn current_selection(&self) -> usize {
         match self.focus {
             RepoPane::Catalog => self.selected_catalog,
-            RepoPane::Workspace => self.selected_workspace,
+            RepoPane::AddPath => 0,
+            RepoPane::ConfiguredPaths => self.selected_workspace,
         }
     }
 
     fn set_current_selection(&mut self, selected: usize) {
         match self.focus {
             RepoPane::Catalog => self.selected_catalog = selected,
-            RepoPane::Workspace => self.selected_workspace = selected,
+            RepoPane::AddPath => {}
+            RepoPane::ConfiguredPaths => self.selected_workspace = selected,
         }
     }
 
     fn current_count(&self) -> usize {
         match self.focus {
             RepoPane::Catalog => self.catalog_rows().len(),
-            RepoPane::Workspace => self.workspaces.len(),
+            RepoPane::AddPath => 0,
+            RepoPane::ConfiguredPaths => self.workspaces.len(),
         }
     }
 
@@ -610,56 +681,6 @@ impl RepoPickerState {
         } else if self.selected_workspace >= workspace_count {
             self.selected_workspace = workspace_count - 1;
         }
-    }
-
-    fn open_workspace_dialog(&mut self) {
-        self.workspace_dialog
-            .open(self.selected_workspace, &self.workspaces);
-    }
-
-    fn open_required_workspace_dialog(&mut self) {
-        if self.requires_workspace_setup() && !self.workspace_dialog.is_open() {
-            self.open_workspace_dialog();
-        }
-    }
-
-    fn handle_workspace_dialog_action(
-        &self,
-        action: RepoWorkspaceDialogAction,
-    ) -> RepoPickerAction {
-        match action {
-            RepoWorkspaceDialogAction::None => RepoPickerAction::None,
-            RepoWorkspaceDialogAction::Add(paths) => RepoPickerAction::AddWorkspaces {
-                work_slug: self.work_slug.clone(),
-                paths,
-            },
-            RepoWorkspaceDialogAction::Remove(path) => RepoPickerAction::RemoveWorkspace {
-                work_slug: self.work_slug.clone(),
-                path,
-            },
-            RepoWorkspaceDialogAction::Close { refresh } => {
-                RepoPickerAction::CloseWorkspaceDialog {
-                    work_slug: self.work_slug.clone(),
-                    refresh,
-                }
-            }
-            RepoWorkspaceDialogAction::MissingInput => RepoPickerAction::Notify(Toast::error(
-                "Repo workspace required",
-                "Type one or more folders Workon can scan and create repos in.",
-            )),
-            RepoWorkspaceDialogAction::MissingSelection => RepoPickerAction::Notify(Toast::error(
-                "No repo workspace selected",
-                "Add a repo workspace before removing one.",
-            )),
-        }
-    }
-
-    pub(super) fn mark_workspace_dialog_dirty(&mut self) {
-        self.workspace_dialog.mark_dirty();
-    }
-
-    pub(super) fn workspace_dialog_open(&self) -> bool {
-        self.workspace_dialog.is_open()
     }
 }
 
@@ -691,6 +712,15 @@ fn operation_verb(action: RepoOperation) -> &'static str {
     }
 }
 
+fn parse_paths(input: &str) -> Vec<PathBuf> {
+    input
+        .split(',')
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -703,8 +733,6 @@ mod tests {
     fn repo_picker_applies_pending_adds_and_removes() {
         let mut picker = picker();
         picker.handle_key(key(KeyCode::Char(' ')));
-        picker.handle_key(key(KeyCode::Right));
-        picker.handle_key(key(KeyCode::Right));
         picker.handle_key(key(KeyCode::Down));
         picker.handle_key(key(KeyCode::Char(' ')));
 
@@ -760,11 +788,14 @@ mod tests {
     }
 
     #[test]
-    fn repo_picker_focus_stays_with_repositories_and_workspace_selector() {
+    fn repo_picker_focus_cycles_between_repository_workspace_panels() {
         let mut picker = picker();
 
         picker.handle_key(key(KeyCode::Right));
-        assert_eq!(picker.focus, RepoPane::Workspace);
+        assert_eq!(picker.focus, RepoPane::AddPath);
+
+        picker.handle_key(key(KeyCode::Right));
+        assert_eq!(picker.focus, RepoPane::ConfiguredPaths);
 
         picker.handle_key(key(KeyCode::Right));
         assert_eq!(picker.focus, RepoPane::Catalog);

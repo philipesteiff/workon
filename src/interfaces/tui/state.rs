@@ -95,9 +95,6 @@ pub(super) enum TuiAction {
         work_slug: String,
         path: PathBuf,
     },
-    RefreshRepoIndex {
-        work_slug: String,
-    },
 }
 
 impl TuiState {

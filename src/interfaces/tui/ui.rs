@@ -13,7 +13,7 @@ use super::components::{
     key, label_value, panel_block, panel_block_with_activity, panel_block_with_title, render_popup,
     section, status_badge, top_border, TitleActivity,
 };
-use super::repo_state::RepoStatus;
+use super::repo_state::{RepoPane, RepoStatus};
 use super::repo_ui::{render_repo_context, repo_activity_message};
 use super::state::{Toast, ToastKind, TraceKind, TuiMode, TuiState};
 use super::theme;
@@ -416,7 +416,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, state: &TuiState) {
         area.width,
         state.mode,
         state.trace_visible,
-        state.repo.workspace_dialog_open(),
+        state.repo.focus,
         state.repo.requires_workspace_setup(),
     ));
 
@@ -438,7 +438,7 @@ fn footer_keys(
     width: u16,
     mode: TuiMode,
     trace_visible: bool,
-    repo_workspace_dialog_open: bool,
+    repo_focus: RepoPane,
     repo_workspace_setup_required: bool,
 ) -> Vec<Span<'static>> {
     match mode {
@@ -510,35 +510,48 @@ fn footer_keys(
             key("esc/n"),
             "cancel".dim(),
         ],
-        TuiMode::Repos if repo_workspace_dialog_open => vec![
-            key("tab"),
-            "panel ".dim(),
-            key("space"),
-            "remove ".dim(),
-            key("enter"),
-            "apply ".dim(),
-            key("esc"),
-            "back".dim(),
-        ],
-        TuiMode::Repos if repo_workspace_setup_required => {
-            vec![key("+"), "path ".dim(), key("esc"), "back".dim()]
-        }
-        TuiMode::Repos => vec![
+        TuiMode::Repos if repo_focus == RepoPane::AddPath => vec![
             key("tab"),
             "panel ".dim(),
             key("type"),
-            "find ".dim(),
-            key("+"),
             "path ".dim(),
-            key("space"),
-            "select ".dim(),
-            key("!"),
-            "force ".dim(),
+            key("backspace"),
+            "edit ".dim(),
             key("enter"),
-            "apply ".dim(),
+            "add ".dim(),
             key("esc"),
             "back".dim(),
         ],
+        TuiMode::Repos if repo_focus == RepoPane::ConfiguredPaths => vec![
+            key("tab"),
+            "panel ".dim(),
+            key("up/down"),
+            "path ".dim(),
+            key("space"),
+            "remove ".dim(),
+            key("enter"),
+            "remove ".dim(),
+            key("esc"),
+            "back".dim(),
+        ],
+        TuiMode::Repos => {
+            let mut spans = vec![key("tab"), "panel ".dim(), key("type"), "find ".dim()];
+            if repo_workspace_setup_required {
+                spans.extend([key("enter"), "apply ".dim(), key("esc"), "back".dim()]);
+            } else {
+                spans.extend([
+                    key("space"),
+                    "select ".dim(),
+                    key("!"),
+                    "force ".dim(),
+                    key("enter"),
+                    "apply ".dim(),
+                    key("esc"),
+                    "back".dim(),
+                ]);
+            }
+            spans
+        }
         TuiMode::Help => vec![key("esc/?/q"), "close".dim()],
     }
 }
@@ -1307,12 +1320,14 @@ mod tests {
         assert!(attached.contains("WORKON // CONTROL // REPO"));
         assert!(!attached.contains("REPO CONTEXT"));
         assert!(attached.contains("REPOSITORIES"));
+        assert!(attached.contains("ADD PATH"));
+        assert!(attached.contains("CONFIGURED PATHS"));
         assert!(!attached.contains("SELECTED FOR WORK"));
+        assert!(!attached.contains("REPO WORKSPACES"));
         assert!(!attached.contains("No repositories selected for this Work."));
         assert!(attached.contains("openai/workon"));
         assert!(attached.contains("GitHub repos create in /tmp/repos"));
         assert!(!attached.contains("type filters repos"));
-        assert!(!attached.contains("+ add path"));
 
         state.repo.filter = "api".to_string();
         let add = render_content(&state, 120, 36);
@@ -1323,7 +1338,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_repo_context_workspace_setup_as_required_dialog() {
+    fn renders_repo_context_workspace_setup_as_inline_side_panels() {
         let mut state = TuiState::new(work_list());
         state.enter_repo_context(
             "billing-retry-audit".to_string(),
@@ -1337,13 +1352,12 @@ mod tests {
         let content = render_content(&state, 120, 36);
 
         assert!(content.contains("REPOSITORIES"));
-        assert!(content.contains("REPO WORKSPACE SETUP"));
-        assert!(content.contains("REPO WORKSPACES"));
         assert!(content.contains("ADD PATH"));
+        assert!(content.contains("CONFIGURED PATHS"));
+        assert!(!content.contains("REPO WORKSPACES"));
+        assert!(!content.contains("REPO WORKSPACE SETUP"));
         assert!(content.contains("REQUIRED"));
-        assert!(
-            content.contains("Configure repo workspaces before creating or linking repositories.")
-        );
+        assert!(content.contains("Add a repo workspace path before creating GitHub repos."));
         assert!(content.contains("<type folder path>"));
         assert!(!content.contains("SELECTED FOR WORK"));
         assert!(!content.contains("wo repos workspace add"));
@@ -1400,19 +1414,20 @@ mod tests {
             attached_repositories(),
             multiple_repo_workspaces(),
         );
-        state.repo.focus = RepoPane::Workspace;
+        state.repo.focus = RepoPane::ConfiguredPaths;
         state.repo.selected_workspace = 1;
 
         let content = render_content(&state, 120, 36);
 
         assert!(content.contains("GitHub repos create in /tmp/client-repos"));
+        assert!(content.contains("ADD PATH"));
+        assert!(content.contains("CONFIGURED PATHS"));
         assert!(!content.contains("CREATE IN"));
-        assert!(!content.contains("+ add path"));
         assert!(content.contains("openai/local-tool"));
     }
 
     #[test]
-    fn renders_repo_context_add_workspace_dialog() {
+    fn renders_repo_context_add_path_panel_input() {
         let mut state = TuiState::new(work_list());
         state.enter_repo_context(
             "billing-retry-audit".to_string(),
@@ -1422,7 +1437,6 @@ mod tests {
             attached_repositories(),
             repo_workspaces(),
         );
-        state.repo.workspace_dialog.open(0, &state.repo.workspaces);
         state
             .repo
             .handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
@@ -1434,13 +1448,45 @@ mod tests {
 
         let content = render_content(&state, 120, 36);
 
-        assert!(content.contains("REPO WORKSPACES"));
+        assert!(!content.contains("REPO WORKSPACES"));
         assert!(content.contains("ADD PATH"));
         assert!(content.contains("CONFIGURED PATHS"));
         assert!(content.contains("/tmp/repos"));
         assert!(content.contains("/tmp/more-repos"));
-        assert!(content.contains("space remove"));
-        assert!(content.contains("enter apply"));
+        assert!(content.contains("type path"));
+        assert!(content.contains("enter add"));
+    }
+
+    #[test]
+    fn renders_repo_context_footer_hints_for_each_repo_panel() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            Vec::new(),
+            attached_repositories(),
+            multiple_repo_workspaces(),
+        );
+
+        let repositories = render_content(&state, 120, 36);
+        assert!(repositories.contains("type find"));
+        assert!(repositories.contains("space select"));
+        assert!(repositories.contains("enter apply"));
+
+        state.repo.focus = RepoPane::AddPath;
+        let add_path = render_content(&state, 120, 36);
+        assert!(add_path.contains("type path"));
+        assert!(add_path.contains("backspace edit"));
+        assert!(add_path.contains("enter add"));
+        assert!(!add_path.contains("space select"));
+
+        state.repo.focus = RepoPane::ConfiguredPaths;
+        let configured_paths = render_content(&state, 120, 36);
+        assert!(configured_paths.contains("up/down path"));
+        assert!(configured_paths.contains("space remove"));
+        assert!(configured_paths.contains("enter remove"));
+        assert!(!configured_paths.contains("type find"));
     }
 
     #[test]

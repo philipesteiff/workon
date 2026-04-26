@@ -430,7 +430,7 @@ fn repo_context_can_arm_force_remove_for_pending_removals() {
 }
 
 #[test]
-fn repo_context_opens_workspace_dialog_when_setup_is_required() {
+fn repo_context_focuses_add_path_when_setup_is_required() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -441,7 +441,7 @@ fn repo_context_opens_workspace_dialog_when_setup_is_required() {
         Vec::new(),
     );
 
-    assert!(state.repo.workspace_dialog_open());
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
 
     for character in "/tmp/repo-space".chars() {
         state.handle_key(key(KeyCode::Char(character)));
@@ -468,7 +468,7 @@ fn repo_context_setup_accepts_multiple_workspace_paths() {
         Vec::new(),
     );
 
-    assert!(state.repo.workspace_dialog_open());
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
 
     for character in "/tmp/repo-a, /tmp/repo-b".chars() {
         state.handle_key(key(KeyCode::Char(character)));
@@ -484,7 +484,7 @@ fn repo_context_setup_accepts_multiple_workspace_paths() {
 }
 
 #[test]
-fn repo_context_uses_workspace_after_required_setup_dialog_closes() {
+fn repo_context_uses_workspace_after_required_setup_completes() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -495,14 +495,6 @@ fn repo_context_uses_workspace_after_required_setup_dialog_closes() {
         Vec::new(),
     );
     state.update_repo_workspaces(repo_workspaces());
-    assert!(state.repo.workspace_dialog_open());
-    state.repo.mark_workspace_dialog_dirty();
-    assert_eq!(
-        state.handle_key(key(KeyCode::Esc)),
-        TuiAction::RefreshRepoIndex {
-            work_slug: "billing-retry-audit".to_string(),
-        }
-    );
     state.handle_key(key(KeyCode::Down));
     state.handle_key(key(KeyCode::Char(' ')));
 
@@ -553,20 +545,24 @@ fn repo_context_selects_creation_workspace_without_blocking_filter_text() {
     );
 
     assert_eq!(state.handle_key(key(KeyCode::Tab)), TuiAction::None);
-    assert_eq!(state.repo.focus, RepoPane::Workspace);
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
+    assert_eq!(state.handle_key(key(KeyCode::Tab)), TuiAction::None);
+    assert_eq!(state.repo.focus, RepoPane::ConfiguredPaths);
     assert_eq!(state.handle_key(key(KeyCode::Down)), TuiAction::None);
     assert_eq!(
         state.repo.selected_workspace_path(),
         Some(PathBuf::from("/tmp/client-repos"))
     );
 
+    assert_eq!(state.handle_key(key(KeyCode::Left)), TuiAction::None);
+    assert_eq!(state.handle_key(key(KeyCode::Left)), TuiAction::None);
     assert_eq!(state.handle_key(key(KeyCode::Char('w'))), TuiAction::None);
     assert_eq!(state.repo.focus, RepoPane::Catalog);
     assert_eq!(state.repo.filter, "w");
 }
 
 #[test]
-fn repo_context_can_add_more_workspaces_from_dialog() {
+fn repo_context_can_add_more_workspaces_from_add_path_panel() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -577,9 +573,8 @@ fn repo_context_can_add_more_workspaces_from_dialog() {
         repo_workspaces(),
     );
 
-    assert_eq!(state.handle_key(key(KeyCode::Char('+'))), TuiAction::None);
-    assert!(state.repo.workspace_dialog_open());
-    state.handle_key(key(KeyCode::Tab));
+    assert_eq!(state.handle_key(key(KeyCode::Tab)), TuiAction::None);
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
     for character in "/tmp/more-repos".chars() {
         state.handle_key(key(KeyCode::Char(character)));
     }
@@ -591,11 +586,10 @@ fn repo_context_can_add_more_workspaces_from_dialog() {
             paths: vec![PathBuf::from("/tmp/more-repos")],
         }
     );
-    assert!(state.repo.workspace_dialog_open());
 }
 
 #[test]
-fn repo_context_can_cancel_add_workspace_dialog() {
+fn repo_context_add_path_panel_keeps_repo_context_on_empty_input() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -606,18 +600,17 @@ fn repo_context_can_cancel_add_workspace_dialog() {
         repo_workspaces(),
     );
 
-    state.handle_key(key(KeyCode::Char('+')));
     state.handle_key(key(KeyCode::Tab));
-    state.handle_key(key(KeyCode::Char('/')));
-    state.handle_key(key(KeyCode::Char('t')));
 
-    assert_eq!(state.handle_key(key(KeyCode::Esc)), TuiAction::None);
-    assert!(!state.repo.workspace_dialog_open());
+    assert_eq!(state.handle_key(key(KeyCode::Enter)), TuiAction::None);
     assert_eq!(state.mode, TuiMode::Repos);
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
+    let toast = state.toast.expect("empty add path should notify");
+    assert_eq!(toast.title, "Repo workspace required");
 }
 
 #[test]
-fn repo_context_workspace_dialog_keeps_list_selection_while_typing() {
+fn repo_context_configured_paths_ignores_text_so_selection_is_stable() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -628,8 +621,74 @@ fn repo_context_workspace_dialog_keeps_list_selection_while_typing() {
         multiple_repo_workspaces(),
     );
 
-    state.handle_key(key(KeyCode::Char('+')));
+    state.handle_key(key(KeyCode::Tab));
+    state.handle_key(key(KeyCode::Tab));
     state.handle_key(key(KeyCode::Char('/')));
+    state.handle_key(key(KeyCode::Down));
+
+    assert_eq!(state.repo.focus, RepoPane::ConfiguredPaths);
+    assert_eq!(
+        state.repo.selected_workspace_path(),
+        Some(PathBuf::from("/tmp/client-repos"))
+    );
+    assert!(state.repo.workspace_input().is_empty());
+    assert!(state.repo.filter.is_empty());
+}
+
+#[test]
+fn repo_context_tab_cycles_between_repository_workspace_panels() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        multiple_repo_workspaces(),
+    );
+
+    assert_eq!(state.repo.focus, RepoPane::Catalog);
+    state.handle_key(key(KeyCode::Tab));
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
+    state.handle_key(key(KeyCode::Tab));
+    assert_eq!(state.repo.focus, RepoPane::ConfiguredPaths);
+    state.handle_key(key(KeyCode::Tab));
+    assert_eq!(state.repo.focus, RepoPane::Catalog);
+    state.handle_key(key(KeyCode::BackTab));
+    assert_eq!(state.repo.focus, RepoPane::ConfiguredPaths);
+}
+
+#[test]
+fn repo_context_plus_jumps_to_add_path_panel() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        repo_workspaces(),
+    );
+
+    assert_eq!(state.handle_key(key(KeyCode::Char('+'))), TuiAction::None);
+    assert_eq!(state.mode, TuiMode::Repos);
+    assert_eq!(state.repo.focus, RepoPane::AddPath);
+}
+
+#[test]
+fn repo_context_configured_paths_removes_selected_path() {
+    let mut state = TuiState::new(work_list());
+    state.enter_repo_context(
+        "billing-retry-audit".to_string(),
+        "Billing retry audit".to_string(),
+        available_repositories(),
+        Vec::new(),
+        attached_repositories(),
+        multiple_repo_workspaces(),
+    );
+
+    state.handle_key(key(KeyCode::Tab));
+    state.handle_key(key(KeyCode::Tab));
     state.handle_key(key(KeyCode::Down));
 
     assert_eq!(
@@ -642,7 +701,7 @@ fn repo_context_workspace_dialog_keeps_list_selection_while_typing() {
 }
 
 #[test]
-fn repo_context_can_remove_workspaces_from_dialog() {
+fn repo_context_enter_removes_configured_path() {
     let mut state = TuiState::new(work_list());
     state.enter_repo_context(
         "billing-retry-audit".to_string(),
@@ -653,7 +712,8 @@ fn repo_context_can_remove_workspaces_from_dialog() {
         multiple_repo_workspaces(),
     );
 
-    state.handle_key(key(KeyCode::Char('+')));
+    state.handle_key(key(KeyCode::Tab));
+    state.handle_key(key(KeyCode::Tab));
     state.handle_key(key(KeyCode::Down));
 
     assert_eq!(
@@ -663,30 +723,6 @@ fn repo_context_can_remove_workspaces_from_dialog() {
             path: PathBuf::from("/tmp/client-repos"),
         }
     );
-}
-
-#[test]
-fn repo_context_refreshes_repo_index_when_closing_dirty_workspace_dialog() {
-    let mut state = TuiState::new(work_list());
-    state.enter_repo_context(
-        "billing-retry-audit".to_string(),
-        "Billing retry audit".to_string(),
-        available_repositories(),
-        Vec::new(),
-        attached_repositories(),
-        repo_workspaces(),
-    );
-
-    state.handle_key(key(KeyCode::Char('+')));
-    state.repo.mark_workspace_dialog_dirty();
-
-    assert_eq!(
-        state.handle_key(key(KeyCode::Esc)),
-        TuiAction::RefreshRepoIndex {
-            work_slug: "billing-retry-audit".to_string(),
-        }
-    );
-    assert!(!state.repo.workspace_dialog_open());
 }
 
 #[test]
@@ -702,7 +738,9 @@ fn repo_context_applies_github_adds_to_selected_workspace() {
     );
 
     state.handle_key(key(KeyCode::Tab));
+    state.handle_key(key(KeyCode::Tab));
     state.handle_key(key(KeyCode::Down));
+    state.handle_key(key(KeyCode::Left));
     state.handle_key(key(KeyCode::Left));
     state.repo.filter = "api-docs".to_string();
     state.handle_key(key(KeyCode::Char(' ')));
