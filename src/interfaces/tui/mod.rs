@@ -934,10 +934,7 @@ fn show_repo_batch_outcome(state: &mut TuiState, outcome: RepoBatchOutcome) {
             state.push_trace(TraceKind::Err, failure);
         }
     } else if outcome.failures.is_empty() {
-        state.toast = Some(Toast::info(
-            "Repository context updated",
-            &format!("{} repository changes applied.", outcome.successes),
-        ));
+        state.toast = None;
         state.push_trace(
             TraceKind::Sync,
             format!("repo context: {} applied", outcome.successes),
@@ -1141,6 +1138,26 @@ mod tests {
             .trace
             .iter()
             .any(|event| event.message == "repo workspaces configured: 0"));
+    }
+
+    #[test]
+    fn successful_repo_batch_records_trace_without_toast() {
+        let mut state = TuiState::new(work_list());
+        state.toast = Some(Toast::info("Previous event", "Keep repositories compact."));
+
+        show_repo_batch_outcome(
+            &mut state,
+            RepoBatchOutcome {
+                successes: 2,
+                failures: Vec::new(),
+                cancelled: false,
+                skipped: 0,
+            },
+        );
+
+        assert_eq!(state.toast, None);
+        assert_eq!(state.trace[0].kind, TraceKind::Sync);
+        assert_eq!(state.trace[0].message, "repo context: 2 applied");
     }
 
     #[test]
