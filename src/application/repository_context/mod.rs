@@ -1,4 +1,9 @@
+mod attachments;
+mod paths;
 mod service;
+#[cfg(test)]
+mod service_tests;
+mod workspace;
 
 use crate::application::CommandOutput;
 use crate::domain::IntentCatalog;

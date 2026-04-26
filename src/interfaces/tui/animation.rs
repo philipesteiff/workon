@@ -231,7 +231,13 @@ mod tests {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
-    use super::{AnimationRuntime, AnimationTarget, RenderRegions};
+    use crate::domain::{WorkList, WorkSummary};
+
+    use super::{
+        input_poll_timeout, AnimationRuntime, AnimationSnapshot, AnimationTarget, RenderRegions,
+        ANIMATION_FRAME_INTERVAL,
+    };
+    use crate::interfaces::tui::state::{Toast, TuiMode, TuiState};
 
     #[test]
     fn frame_processing_drains_completed_effects() {
@@ -267,5 +273,122 @@ mod tests {
             .content()
             .iter()
             .all(|cell| cell.bg == ratatui::style::Color::Reset));
+    }
+
+    #[test]
+    fn animation_runtime_enqueues_targets_for_visible_state_transitions() {
+        let before = TuiState::new(work_list());
+        let mut after = before.clone();
+        after.mode = TuiMode::Search;
+        after.move_selection(1);
+        after.trace_visible = true;
+        after.toast = Some(Toast::info("Work created", "/tmp/workon/.workon/work/new"));
+        after.works.push(WorkSummary {
+            title: "New Work".to_string(),
+            slug: "new-work".to_string(),
+            goal: "Create a new animated Work.".to_string(),
+            intent_id: "investigate".to_string(),
+            path: "/tmp/workon/.workon/work/new-work".into(),
+        });
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&after),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
+        assert!(runtime.has_pending(AnimationTarget::WorkQueue));
+        assert!(runtime.has_pending(AnimationTarget::TracePanel));
+        assert!(!runtime.has_pending(AnimationTarget::DetailPanel));
+        assert!(runtime.has_pending(AnimationTarget::Toast));
+        assert!(runtime.has_pending(AnimationTarget::FooterStatus));
+    }
+
+    #[test]
+    fn animation_runtime_keeps_list_navigation_instant() {
+        let before = TuiState::new(work_list());
+        let mut after = before.clone();
+        after.move_selection(1);
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&after),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::WorkQueue));
+    }
+
+    #[test]
+    fn animation_runtime_does_not_animate_filter_input() {
+        let mut before = TuiState::new(work_list());
+        before.mode = TuiMode::Search;
+        let mut after = before.clone();
+        after.push_filter_char('b');
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&after),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::WorkQueue));
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
+    }
+
+    #[test]
+    fn animation_runtime_does_not_animate_leader_entry_or_exit() {
+        let before = TuiState::new(work_list());
+        let mut leader = before.clone();
+        leader.mode = TuiMode::Leader;
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&before),
+            AnimationSnapshot::from_state(&leader),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
+        assert!(!runtime.has_pending(AnimationTarget::FooterStatus));
+
+        let mut runtime = AnimationRuntime::default();
+        runtime.observe_transition(
+            AnimationSnapshot::from_state(&leader),
+            AnimationSnapshot::from_state(&before),
+        );
+
+        assert!(!runtime.has_pending(AnimationTarget::Overlay));
+        assert!(!runtime.has_pending(AnimationTarget::FooterStatus));
+    }
+
+    #[test]
+    fn animation_poll_timeout_blocks_when_idle_and_ticks_when_active() {
+        assert_eq!(input_poll_timeout(false), None);
+        assert_eq!(
+            input_poll_timeout(true),
+            Some(Duration::from_millis(ANIMATION_FRAME_INTERVAL))
+        );
+    }
+
+    fn work_list() -> WorkList {
+        WorkList {
+            works: vec![
+                WorkSummary {
+                    title: "Billing retry audit".to_string(),
+                    slug: "billing-retry-audit".to_string(),
+                    goal: "Find why billing retry alerts spiked.".to_string(),
+                    intent_id: "investigate".to_string(),
+                    path: "/tmp/workon/.workon/work/billing-retry-audit".into(),
+                },
+                WorkSummary {
+                    title: "Review cache invalidation PR".to_string(),
+                    slug: "review-cache-invalidation-pr".to_string(),
+                    goal: "Review cache invalidation changes.".to_string(),
+                    intent_id: "review-pr".to_string(),
+                    path: "/tmp/workon/.workon/work/review-cache-invalidation-pr".into(),
+                },
+            ],
+        }
     }
 }
