@@ -102,7 +102,7 @@ How AI agents should work in this repo.
 
 - Test the command layer first, adapters second, interface wiring last.
 - Every implementation must be tested through the real `wo` binary.
-- Run `cargo fmt --check`, `cargo test`, and `cargo clippy --all-targets --all-features -- -D warnings`.
+- Run `cargo fmt --check`, `cargo test`, and `just lint`.
 - Build once with `cargo build`.
 - Verify user-facing changes from a disposable temp directory, not the repo root.
 - Report commands run, expected result, actual result, and any gap.

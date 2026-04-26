@@ -14,7 +14,7 @@ test:
     cargo test
 
 lint:
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings -D dead-code -D unused-variables -D unused-imports
 
 verify: fmt-check test lint
 
