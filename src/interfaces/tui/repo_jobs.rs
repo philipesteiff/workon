@@ -248,7 +248,9 @@ mod tests {
 
         batch.record_result(
             &first,
-            Ok(crate::application::CommandOutput::Context(context())),
+            Ok(crate::application::CommandOutput::WorkRepositoriesAdded(
+                repository_change(),
+            )),
             false,
         );
         batch.record_result(
@@ -350,13 +352,6 @@ mod tests {
         }
     }
 
-    fn context() -> crate::domain::ContextStatus {
-        crate::domain::ContextStatus {
-            status: "ok".to_string(),
-            message: "ok".to_string(),
-        }
-    }
-
     fn work_summary() -> crate::domain::WorkSummary {
         crate::domain::WorkSummary {
             title: "Billing".to_string(),
@@ -364,6 +359,19 @@ mod tests {
             goal: "Investigate billing".to_string(),
             intent_id: "investigate".to_string(),
             path: "/tmp/workon/billing".into(),
+        }
+    }
+
+    fn repository_change() -> crate::domain::RepositoryContextChange {
+        crate::domain::RepositoryContextChange {
+            work: work_summary(),
+            repositories: vec![crate::domain::AttachedRepository {
+                name_with_owner: "openai/api".to_string(),
+                branch: "main".to_string(),
+                path: "/tmp/workon/billing/api".into(),
+                default_branch: "main".to_string(),
+                url: "https://github.com/openai/api".to_string(),
+            }],
         }
     }
 
@@ -377,7 +385,9 @@ mod tests {
         fn run_step(&mut self, step: &RepoStep) -> crate::shared::error::Result<RepoCommandResult> {
             self.ran.push(step.repository.clone());
             Ok(RepoCommandResult {
-                result: Ok(crate::application::CommandOutput::Context(context())),
+                result: Ok(crate::application::CommandOutput::WorkRepositoriesAdded(
+                    repository_change(),
+                )),
                 cancel_requested: self.cancel_on_second && self.ran.len() == 2,
             })
         }

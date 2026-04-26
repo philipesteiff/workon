@@ -135,10 +135,6 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<CliRequest> {
         });
     }
 
-    if input == "ctx" || input == "context" {
-        return Ok(command_request(Command::Context, machine));
-    }
-
     if input.trim().is_empty() {
         return Err(WorkonError::MissingArgument {
             message: "missing work goal or work query".to_string(),
@@ -745,6 +741,23 @@ mod tests {
                 allow_tui: false,
             }
         );
+    }
+
+    #[test]
+    fn treats_ctx_as_work_input() {
+        for input in ["ctx", "context"] {
+            assert_eq!(
+                parse_args(vec![input.to_string()]).expect("args should parse"),
+                CliRequest::Command {
+                    command: Command::OpenOrCreate {
+                        input: input.to_string(),
+                        intent_id: None,
+                    },
+                    machine: false,
+                    allow_tui: false,
+                }
+            );
+        }
     }
 
     #[test]

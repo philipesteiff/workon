@@ -193,25 +193,6 @@ fn ambiguous_work_error_includes_slug_and_title() {
 }
 
 #[test]
-fn context_command_reports_available_context_surfaces() {
-    let root = temp_root("context_command_is_explicitly_tbd_but_uses_command_layer");
-    let app = App::new(root.path().to_path_buf());
-
-    let CommandOutput::Context(context) = app
-        .execute(Command::Context)
-        .expect("context command should succeed")
-    else {
-        panic!("expected Context output");
-    };
-
-    assert_eq!(context.status, "available");
-    assert!(context.message.contains("intent"));
-    assert!(context.message.contains("skills"));
-    assert!(context.message.contains("MCPs"));
-    assert!(context.message.contains("repository"));
-}
-
-#[test]
 fn unknown_intent_returns_typed_error() {
     let root = temp_root("unknown_intent_returns_typed_error");
     let app = App::new(root.path().to_path_buf());

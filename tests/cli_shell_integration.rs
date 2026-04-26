@@ -133,6 +133,7 @@ fn help_prints_command_summary() {
     assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work"));
     assert!(stdout.contains("wo repos add [--workspace <path>] <work> <owner/repo>..."));
     assert!(stdout.contains("create/link GitHub repos from a configured workspace"));
+    assert!(!stdout.contains("wo ctx"));
     assert!(stdout.contains("WORKON_ROOT=/path"));
 }
 

@@ -1,4 +1,3 @@
-pub(crate) mod context_status;
 pub(crate) mod intent;
 pub(crate) mod repository_context;
 pub(crate) mod shell;

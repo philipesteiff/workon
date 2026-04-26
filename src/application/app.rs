@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::application::command::{Command, CommandOutput};
-use crate::application::{context_status, intent, repository_context, shell, work};
+use crate::application::{intent, repository_context, shell, work};
 use crate::domain::IntentCatalog;
 use crate::infrastructure::storage::{JsonIntentStore, WorkStore};
 use crate::shared::error::Result;
@@ -44,7 +44,6 @@ impl App {
                 intent::archive(&self.intent_store, &intents, &intent_id)
             }
             Command::ArchiveWork { query } => work::archive::execute(&self.store, &query),
-            Command::Context => context_status::execute(),
             Command::CreateIntent { input } => {
                 let intents = self.intent_catalog()?;
                 intent::create(&self.intent_store, &intents, input)

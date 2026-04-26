@@ -20,10 +20,6 @@ pub(crate) fn render_output(
             writeln!(writer, "to: {}", work.archive_path.display())?;
             writeln!(writer, "next: wo list")?;
         }
-        CommandOutput::Context(context) => {
-            writeln!(writer, "context: {}", context.status)?;
-            writeln!(writer, "{}", context.message)?;
-        }
         CommandOutput::IntentArchived(change) => {
             writeln!(writer, "intent archived: {}", change.intent.id)?;
             writeln!(writer, "next: wo intent list")?;
@@ -350,7 +346,6 @@ Usage:
                              remove attached repo links
   wo repos                   show GitHub repo context help
   wo --intent <id> \"<goal>\"  create work
-  wo ctx                     print context status
   wo install-shell           install folder switching
   wo version                 print version
 

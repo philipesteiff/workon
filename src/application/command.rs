@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
 use crate::domain::{
-    ArchivedWork, ContextStatus, CreatedWork, IntentList, IntentProfile, IntentProfileChange,
-    OpenedWork, RepositoryCandidateList, RepositoryCatalog, RepositoryContextChange,
-    RepositoryWorkspaceList, WorkIntentSwitch, WorkList, WorkRepositoryList,
+    ArchivedWork, CreatedWork, IntentList, IntentProfile, IntentProfileChange, OpenedWork,
+    RepositoryCandidateList, RepositoryCatalog, RepositoryContextChange, RepositoryWorkspaceList,
+    WorkIntentSwitch, WorkList, WorkRepositoryList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11,7 +11,6 @@ pub enum Command {
     ArchiveWork {
         query: String,
     },
-    Context,
     ArchiveIntent {
         intent_id: String,
     },
@@ -84,7 +83,6 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandOutput {
     WorkArchived(ArchivedWork),
-    Context(ContextStatus),
     IntentArchived(IntentProfileChange),
     IntentCreated(IntentProfileChange),
     IntentDuplicated(IntentProfileChange),

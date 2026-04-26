@@ -1,9 +1,7 @@
-pub mod agent_context;
 pub mod intent;
 pub mod repository_context;
 pub mod work;
 
-pub use agent_context::ContextStatus;
 pub use intent::{
     IntentCatalog, IntentList, IntentProfile, IntentProfileChange, IntentSource, IntentSummary,
     WorkIntentSwitch,
