@@ -16,7 +16,7 @@ Common development commands:
 just verify
 just install-dev-shell
 # restart the shell, or source the script printed by the command
-just wo --intent investigate "Answer a technical question for my manager across repos"
+wo --intent investigate "Trace a failing release check across repos"
 just smoke
 ```
 
@@ -132,8 +132,8 @@ just install-dev-shell
 Create a Work from natural language.
 
 ```sh
-wo "Answer a technical question for my manager across repos"
-wo --intent investigate "Answer a technical question for my manager across repos"
+wo "Trace a failing release check across repos"
+wo --intent investigate "Trace a failing release check across repos"
 ```
 
 If the text does not match existing Work, Workon starts creation. In a terminal it asks for intent; in scripts use `--intent`.
