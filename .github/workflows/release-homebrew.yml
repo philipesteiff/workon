@@ -35,9 +35,6 @@ jobs:
       - name: Install just
         uses: taiki-e/install-action@just
 
-      - name: Install zsh
-        run: sudo apt-get update && sudo apt-get install -y zsh
-
       - name: Verify
         run: just verify
 
@@ -195,7 +192,7 @@ jobs:
             end
 
             def caveats
-              "Run wo install-shell to enable folder switching in zsh."
+              "Run wo install-shell to enable folder switching."
             end
           end
           RUBY

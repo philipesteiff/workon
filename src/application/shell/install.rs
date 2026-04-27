@@ -20,6 +20,6 @@ fn install(kind: ShellInstallKind, label: &str) -> Result<CommandOutput> {
     Ok(CommandOutput::ShellInstalled {
         label: label.to_string(),
         script_path: outcome.script_path,
-        zshrc_path: outcome.zshrc_path,
+        startup_path: outcome.startup_path,
     })
 }

@@ -9,19 +9,24 @@ const WORKON_HOOK_ACTIVE_ENV: &str = "WORKON_HOOK_ACTIVE";
 const WORKON_ROOT_ENV: &str = "WORKON_ROOT";
 const WORKON_DEV_MANIFEST_ENV: &str = "WORKON_DEV_MANIFEST";
 
-const PROD_SCRIPT: &str = "wo.zsh";
-const DEV_SCRIPT: &str = "wo-dev.zsh";
+const PROD_SCRIPT: &str = "wo";
+const DEV_SCRIPT: &str = "wo-dev";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ShellInstallOutcome {
     pub script_path: PathBuf,
-    pub zshrc_path: PathBuf,
+    pub startup_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ShellInstallKind {
     Production,
     Development { manifest_path: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellTarget {
+    startup_path: PathBuf,
 }
 
 pub(crate) fn workon_root() -> std::io::Result<PathBuf> {
@@ -34,7 +39,8 @@ pub(crate) fn is_shell_hook_active() -> bool {
 
 pub(crate) fn install_shell_integration(kind: ShellInstallKind) -> Result<ShellInstallOutcome> {
     let home = home_dir()?;
-    let script_dir = home.join(".workon/shell/zsh");
+    let target = shell_target(&home)?;
+    let script_dir = home.join(".workon/shell");
     fs::create_dir_all(&script_dir)?;
 
     let (script_name, script) = match kind {
@@ -48,7 +54,7 @@ pub(crate) fn install_shell_integration(kind: ShellInstallKind) -> Result<ShellI
                 .to_path_buf();
             (
                 DEV_SCRIPT,
-                render_zsh_integration(&dev_runner(&manifest_path), Some(&repo_root)),
+                render_shell_integration(&dev_runner(&manifest_path), Some(&repo_root)),
             )
         }
     };
@@ -56,12 +62,11 @@ pub(crate) fn install_shell_integration(kind: ShellInstallKind) -> Result<ShellI
     let script_path = script_dir.join(script_name);
     fs::write(&script_path, script)?;
 
-    let zshrc_path = home.join(".zshrc");
-    ensure_source_line(&zshrc_path, &script_path)?;
+    ensure_source_line(&target.startup_path, &script_path)?;
 
     Ok(ShellInstallOutcome {
         script_path,
-        zshrc_path,
+        startup_path: target.startup_path,
     })
 }
 
@@ -75,7 +80,7 @@ pub(crate) fn development_manifest_from_env() -> Result<PathBuf> {
 
 fn production_script() -> Result<String> {
     let binary = std::env::current_exe()?;
-    Ok(render_zsh_integration(
+    Ok(render_shell_integration(
         &shell_quote(&binary.display().to_string()),
         None,
     ))
@@ -88,7 +93,7 @@ fn dev_runner(manifest_path: &Path) -> String {
     )
 }
 
-fn render_zsh_integration(runner: &str, dev_root: Option<&Path>) -> String {
+fn render_shell_integration(runner: &str, dev_root: Option<&Path>) -> String {
     let dev_root_export = dev_root
         .map(|root| {
             format!(
@@ -164,13 +169,14 @@ wo() {{
     )
 }
 
-fn ensure_source_line(zshrc_path: &Path, script_path: &Path) -> Result<()> {
-    let source_line = format!(
-        "[ -f {script} ] && source {script}",
-        script = shell_quote(&script_path.display().to_string())
-    );
+fn ensure_source_line(startup_path: &Path, script_path: &Path) -> Result<()> {
+    let source_line = source_line(script_path);
 
-    let existing = match fs::read_to_string(zshrc_path) {
+    if let Some(parent) = startup_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let existing = match fs::read_to_string(startup_path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error.into()),
@@ -188,8 +194,35 @@ fn ensure_source_line(zshrc_path: &Path, script_path: &Path) -> Result<()> {
     next.push_str(&source_line);
     next.push('\n');
 
-    fs::write(zshrc_path, next)?;
+    fs::write(startup_path, next)?;
     Ok(())
+}
+
+fn source_line(script_path: &Path) -> String {
+    format!(
+        "[ -f {script} ] && source {script}",
+        script = shell_quote(&script_path.display().to_string())
+    )
+}
+
+fn shell_target(home: &Path) -> Result<ShellTarget> {
+    let shell = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .and_then(|path| path.file_name().map(|name| name.to_owned()))
+        .and_then(|name| name.into_string().ok())
+        .unwrap_or_else(|| "sh".to_string());
+
+    match shell.as_str() {
+        "bash" => Ok(ShellTarget {
+            startup_path: home.join(".bashrc"),
+        }),
+        "zsh" => Ok(ShellTarget {
+            startup_path: home.join(".zshrc"),
+        }),
+        _ => Err(WorkonError::MissingArgument {
+            message: format!("unsupported shell integration target: {shell}"),
+        }),
+    }
 }
 
 fn home_dir() -> Result<PathBuf> {
@@ -220,7 +253,7 @@ fn shell_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_source_line, render_zsh_integration, shell_quote};
+    use super::{ensure_source_line, render_shell_integration, shell_quote};
     use std::fs;
     use std::path::Path;
 
@@ -231,7 +264,7 @@ mod tests {
 
     #[test]
     fn generated_script_defines_workon_function_and_cd_signal() {
-        let script = render_zsh_integration("'wo'", None);
+        let script = render_shell_integration("'wo'", None);
 
         assert!(script.contains("wo()"));
         assert!(script.contains("__WORKON_CD="));
@@ -243,7 +276,7 @@ mod tests {
 
     #[test]
     fn generated_dev_script_intercepts_just_wo() {
-        let script = render_zsh_integration(
+        let script = render_shell_integration(
             "cargo run --manifest-path '/repo/Cargo.toml' --",
             Some(Path::new("/repo")),
         );
@@ -257,14 +290,14 @@ mod tests {
 
     #[test]
     fn source_line_is_idempotent() {
-        let path = std::env::temp_dir().join(format!("workon-zshrc-test-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("workon-startup-test-{}", std::process::id()));
         let _ = fs::remove_file(&path);
-        let script = Path::new("/tmp/workon-test/wo.zsh");
+        let script = Path::new("/tmp/workon-test/wo");
 
         ensure_source_line(&path, script).expect("first install should work");
         ensure_source_line(&path, script).expect("second install should work");
 
-        let content = fs::read_to_string(&path).expect("zshrc should be readable");
+        let content = fs::read_to_string(&path).expect("startup file should be readable");
         assert_eq!(content.matches("Workon shell integration").count(), 1);
 
         let _ = fs::remove_file(path);

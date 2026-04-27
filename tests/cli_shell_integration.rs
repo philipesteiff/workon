@@ -452,21 +452,24 @@ fn install_shell_writes_sourceable_prod_integration() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_wo"))
         .env("HOME", home.path())
+        .env("SHELL", "/bin/bash")
         .args(["install-shell"])
         .output()
         .expect("wo should run");
 
     assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
 
-    let script = home.path().join(".workon/shell/zsh/wo.zsh");
-    let zshrc = home.path().join(".zshrc");
+    let script = home.path().join(".workon/shell/wo");
+    let startup = home.path().join(".bashrc");
     let script_content = fs::read_to_string(&script).expect("script should be readable");
-    let zshrc_content = fs::read_to_string(&zshrc).expect("zshrc should be readable");
+    let startup_content = fs::read_to_string(&startup).expect("startup file should be readable");
 
     assert!(script_content.contains("wo()"));
     assert!(script_content.contains("--machine"));
-    assert!(zshrc_content.contains("[ -f "));
-    assert!(zshrc_content.contains("wo.zsh"));
+    assert!(startup_content.contains("[ -f "));
+    assert!(startup_content.contains(".workon/shell/wo"));
+    assert!(stdout.contains("startup file updated:"));
 }
 
 #[test]
@@ -476,8 +479,7 @@ fn installed_prod_shell_function_switches_to_home_root() {
     let script = install_prod_shell(home.path());
     let expected_work = home.path().join(".workon/work/prod-hook-home-smoke");
 
-    let output = Command::new("zsh")
-        .arg("-f")
+    let output = Command::new("bash")
         .arg("-c")
         .arg(format!(
             "source {}; cd {}; wo --intent investigate 'Prod hook home smoke'; printf 'PWD:%s\\n' \"$PWD\"; test \"$PWD\" = {}",
@@ -488,7 +490,7 @@ fn installed_prod_shell_function_switches_to_home_root() {
         .env("HOME", home.path())
         .env_remove("WORKON_ROOT")
         .output()
-        .expect("zsh should run");
+        .expect("shell should run");
 
     assert!(
         output.status.success(),
@@ -511,8 +513,7 @@ fn installed_dev_shell_function_switches_current_shell() {
     let script = install_dev_shell(home.path());
     let expected_work = home.path().join(".workon/work/hook-navigation-smoke");
 
-    let output = Command::new("zsh")
-        .arg("-f")
+    let output = Command::new("bash")
         .arg("-c")
         .arg(format!(
             "source {}; cd {}; wo --intent investigate 'Hook navigation smoke'; printf 'PWD:%s\\n' \"$PWD\"; test \"$PWD\" = {}",
@@ -524,7 +525,7 @@ fn installed_dev_shell_function_switches_current_shell() {
         .env_remove("WORKON_ROOT")
         .apply_cargo_env()
         .output()
-        .expect("zsh should run");
+        .expect("shell should run");
 
     assert!(
         output.status.success(),
@@ -551,8 +552,7 @@ fn installed_dev_shell_intercepts_just_wo() {
     let script = install_dev_shell(home.path());
     let expected_work = home.path().join(".workon/work/just-hook-navigation-smoke");
 
-    let output = Command::new("zsh")
-        .arg("-f")
+    let output = Command::new("bash")
         .arg("-c")
         .arg(format!(
             "source {}; export WORKON_DEV_ROOT={}; cd {}; just wo --intent investigate 'Just hook navigation smoke'; printf 'PWD:%s\\n' \"$PWD\"; test \"$PWD\" = {}",
@@ -565,7 +565,7 @@ fn installed_dev_shell_intercepts_just_wo() {
         .env_remove("WORKON_ROOT")
         .apply_cargo_env()
         .output()
-        .expect("zsh should run");
+        .expect("shell should run");
 
     assert!(
         output.status.success(),
@@ -588,6 +588,7 @@ fn installed_dev_shell_intercepts_just_wo() {
 fn install_prod_shell(home: &Path) -> PathBuf {
     let output = Command::new(env!("CARGO_BIN_EXE_wo"))
         .env("HOME", home)
+        .env("SHELL", "/bin/bash")
         .env_remove("WORKON_ROOT")
         .args(["install-shell"])
         .output()
@@ -600,13 +601,14 @@ fn install_prod_shell(home: &Path) -> PathBuf {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    home.join(".workon/shell/zsh/wo.zsh")
+    home.join(".workon/shell/wo")
 }
 
 fn install_dev_shell(home: &Path) -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let output = Command::new(env!("CARGO_BIN_EXE_wo"))
         .env("HOME", home)
+        .env("SHELL", "/bin/bash")
         .env("WORKON_DEV_MANIFEST", manifest)
         .args(["install-dev-shell"])
         .output()
@@ -619,7 +621,7 @@ fn install_dev_shell(home: &Path) -> PathBuf {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    home.join(".workon/shell/zsh/wo-dev.zsh")
+    home.join(".workon/shell/wo-dev")
 }
 
 fn create_work(root: &Path, goal: &str) {

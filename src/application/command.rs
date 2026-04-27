@@ -95,7 +95,7 @@ pub enum CommandOutput {
     ShellInstalled {
         label: String,
         script_path: PathBuf,
-        zshrc_path: PathBuf,
+        startup_path: PathBuf,
     },
     WorkCreated(CreatedWork),
     WorkList(WorkList),

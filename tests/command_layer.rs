@@ -455,7 +455,9 @@ fn install_shell_is_a_command_layer_feature() {
     let home = temp_root("install_shell_is_a_command_layer_feature_home");
     let root = temp_root("install_shell_is_a_command_layer_feature_root");
     let previous_home = std::env::var_os("HOME");
+    let previous_shell = std::env::var_os("SHELL");
     std::env::set_var("HOME", home.path());
+    std::env::set_var("SHELL", "/usr/bin/bash");
 
     let app = App::new(root.path().to_path_buf());
     let output = app
@@ -463,31 +465,34 @@ fn install_shell_is_a_command_layer_feature() {
         .expect("install shell should succeed");
 
     restore_env("HOME", previous_home);
+    restore_env("SHELL", previous_shell);
 
     let CommandOutput::ShellInstalled {
         label,
         script_path,
-        zshrc_path,
+        startup_path,
     } = output
     else {
         panic!("expected ShellInstalled output");
     };
 
     assert_eq!(label, "shell integration installed");
-    assert!(script_path.ends_with(".workon/shell/zsh/wo.zsh"));
-    assert!(zshrc_path.ends_with(".zshrc"));
+    assert!(script_path.ends_with(".workon/shell/wo"));
+    assert!(startup_path.ends_with(".bashrc"));
     assert!(script_path.is_file());
-    assert!(zshrc_path.is_file());
+    assert!(startup_path.is_file());
 }
 
 #[test]
-fn install_dev_shell_is_a_command_layer_feature() {
+fn install_dev_shell_uses_detected_shell_startup_file() {
     let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
     let home = temp_root("install_dev_shell_is_a_command_layer_feature_home");
     let root = temp_root("install_dev_shell_is_a_command_layer_feature_root");
     let manifest_path = root.path().join("Cargo.toml");
     let previous_home = std::env::var_os("HOME");
+    let previous_shell = std::env::var_os("SHELL");
     std::env::set_var("HOME", home.path());
+    std::env::set_var("SHELL", "/bin/bash");
 
     let app = App::new(root.path().to_path_buf());
     let output = app
@@ -497,11 +502,12 @@ fn install_dev_shell_is_a_command_layer_feature() {
         .expect("install dev shell should succeed");
 
     restore_env("HOME", previous_home);
+    restore_env("SHELL", previous_shell);
 
     let CommandOutput::ShellInstalled {
         label,
         script_path,
-        zshrc_path,
+        startup_path,
     } = output
     else {
         panic!("expected ShellInstalled output");
@@ -510,8 +516,8 @@ fn install_dev_shell_is_a_command_layer_feature() {
     let script = fs::read_to_string(&script_path).expect("script should be readable");
 
     assert_eq!(label, "dev shell integration installed");
-    assert!(script_path.ends_with(".workon/shell/zsh/wo-dev.zsh"));
-    assert!(zshrc_path.ends_with(".zshrc"));
+    assert!(script_path.ends_with(".workon/shell/wo-dev"));
+    assert!(startup_path.ends_with(".bashrc"));
     assert!(script.contains(&manifest_path.display().to_string()));
     assert!(script.contains("just()"));
 }

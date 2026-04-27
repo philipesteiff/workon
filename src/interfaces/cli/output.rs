@@ -98,10 +98,10 @@ pub(crate) fn render_output(
         CommandOutput::ShellInstalled {
             label,
             script_path,
-            zshrc_path,
+            startup_path,
         } => {
             writeln!(writer, "{label}: {}", script_path.display())?;
-            writeln!(writer, "zshrc updated: {}", zshrc_path.display())?;
+            writeln!(writer, "startup file updated: {}", startup_path.display())?;
             writeln!(writer, "restart your shell or run:")?;
             writeln!(writer, "  source {}", script_path.display())?;
         }
