@@ -24,3 +24,8 @@ Icon
 
 # Workon local state
 .workon/
+
+# Local agent skill installs
+.agents/
+.claude/
+skills-lock.json
