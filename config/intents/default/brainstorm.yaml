@@ -1,8 +1,7 @@
 id: brainstorm
 name: Brainstorm
 summary: Explore an idea without committing to implementation.
-skill_weights:
-  - brainstorming-skill
+skill_weights: []
 mcp_weights: []
 instructions:
   - Clarify the idea before producing artifacts.

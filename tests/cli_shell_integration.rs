@@ -251,7 +251,7 @@ fn create_without_intent_uses_blank_intent() {
         .join(".workon/work/answer-billing-question/AGENTS.md");
     let agents = fs::read_to_string(agents_path).expect("AGENTS.md should exist");
     assert!(agents.contains("Blank (blank)"));
-    assert!(agents.contains("## Instructions\n\n- none"));
+    assert!(agents.contains("## Intent Instructions\n\n- none"));
 }
 
 #[test]

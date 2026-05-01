@@ -12,11 +12,22 @@ const CONTEXT_BLOCK_START: &str = "<!-- wo:context:begin -->";
 const CONTEXT_BLOCK_END: &str = "<!-- wo:context:end -->";
 const LEGACY_INTENT_BLOCK_START: &str = "<!-- wo:intent:begin -->";
 const LEGACY_INTENT_BLOCK_END: &str = "<!-- wo:intent:end -->";
+const PREFERRED_SKILLS_FILL_INSTRUCTION: &str = "Workon side task: Take a moment to fill this based on the skills available in the user session that relate to this intent. If no relevant skills are available, ignore this instruction. When filling this section, remove this instruction.";
+const PREFERRED_MCPS_FILL_INSTRUCTION: &str = "Workon side task: Take a moment to fill this based on the MCPs available in the user session that relate to this intent. If no relevant MCPs are available, ignore this instruction. When filling this section, remove this instruction.";
 
 #[derive(Debug, Default)]
 struct PreservedAgentEdits {
+    prefix: String,
+    preferred_skills: Vec<String>,
+    preferred_mcps: Vec<String>,
     instruction_additions: Vec<String>,
     suffix: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PreferredSection {
+    Skills,
+    Mcps,
 }
 
 pub fn write_agent_files(work_path: &Path, goal: &str, intent: &IntentProfile) -> Result<()> {
@@ -88,7 +99,8 @@ fn render_agent_file(
         preserved_edits.suffix.as_str()
     };
     format!(
-        "{CONTEXT_BLOCK_START}\n{}{CONTEXT_BLOCK_END}{suffix}",
+        "{}{CONTEXT_BLOCK_START}\n{}{CONTEXT_BLOCK_END}{suffix}",
+        preserved_edits.prefix,
         render_agent_file_body(agent_name, goal, intent, repositories, preserved_edits)
     )
 }
@@ -132,12 +144,18 @@ fn render_agent_file_body(
          - Inspect attached repos before editing.\n\
          - Check existing notes, evidence, and outputs in this Work folder.\n\
          - Leave a short handoff when you stop.\n\n\
-         ## Instructions\n\n\
+         ## Intent Instructions\n\n\
          {}\n",
         intent.name,
         intent.id,
-        bullet_list(&intent.skill_weights),
-        bullet_list(&intent.mcp_weights),
+        preferred_list(
+            &preserved_edits.preferred_skills,
+            PREFERRED_SKILLS_FILL_INSTRUCTION
+        ),
+        preferred_list(
+            &preserved_edits.preferred_mcps,
+            PREFERRED_MCPS_FILL_INSTRUCTION
+        ),
         repo_list(repositories),
         instruction_list(intent, &preserved_edits.instruction_additions)
     )
@@ -175,6 +193,19 @@ fn preserved_agent_edits(
     if let Some((start, end)) = context_block_bounds(&content, label)? {
         let context = &content[start + CONTEXT_BLOCK_START.len()..end];
         return Ok(PreservedAgentEdits {
+            prefix: content[..start].to_string(),
+            preferred_skills: preferred_additions(
+                context,
+                "## Preferred Skills",
+                previous_intent,
+                PreferredSection::Skills,
+            ),
+            preferred_mcps: preferred_additions(
+                context,
+                "## Preferred MCPs",
+                previous_intent,
+                PreferredSection::Mcps,
+            ),
             instruction_additions: instruction_additions(context, previous_intent),
             suffix: content[end + CONTEXT_BLOCK_END.len()..].to_string(),
         });
@@ -182,6 +213,19 @@ fn preserved_agent_edits(
 
     legacy_intent_block_bounds(&content, label)?;
     Ok(PreservedAgentEdits {
+        prefix: String::new(),
+        preferred_skills: preferred_additions(
+            &content,
+            "## Preferred Skills",
+            previous_intent,
+            PreferredSection::Skills,
+        ),
+        preferred_mcps: preferred_additions(
+            &content,
+            "## Preferred MCPs",
+            previous_intent,
+            PreferredSection::Mcps,
+        ),
         instruction_additions: instruction_additions(&content, previous_intent),
         suffix: String::new(),
     })
@@ -245,21 +289,110 @@ fn block_bounds(
 }
 
 fn instruction_additions(content: &str, previous_intent: &IntentProfile) -> Vec<String> {
-    let Some(section) = instructions_section(content) else {
+    section_additions(
+        content,
+        instructions_section_names(),
+        &previous_intent.instructions,
+        &[],
+    )
+}
+
+fn preferred_additions(
+    content: &str,
+    heading: &str,
+    previous_intent: &IntentProfile,
+    section: PreferredSection,
+) -> Vec<String> {
+    let Some(existing_section) = first_section(content, &[heading]) else {
         return Vec::new();
     };
-    let mut defaults = previous_intent.instructions.clone();
+    let items = bullet_items(existing_section);
+    let previous_defaults = preferred_defaults(previous_intent, section, &items);
+    let fill_instruction = preferred_fill_instruction(section);
+
+    section_additions_from_items(&items, &previous_defaults, &[fill_instruction, "none"])
+}
+
+fn preferred_defaults(
+    intent: &IntentProfile,
+    section: PreferredSection,
+    existing_items: &[&str],
+) -> Vec<String> {
+    let mut defaults = match section {
+        PreferredSection::Skills => intent.skill_weights.clone(),
+        PreferredSection::Mcps => intent.mcp_weights.clone(),
+    };
+
+    if let Some(legacy_defaults) = legacy_generated_preferred_defaults(&intent.id, section) {
+        if existing_items
+            .iter()
+            .copied()
+            .eq(legacy_defaults.iter().copied())
+        {
+            defaults.extend(legacy_defaults.iter().map(|item| item.to_string()));
+        }
+    }
+
+    defaults
+}
+
+fn preferred_fill_instruction(section: PreferredSection) -> &'static str {
+    match section {
+        PreferredSection::Skills => PREFERRED_SKILLS_FILL_INSTRUCTION,
+        PreferredSection::Mcps => PREFERRED_MCPS_FILL_INSTRUCTION,
+    }
+}
+
+fn legacy_generated_preferred_defaults(
+    intent_id: &str,
+    section: PreferredSection,
+) -> Option<&'static [&'static str]> {
+    match (intent_id, section) {
+        ("address-pr-comments", PreferredSection::Skills) => Some(&["review-response-skill"]),
+        ("address-pr-comments", PreferredSection::Mcps) => Some(&["github", "git"]),
+        ("brainstorm", PreferredSection::Skills) => Some(&["brainstorming-skill"]),
+        ("brainstorm", PreferredSection::Mcps) => Some(&[]),
+        ("design-to-prs", PreferredSection::Skills) => {
+            Some(&["design-skill", "implementation-skill"])
+        }
+        ("design-to-prs", PreferredSection::Mcps) => Some(&["notion", "github"]),
+        ("investigate", PreferredSection::Skills) => Some(&["evidence-skill"]),
+        ("investigate", PreferredSection::Mcps) => Some(&["slack", "notion", "jira"]),
+        ("presentation", PreferredSection::Skills) => Some(&["presentation-skill"]),
+        ("presentation", PreferredSection::Mcps) => Some(&["notion", "github"]),
+        ("review-pr", PreferredSection::Skills) => Some(&["review-skill"]),
+        ("review-pr", PreferredSection::Mcps) => Some(&["github", "git"]),
+        ("slack-to-pr", PreferredSection::Skills) => Some(&["implementation-skill"]),
+        ("slack-to-pr", PreferredSection::Mcps) => Some(&["slack", "jira", "github"]),
+        _ => None,
+    }
+}
+
+fn section_additions(
+    content: &str,
+    headings: &[&str],
+    previous_defaults: &[String],
+    ignored_items: &[&str],
+) -> Vec<String> {
+    let Some(section) = first_section(content, headings) else {
+        return Vec::new();
+    };
+    let items = bullet_items(section);
+    section_additions_from_items(&items, previous_defaults, ignored_items)
+}
+
+fn section_additions_from_items(
+    items: &[&str],
+    previous_defaults: &[String],
+    ignored_items: &[&str],
+) -> Vec<String> {
+    let mut defaults = previous_defaults.to_vec();
     let mut additions = Vec::new();
 
-    for line in section.lines() {
-        let trimmed = line.trim();
-        if trimmed == LEGACY_INTENT_BLOCK_START || trimmed == LEGACY_INTENT_BLOCK_END {
+    for item in items {
+        if ignored_items.contains(item) {
             continue;
         }
-
-        let Some(item) = bullet_item(trimmed) else {
-            continue;
-        };
 
         if let Some(index) = defaults.iter().position(|default| default == item) {
             defaults.remove(index);
@@ -271,9 +404,16 @@ fn instruction_additions(content: &str, previous_intent: &IntentProfile) -> Vec<
     additions
 }
 
-fn instructions_section(content: &str) -> Option<&str> {
-    let heading_start = content.find("## Instructions")?;
-    let after_heading = &content[heading_start + "## Instructions".len()..];
+fn instructions_section_names() -> &'static [&'static str] {
+    &["## Intent Instructions", "## Instructions"]
+}
+
+fn first_section<'a>(content: &'a str, headings: &[&str]) -> Option<&'a str> {
+    let (heading_start, heading) = headings
+        .iter()
+        .filter_map(|heading| content.find(heading).map(|index| (index, *heading)))
+        .min_by_key(|(index, _)| *index)?;
+    let after_heading = &content[heading_start + heading.len()..];
     let section = after_heading
         .strip_prefix("\r\n\r\n")
         .or_else(|| after_heading.strip_prefix("\n\n"))
@@ -288,6 +428,22 @@ fn instructions_section(content: &str) -> Option<&str> {
     }
 }
 
+fn bullet_items(section: &str) -> Vec<&str> {
+    section
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed == CONTEXT_BLOCK_END
+                || trimmed == LEGACY_INTENT_BLOCK_START
+                || trimmed == LEGACY_INTENT_BLOCK_END
+            {
+                return None;
+            }
+            bullet_item(trimmed)
+        })
+        .collect()
+}
+
 fn bullet_item(line: &str) -> Option<&str> {
     line.strip_prefix("- ")
 }
@@ -296,6 +452,14 @@ fn instruction_list(intent: &IntentProfile, instruction_additions: &[String]) ->
     let mut instructions = intent.instructions.clone();
     instructions.extend(instruction_additions.iter().cloned());
     bullet_list(&instructions)
+}
+
+fn preferred_list(items: &[String], fill_instruction: &str) -> String {
+    if items.is_empty() {
+        format!("- {fill_instruction}")
+    } else {
+        bullet_list(items)
+    }
 }
 
 fn bullet_list(items: &[String]) -> String {

@@ -32,8 +32,13 @@ fn create_work_writes_agent_files_and_metadata() {
         fs::read_to_string(created.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
     assert!(agents.contains("Goal"));
     assert!(agents.contains("answer a technical question"));
-    assert!(agents.contains("evidence-skill"));
-    assert!(agents.contains("slack"));
+    assert!(agents
+        .contains("Workon side task: Take a moment to fill this based on the skills available"));
+    assert!(
+        agents.contains("Workon side task: Take a moment to fill this based on the MCPs available")
+    );
+    assert!(!agents.contains("evidence-skill"));
+    assert!(!agents.contains("- slack"));
     assert!(agents.contains("repos/"));
     assert!(agents.contains("AGENTS.md is the source"));
     assert!(agents.contains("Treat Preferred Skills and Preferred MCPs as suggestions"));
@@ -102,9 +107,13 @@ fn open_or_create_without_intent_creates_blank_work() {
     let agents =
         fs::read_to_string(created.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
     assert!(agents.contains("Blank (blank)"));
-    assert!(agents.contains("## Preferred Skills\n\n- none"));
-    assert!(agents.contains("## Preferred MCPs\n\n- none"));
-    assert!(agents.contains("## Instructions\n\n- none"));
+    assert!(agents.contains(
+        "## Preferred Skills\n\n- Workon side task: Take a moment to fill this based on the skills available in the user session that relate to this intent."
+    ));
+    assert!(agents.contains(
+        "## Preferred MCPs\n\n- Workon side task: Take a moment to fill this based on the MCPs available in the user session that relate to this intent."
+    ));
+    assert!(agents.contains("## Intent Instructions\n\n- none"));
 }
 
 #[test]
@@ -144,6 +153,74 @@ fn list_and_open_work_use_existing_state() {
         panic!("expected WorkOpened output");
     };
     assert_eq!(opened.title, "Investigate billing timeout");
+}
+
+#[test]
+fn open_work_syncs_agent_file_and_preserves_outside_context_block() {
+    let root = temp_root("open_work_syncs_agent_file");
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Investigate generated preferences");
+    let agents_path = work.path.join("AGENTS.md");
+
+    replace_agent_section(&agents_path, "## Preferred Skills", "- evidence-skill");
+    replace_agent_section(
+        &agents_path,
+        "## Preferred MCPs",
+        "- slack\n- notion\n- jira",
+    );
+    let mut agents = fs::read_to_string(&agents_path).expect("agent file should exist");
+    agents = agents.replace("## Intent Instructions", "## Instructions");
+    agents = format!("Keep this prefix.\n\n{agents}\nKeep this suffix.\n");
+    fs::write(&agents_path, agents).expect("agent file should update");
+
+    let CommandOutput::WorkOpened(opened) = app
+        .execute(Command::OpenWork {
+            query: work.slug.clone(),
+        })
+        .expect("open should sync agent file")
+    else {
+        panic!("expected WorkOpened output");
+    };
+
+    assert_eq!(opened.slug, work.slug);
+    let agents = fs::read_to_string(agents_path).expect("agent file should be readable");
+    assert!(agents.starts_with("Keep this prefix.\n\n<!-- wo:context:begin -->"));
+    assert!(agents.ends_with("<!-- wo:context:end -->\n\nKeep this suffix.\n"));
+    assert!(agents.contains("## Preferred Skills\n\n- Workon side task:"));
+    assert!(agents.contains("## Preferred MCPs\n\n- Workon side task:"));
+    assert!(!agents.contains("evidence-skill"));
+    assert!(!agents.contains("- slack"));
+    assert!(!agents.contains("- notion"));
+    assert!(!agents.contains("- jira"));
+    assert!(agents.contains("## Intent Instructions"));
+    assert!(!agents.contains("## Instructions"));
+}
+
+#[test]
+fn open_or_create_syncs_existing_work_and_preserves_filled_preferred_sections() {
+    let root = temp_root("open_or_create_syncs_existing_work");
+    let app = App::new(root.path().to_path_buf());
+    let work = create_investigate(&app, "Preserve filled preferred sections");
+    let agents_path = work.path.join("AGENTS.md");
+    replace_agent_section(&agents_path, "## Preferred Skills", "- rust-engineer");
+    replace_agent_section(&agents_path, "## Preferred MCPs", "- github");
+
+    let CommandOutput::WorkOpened(opened) = app
+        .execute(Command::OpenOrCreate {
+            input: work.slug.clone(),
+            intent_id: None,
+        })
+        .expect("open-or-create should open and sync existing work")
+    else {
+        panic!("expected WorkOpened output");
+    };
+
+    assert_eq!(opened.slug, work.slug);
+    let agents = fs::read_to_string(agents_path).expect("agent file should be readable");
+    assert!(agents.contains("## Preferred Skills\n\n- rust-engineer"));
+    assert!(agents.contains("## Preferred MCPs\n\n- github"));
+    assert!(!agents.contains("Workon side task: Take a moment to fill this based on the skills"));
+    assert!(!agents.contains("Workon side task: Take a moment to fill this based on the MCPs"));
 }
 
 #[test]
@@ -963,7 +1040,14 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     let repo_workspace = configure_repo_workspace(&app, root.path());
     let work = create_investigate(&app, "Investigate repository context");
     let custom_instruction = "- User instruction: keep repo-specific caveats visible.\n";
-    append_instruction_before_context_end(&work.path.join("AGENTS.md"), custom_instruction);
+    let agents_path = work.path.join("AGENTS.md");
+    append_instruction_before_context_end(&agents_path, custom_instruction);
+    replace_agent_section(
+        &agents_path,
+        "## Preferred Skills",
+        "- superpowers:systematic-debugging\n- rust-engineer",
+    );
+    replace_agent_section(&agents_path, "## Preferred MCPs", "- github\n- git");
 
     let CommandOutput::WorkRepositoriesAdded(change) = app
         .execute(Command::AddWorkRepositories {
@@ -975,6 +1059,12 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     else {
         panic!("expected WorkRepositoriesAdded output");
     };
+
+    replace_agent_section(&agents_path, "## Repos", "stale repository section");
+    app.execute(Command::OpenWork {
+        query: work.slug.clone(),
+    })
+    .expect("open should resync repository context");
 
     restore_env("PATH", previous_path);
     restore_env("WORKON_FAKE_LOG", previous_log);
@@ -1001,11 +1091,14 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
     assert!(metadata.contains("\"target_path\""));
     assert!(!metadata.contains("\"branch\""));
 
-    let agents =
-        fs::read_to_string(work.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    let agents = fs::read_to_string(agents_path).expect("AGENTS.md should be readable");
     assert!(agents.contains("- openai/workon"));
     assert!(agents.contains("repos/workon"));
     assert!(agents.contains(custom_instruction));
+    assert!(agents.contains("- superpowers:systematic-debugging"));
+    assert!(agents.contains("- rust-engineer"));
+    assert!(agents.contains("- github"));
+    assert!(agents.contains("- git"));
 
     let log = fs::read_to_string(root.path().join("tool.log")).expect("tool log should exist");
     assert!(log.contains("gh repo view openai/workon"));
@@ -1447,6 +1540,29 @@ fn append_instruction_before_context_end(path: &Path, content: &str) {
         &original[..marker_index],
         content,
         &original[marker_index..]
+    );
+    fs::write(path, updated).expect("agent file should update");
+}
+
+fn replace_agent_section(path: &Path, heading: &str, replacement: &str) {
+    let original = fs::read_to_string(path).expect("agent file should exist");
+    let heading_index = original
+        .find(heading)
+        .expect("agent file should contain section heading");
+    let content_start = heading_index + heading.len();
+    let after_heading = original[content_start..]
+        .strip_prefix("\n\n")
+        .expect("agent section should have a blank line after heading");
+    let section_start = content_start + 2;
+    let relative_end = after_heading
+        .find("\n\n## ")
+        .expect("agent section should end before another heading");
+    let section_end = section_start + relative_end;
+    let updated = format!(
+        "{}{}{}",
+        &original[..section_start],
+        replacement,
+        &original[section_end..]
     );
     fs::write(path, updated).expect("agent file should update");
 }

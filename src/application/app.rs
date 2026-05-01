@@ -68,7 +68,10 @@ impl App {
                 let intents = self.intent_catalog()?;
                 work::open_or_create::execute(&self.store, &intents, &input, intent_id.as_deref())
             }
-            Command::OpenWork { query } => work::open::execute(&self.store, &query),
+            Command::OpenWork { query } => {
+                let intents = self.intent_catalog()?;
+                work::open::execute(&self.store, &intents, &query)
+            }
             Command::LinkWorkRepositories { query, paths } => {
                 let intents = self.intent_catalog()?;
                 repository_context::link(&self.store, &intents, &query, &paths)

@@ -1,4 +1,4 @@
-use crate::application::work::create;
+use crate::application::work::{create, open};
 use crate::application::CommandOutput;
 use crate::domain::IntentCatalog;
 use crate::infrastructure::storage::WorkStore;
@@ -10,8 +10,8 @@ pub(crate) fn execute(
     input: &str,
     intent_id: Option<&str>,
 ) -> Result<CommandOutput> {
-    match store.open(input) {
-        Ok(work) => Ok(CommandOutput::WorkOpened(work)),
+    match open::execute(store, intents, input) {
+        Ok(output) => Ok(output),
         Err(WorkonError::WorkNotFound { .. }) => {
             let intent_id = intent_id.unwrap_or(IntentCatalog::BLANK_INTENT_ID);
             create::execute(store, intents, input, intent_id)
