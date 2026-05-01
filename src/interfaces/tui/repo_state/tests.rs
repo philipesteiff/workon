@@ -81,6 +81,9 @@ fn repo_picker_sorts_attached_then_local_then_github_rows() {
             RepoCatalogRow::Local(candidate) => {
                 format!("local:{}", candidate.name_with_owner)
             }
+            RepoCatalogRow::PendingLocal { path, .. } => {
+                format!("pending:{}", path.display())
+            }
             RepoCatalogRow::Attached(repository) => {
                 format!("attached:{}", repository.name_with_owner)
             }
@@ -95,6 +98,23 @@ fn repo_picker_sorts_attached_then_local_then_github_rows() {
             "github:openai/api".to_string(),
         ]
     );
+}
+
+#[test]
+fn repo_picker_includes_pending_local_candidate_rows() {
+    let mut picker = picker();
+    picker.pending_candidate_paths = vec![crate::domain::RepositoryCandidatePath {
+        path: "/tmp/repos/pending-api".into(),
+        cached: None,
+    }];
+
+    let rows = picker.catalog_rows();
+
+    assert!(rows.iter().any(|row| matches!(
+        row,
+        RepoCatalogRow::PendingLocal { path, failed: false }
+            if path.ends_with("pending-api")
+    )));
 }
 
 #[test]

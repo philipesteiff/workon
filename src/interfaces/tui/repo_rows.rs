@@ -63,6 +63,8 @@ pub(super) fn catalog_row(
                 pending_add: repo.pending_add.contains(&repository.name_with_owner),
                 pending_remove: repo.pending_remove.contains(&repository.name_with_owner),
                 force_remove: repo.force_remove,
+                status_override: None,
+                muted: false,
             },
             index == repo.selected_catalog && repo.focus == RepoPane::Catalog,
             width,
@@ -76,6 +78,27 @@ pub(super) fn catalog_row(
                 pending_add: repo.is_local_candidate_selected(&candidate.path),
                 pending_remove: repo.pending_remove.contains(&candidate.name_with_owner),
                 force_remove: repo.force_remove,
+                status_override: None,
+                muted: false,
+            },
+            index == repo.selected_catalog && repo.focus == RepoPane::Catalog,
+            width,
+        ),
+        RepoCatalogRow::PendingLocal { path, failed } => catalog_repo_row(
+            RepoRowRenderData {
+                name: compact_path(path),
+                source: "local",
+                branch: if *failed {
+                    "error".to_string()
+                } else {
+                    "reading".to_string()
+                },
+                attached_to_work: false,
+                pending_add: false,
+                pending_remove: false,
+                force_remove: false,
+                status_override: Some(if *failed { "WARN" } else { "READING" }),
+                muted: true,
             },
             index == repo.selected_catalog && repo.focus == RepoPane::Catalog,
             width,
@@ -89,6 +112,8 @@ pub(super) fn catalog_row(
                 pending_add: false,
                 pending_remove: repo.pending_remove.contains(&repository.name_with_owner),
                 force_remove: repo.force_remove,
+                status_override: None,
+                muted: false,
             },
             index == repo.selected_catalog && repo.focus == RepoPane::Catalog,
             width,
@@ -116,6 +141,16 @@ pub(super) fn catalog_row_detail(
             value: compact_path(&candidate.path),
             secondary_key: "work",
             secondary_value: Some(row_path(&candidate.path, workspace)),
+        },
+        RepoCatalogRow::PendingLocal { path, failed } => DetailFields {
+            key: "path",
+            value: compact_path(path),
+            secondary_key: "state",
+            secondary_value: Some(if *failed {
+                "inspection failed".to_string()
+            } else {
+                "inspecting".to_string()
+            }),
         },
         RepoCatalogRow::Attached(repository) => DetailFields {
             key: "path",
@@ -190,6 +225,8 @@ struct RepoRowRenderData {
     pending_add: bool,
     pending_remove: bool,
     force_remove: bool,
+    status_override: Option<&'static str>,
+    muted: bool,
 }
 
 fn catalog_repo_row(data: RepoRowRenderData, selected: bool, width: u16) -> Line<'static> {
@@ -202,7 +239,9 @@ fn catalog_repo_row(data: RepoRowRenderData, selected: bool, width: u16) -> Line
     } else {
         "[ ]"
     };
-    let status = if data.pending_add {
+    let status = if let Some(status) = data.status_override {
+        status
+    } else if data.pending_add {
         "ADD"
     } else if data.pending_remove && data.force_remove {
         "FORCE"
@@ -225,7 +264,11 @@ fn catalog_repo_row(data: RepoRowRenderData, selected: bool, width: u16) -> Line
         &mut spans,
         &data.name,
         columns.name,
-        theme::style_primary_text(),
+        if data.muted {
+            theme::style_muted_text()
+        } else {
+            theme::style_primary_text()
+        },
         Truncate::End,
     );
     push_column(

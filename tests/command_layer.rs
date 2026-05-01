@@ -571,6 +571,165 @@ fn add_repository_workspaces_accepts_multiple_paths() {
 }
 
 #[test]
+fn repository_candidate_paths_are_fast_filesystem_discovery() {
+    let root = temp_root("repository_candidate_paths_are_fast_filesystem_discovery");
+    let app = App::new(root.path().to_path_buf());
+    let repo_workspace = configure_repo_workspace(&app, root.path());
+    let work = create_investigate(&app, "Discover local candidates");
+    fs::create_dir_all(repo_workspace.join("api/.git")).expect("candidate git dir should exist");
+    fs::create_dir_all(repo_workspace.join("api/src")).expect("repo child dir should exist");
+    fs::create_dir_all(repo_workspace.join("monorepo/.git"))
+        .expect("outer repo git dir should exist");
+    fs::create_dir_all(repo_workspace.join("monorepo/nested/.git"))
+        .expect("nested repo git dir should exist");
+    fs::create_dir_all(repo_workspace.join(".github/workflows")).expect("config dir should exist");
+    fs::create_dir_all(repo_workspace.join(".husky")).expect("hook dir should exist");
+    fs::create_dir_all(repo_workspace.join("node_modules/ignored"))
+        .expect("ignored dir should exist");
+
+    let CommandOutput::RepositoryCandidatePaths(paths) = app
+        .execute(Command::ListRepositoryCandidatePaths {
+            query: work.slug.clone(),
+        })
+        .expect("candidate paths should list")
+    else {
+        panic!("expected RepositoryCandidatePaths output");
+    };
+
+    let listed = paths
+        .paths
+        .into_iter()
+        .map(|candidate| candidate.path)
+        .collect::<Vec<_>>();
+    let api_path = fs::canonicalize(repo_workspace.join("api")).expect("api path should exist");
+    let nested_path =
+        fs::canonicalize(repo_workspace.join("monorepo/nested")).expect("nested path should exist");
+    assert!(listed.contains(&api_path));
+    assert!(listed.contains(&nested_path));
+    assert!(!listed.iter().any(|path| path.ends_with(".github")));
+    assert!(!listed.iter().any(|path| path.ends_with("workflows")));
+    assert!(!listed.iter().any(|path| path.ends_with(".husky")));
+    assert!(!listed.iter().any(|path| path.ends_with("src")));
+    assert!(!listed.iter().any(|path| path.ends_with("node_modules")));
+    assert!(!listed.iter().any(|path| path.ends_with("ignored")));
+}
+
+#[test]
+fn repository_candidate_inspection_uses_light_cache() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("repository_candidate_inspection_uses_light_cache");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let log_path = root.path().join("tool.log");
+    std::env::set_var("WORKON_FAKE_LOG", &log_path);
+    let app = App::new(root.path().to_path_buf());
+    let candidate_path = root.path().join("repo-workspace/api");
+    let work = create_investigate(&app, "Cached candidate paths");
+    app.execute(Command::AddRepositoryWorkspaces {
+        paths: vec![root.path().join("repo-workspace")],
+    })
+    .expect("workspace should be configured");
+    fs::create_dir_all(candidate_path.join(".git")).expect("git metadata should exist");
+    fs::write(candidate_path.join(".workon-current-branch"), "main\n")
+        .expect("fake branch should exist");
+    fs::write(
+        candidate_path.join(".workon-origin-url"),
+        "https://github.com/openai/api.git\n",
+    )
+    .expect("fake origin should exist");
+
+    let CommandOutput::RepositoryCandidateInspection(first) = app
+        .execute(Command::InspectRepositoryCandidate {
+            path: candidate_path.clone(),
+            refresh: false,
+        })
+        .expect("candidate should inspect")
+    else {
+        panic!("expected RepositoryCandidateInspection output");
+    };
+    assert!(!first.cached);
+    assert_eq!(
+        first
+            .candidate
+            .as_ref()
+            .expect("candidate should resolve")
+            .name_with_owner,
+        "openai/api"
+    );
+
+    fs::write(&log_path, "").expect("tool log should reset");
+    let CommandOutput::RepositoryCandidateInspection(second) = app
+        .execute(Command::InspectRepositoryCandidate {
+            path: candidate_path.clone(),
+            refresh: false,
+        })
+        .expect("cached candidate should inspect")
+    else {
+        panic!("expected RepositoryCandidateInspection output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert!(second.cached);
+    assert_eq!(
+        second
+            .candidate
+            .expect("cached candidate should resolve")
+            .name_with_owner,
+        "openai/api"
+    );
+    let CommandOutput::RepositoryCandidatePaths(paths) = app
+        .execute(Command::ListRepositoryCandidatePaths {
+            query: work.slug.clone(),
+        })
+        .expect("candidate paths should list")
+    else {
+        panic!("expected RepositoryCandidatePaths output");
+    };
+    assert!(paths.paths.iter().any(|path| {
+        path.path == fs::canonicalize(&candidate_path).expect("candidate path should exist")
+            && path
+                .cached
+                .as_ref()
+                .is_some_and(|candidate| candidate.name_with_owner == "openai/api")
+    }));
+    let log = fs::read_to_string(log_path).expect("tool log should read");
+    assert!(
+        log.trim().is_empty(),
+        "cached inspection should not run git, log was:\n{log}"
+    );
+}
+
+#[test]
+fn repository_candidate_paths_ignore_invalid_light_cache() {
+    let root = temp_root("repository_candidate_paths_ignore_invalid_light_cache");
+    let app = App::new(root.path().to_path_buf());
+    let repo_workspace = configure_repo_workspace(&app, root.path());
+    let work = create_investigate(&app, "Ignore invalid candidate cache");
+    fs::create_dir_all(repo_workspace.join("api/.git")).expect("candidate git dir should exist");
+    fs::create_dir_all(root.path().join(".workon")).expect("workon dir should exist");
+    fs::write(
+        root.path().join(".workon/repo-candidates.json"),
+        "[]\n{\"trailing\":\"bad\"}\n",
+    )
+    .expect("invalid cache should be written");
+
+    let CommandOutput::RepositoryCandidatePaths(paths) = app
+        .execute(Command::ListRepositoryCandidatePaths {
+            query: work.slug.clone(),
+        })
+        .expect("candidate paths should ignore invalid cache")
+    else {
+        panic!("expected RepositoryCandidatePaths output");
+    };
+
+    let api_path = fs::canonicalize(repo_workspace.join("api")).expect("api path should exist");
+    assert!(paths.paths.iter().any(|path| path.path == api_path));
+}
+
+#[test]
 fn remove_repository_workspace_blocks_active_work_repositories_in_that_workspace() {
     let root = temp_root("remove_repo_workspace_blocks_active_work");
     let app = App::new(root.path().to_path_buf());
@@ -1306,6 +1465,12 @@ if [ "$1" = "branch" ] && [ "$2" = "--show-current" ]; then
   exit 0
 fi
 if [ "$1" = "branch" ]; then
+  exit 0
+fi
+if [ "$1" = "remote" ] && [ "$2" = "get-url" ] && [ "$3" = "origin" ]; then
+  if [ -n "$cwd" ] && [ -f "$cwd/.workon-origin-url" ]; then
+    cat "$cwd/.workon-origin-url"
+  fi
   exit 0
 fi
 if [ "$1" = "worktree" ] && [ "$2" = "add" ]; then

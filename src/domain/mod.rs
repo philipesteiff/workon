@@ -8,7 +8,8 @@ pub use intent::{
 };
 pub use repository_context::{
     AttachedRepository, AvailableRepository, RepositoryAttachment, RepositoryCandidate,
-    RepositoryCandidateList, RepositoryCatalog, RepositoryContextChange, RepositoryWorkspace,
+    RepositoryCandidateInspection, RepositoryCandidateList, RepositoryCandidatePath,
+    RepositoryCandidatePathList, RepositoryCatalog, RepositoryContextChange, RepositoryWorkspace,
     RepositoryWorkspaceList, WorkRepositoryList,
 };
 pub use work::{AmbiguousWorkMatch, ArchivedWork, CreatedWork, OpenedWork, WorkList, WorkSummary};

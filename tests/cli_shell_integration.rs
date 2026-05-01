@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 #[test]
 fn machine_mode_emits_cd_target_for_created_work() {
@@ -812,6 +813,67 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
 }
 
 #[test]
+fn repos_candidate_paths_use_real_wo_binary_without_slow_git_or_gh() {
+    let root = temp_root("repos_candidate_paths_use_real_wo_binary_without_slow_git_or_gh");
+    let fake_bin = fake_slow_repo_tools();
+    let fake_path = path_with_prepended(fake_bin.path());
+    let workspace_path = root.path().join("repo-workspace");
+    create_work(root.path(), "Lazy local candidate smoke");
+    for index in 0..20 {
+        fs::create_dir_all(workspace_path.join(format!("repo-{index:02}/.git")))
+            .expect("candidate folder should exist");
+    }
+    fs::create_dir_all(workspace_path.join("repo-00/src")).expect("repo child should exist");
+    fs::create_dir_all(workspace_path.join(".github/workflows")).expect("config dir should exist");
+    fs::create_dir_all(workspace_path.join(".husky")).expect("hook dir should exist");
+
+    let workspace = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args([
+            "repos",
+            "workspace",
+            "add",
+            workspace_path.to_str().expect("workspace path utf8"),
+        ])
+        .output()
+        .expect("wo repos workspace add should run");
+    assert!(
+        workspace.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&workspace.stdout),
+        String::from_utf8_lossy(&workspace.stderr)
+    );
+
+    let start = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .env("PATH", &fake_path)
+        .args(["repos", "candidate-paths", "lazy", "local", "candidate"])
+        .output()
+        .expect("wo repos candidate-paths should run");
+    let elapsed = start.elapsed();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("repo-00"));
+    assert!(stdout.contains("repo-19"));
+    assert!(!stdout.contains(".github"));
+    assert!(!stdout.contains(".husky"));
+    assert!(!stdout.contains("repo-00/src"));
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "candidate path listing should be sub-second, took {elapsed:?}"
+    );
+}
+
+#[test]
 fn repos_link_uses_real_wo_binary_with_existing_local_checkout() {
     let root = temp_root("repos_link_uses_real_wo_binary_with_existing_local_checkout");
     let fake_bin = fake_repo_tools();
@@ -1498,6 +1560,29 @@ fn fake_repo_tools() -> TempRoot {
     let fake_bin = temp_root("fake_repo_tools");
     fs::write(fake_bin.path().join("gh"), fake_gh_script()).expect("gh fake should be written");
     fs::write(fake_bin.path().join("git"), fake_git_script()).expect("git fake should be written");
+
+    for name in ["gh", "git"] {
+        let path = fake_bin.path().join(name);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&path)
+                .expect("fake tool metadata should read")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).expect("fake tool should be executable");
+        }
+    }
+
+    fake_bin
+}
+
+fn fake_slow_repo_tools() -> TempRoot {
+    let fake_bin = temp_root("fake_slow_repo_tools");
+    fs::write(fake_bin.path().join("gh"), "#!/bin/sh\nsleep 2\nexit 7\n")
+        .expect("slow gh fake should be written");
+    fs::write(fake_bin.path().join("git"), "#!/bin/sh\nsleep 2\nexit 7\n")
+        .expect("slow git fake should be written");
 
     for name in ["gh", "git"] {
         let path = fake_bin.path().join(name);

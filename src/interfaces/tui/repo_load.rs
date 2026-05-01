@@ -1,4 +1,7 @@
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::application::{App, Command, CommandOutput};
@@ -14,10 +17,17 @@ pub(super) struct RepoAttachedData {
 enum RepoLoadMessage {
     Attached(Result<RepoAttachedData>),
     Workspaces(Result<Vec<crate::domain::RepositoryWorkspace>>),
-    Candidates(Result<Vec<crate::domain::RepositoryCandidate>>),
+    CandidatePaths(Result<Vec<crate::domain::RepositoryCandidatePath>>),
+    CandidateInspection {
+        path: PathBuf,
+        result: Result<crate::domain::RepositoryCandidateInspection>,
+    },
+    CandidateInspectionsFinished,
     Catalog(Result<Vec<crate::domain::AvailableRepository>>),
     Finished,
 }
+
+const CANDIDATE_INSPECTION_WORKERS: usize = 8;
 
 pub(super) struct RepoLoadJob {
     work_slug: String,
@@ -127,27 +137,37 @@ fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
                 format!("repo workspaces unavailable: {error}"),
             );
         }
-        RepoLoadMessage::Candidates(Ok(candidates)) => {
-            let count = candidates.len();
-            state.update_repo_candidates_from_load(candidates);
-            state
-                .repo
-                .update_loading_message(repo_loading_sources_message(&["GitHub"]));
-            state.push_repo_log(TraceKind::Sync, format!("discovered {count} local repos"));
+        RepoLoadMessage::CandidatePaths(Ok(paths)) => {
+            let count = paths.len();
+            state.update_repo_candidate_paths_from_load(paths);
+            state.push_repo_log(TraceKind::Sync, format!("queued {count} local repo paths"));
         }
-        RepoLoadMessage::Candidates(Err(error)) => {
-            state
-                .repo
-                .update_loading_message(repo_loading_sources_message(&["GitHub"]));
+        RepoLoadMessage::CandidatePaths(Err(error)) => {
             state.push_repo_log(
                 TraceKind::Warn,
-                format!("local repo discovery unavailable: {error}"),
+                format!("local repo path discovery unavailable: {error}"),
             );
             state.push_trace(
                 TraceKind::Warn,
-                format!("local repo discovery unavailable: {error}"),
+                format!("local repo path discovery unavailable: {error}"),
             );
         }
+        RepoLoadMessage::CandidateInspection { path, result } => match result {
+            Ok(inspection) => state.update_repo_candidate_inspection_from_load(inspection),
+            Err(error) => {
+                state.mark_repo_candidate_inspection_failed(path.clone());
+                state.push_repo_log(
+                    TraceKind::Warn,
+                    format!(
+                        "local repo inspection failed for {}: {error}",
+                        path.display()
+                    ),
+                );
+            }
+        },
+        RepoLoadMessage::CandidateInspectionsFinished => state
+            .repo
+            .update_loading_message(repo_loading_sources_message(&["GitHub"])),
         RepoLoadMessage::Catalog(Ok(available)) => {
             let count = available.len();
             state.update_repo_available_from_load(available);
@@ -162,9 +182,12 @@ fn apply_repo_load_message(state: &mut TuiState, message: RepoLoadMessage) {
                 TraceKind::Warn,
                 format!("GitHub catalog unavailable: {error}"),
             );
-            state.set_repo_failed(format!("GitHub catalog unavailable: {error}"));
+            state.push_repo_log(
+                TraceKind::Warn,
+                format!("GitHub catalog unavailable: {error}"),
+            );
         }
-        RepoLoadMessage::Finished => {}
+        RepoLoadMessage::Finished => state.finish_repo_loading(),
     }
 }
 
@@ -173,6 +196,42 @@ pub(super) fn repo_loading_sources_message(sources: &[&str]) -> String {
 }
 
 fn load_repo_context_sources(app: &App, work_slug: &str, sender: Sender<RepoLoadMessage>) {
+    let workspaces = match load_repo_workspaces(app) {
+        Ok(workspaces) => {
+            if sender
+                .send(RepoLoadMessage::Workspaces(Ok(workspaces.clone())))
+                .is_err()
+            {
+                return;
+            }
+            workspaces
+        }
+        Err(error) => {
+            let _ = sender.send(RepoLoadMessage::Workspaces(Err(error)));
+            Vec::new()
+        }
+    };
+
+    let candidate_workers = if workspaces.is_empty() {
+        Vec::new()
+    } else {
+        match load_repo_candidate_paths(app, work_slug) {
+            Ok(paths) => {
+                if sender
+                    .send(RepoLoadMessage::CandidatePaths(Ok(paths.clone())))
+                    .is_err()
+                {
+                    return;
+                }
+                spawn_candidate_path_inspections(app, paths, &sender)
+            }
+            Err(error) => {
+                let _ = sender.send(RepoLoadMessage::CandidatePaths(Err(error)));
+                Vec::new()
+            }
+        }
+    };
+
     let attached = match load_repo_attached(app, work_slug) {
         Ok(attached) => attached,
         Err(error) => {
@@ -191,30 +250,54 @@ fn load_repo_context_sources(app: &App, work_slug: &str, sender: Sender<RepoLoad
         return;
     }
 
-    let workspaces = match load_repo_workspaces(app) {
-        Ok(workspaces) => {
-            if sender
-                .send(RepoLoadMessage::Workspaces(Ok(workspaces.clone())))
-                .is_err()
-            {
-                return;
-            }
-            workspaces
-        }
-        Err(error) => {
-            let _ = sender.send(RepoLoadMessage::Workspaces(Err(error)));
-            Vec::new()
-        }
-    };
-
+    for worker in candidate_workers {
+        let _ = worker.join();
+    }
     if !workspaces.is_empty() {
-        let _ = sender.send(RepoLoadMessage::Candidates(load_repo_candidates(
-            app, work_slug,
-        )));
+        let _ = sender.send(RepoLoadMessage::CandidateInspectionsFinished);
     }
 
     let _ = sender.send(RepoLoadMessage::Catalog(load_repo_catalog(app)));
     let _ = sender.send(RepoLoadMessage::Finished);
+}
+
+fn spawn_candidate_path_inspections(
+    app: &App,
+    paths: Vec<crate::domain::RepositoryCandidatePath>,
+    sender: &Sender<RepoLoadMessage>,
+) -> Vec<thread::JoinHandle<()>> {
+    let queue = Arc::new(Mutex::new(
+        paths
+            .into_iter()
+            .map(|candidate_path| candidate_path.path)
+            .collect::<VecDeque<_>>(),
+    ));
+    let worker_count = CANDIDATE_INSPECTION_WORKERS.min(queue.lock().map(|q| q.len()).unwrap_or(0));
+    let mut workers = Vec::new();
+
+    for _ in 0..worker_count {
+        let app = app.clone();
+        let queue = Arc::clone(&queue);
+        let sender = sender.clone();
+        workers.push(thread::spawn(move || loop {
+            let path = match queue.lock() {
+                Ok(mut queue) => queue.pop_front(),
+                Err(_) => None,
+            };
+            let Some(path) = path else {
+                break;
+            };
+            let result = inspect_repo_candidate(&app, &path);
+            if sender
+                .send(RepoLoadMessage::CandidateInspection { path, result })
+                .is_err()
+            {
+                break;
+            }
+        }));
+    }
+
+    workers
 }
 
 fn load_repo_attached(app: &App, work_slug: &str) -> Result<crate::domain::WorkRepositoryList> {
@@ -236,18 +319,33 @@ fn load_repo_workspaces(app: &App) -> Result<Vec<crate::domain::RepositoryWorksp
     Ok(workspaces.workspaces)
 }
 
-fn load_repo_candidates(
+fn load_repo_candidate_paths(
     app: &App,
     work_slug: &str,
-) -> Result<Vec<crate::domain::RepositoryCandidate>> {
-    let CommandOutput::RepositoryCandidates(candidates) =
-        app.execute(Command::ListRepositoryCandidates {
+) -> Result<Vec<crate::domain::RepositoryCandidatePath>> {
+    let CommandOutput::RepositoryCandidatePaths(paths) =
+        app.execute(Command::ListRepositoryCandidatePaths {
             query: work_slug.to_string(),
         })?
     else {
-        unreachable!("list repository candidates command returns candidates");
+        unreachable!("list repository candidate paths command returns candidate paths");
     };
-    Ok(candidates.candidates)
+    Ok(paths.paths)
+}
+
+fn inspect_repo_candidate(
+    app: &App,
+    path: &std::path::Path,
+) -> Result<crate::domain::RepositoryCandidateInspection> {
+    let CommandOutput::RepositoryCandidateInspection(inspection) =
+        app.execute(Command::InspectRepositoryCandidate {
+            path: path.to_path_buf(),
+            refresh: true,
+        })?
+    else {
+        unreachable!("inspect repository candidate command returns candidate inspection");
+    };
+    Ok(inspection)
 }
 
 fn load_repo_catalog(app: &App) -> Result<Vec<crate::domain::AvailableRepository>> {
@@ -261,11 +359,15 @@ fn load_repo_catalog(app: &App) -> Result<Vec<crate::domain::AvailableRepository
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
+    use crate::application::{App, Command};
     use crate::domain::{AttachedRepository, WorkList, WorkSummary};
 
     use super::{
-        apply_repo_load_message, poll_repo_load_job, RepoAttachedData, RepoLoadJob, RepoLoadMessage,
+        apply_repo_load_message, load_repo_context_sources, poll_repo_load_job, RepoAttachedData,
+        RepoLoadJob, RepoLoadMessage,
     };
     use crate::interfaces::tui::repo_state::RepoStatus;
     use crate::interfaces::tui::state::{TuiMode, TuiState};
@@ -327,6 +429,61 @@ mod tests {
     }
 
     #[test]
+    fn repo_load_sends_workspaces_before_attached_and_optional_sources() {
+        let root = temp_root("repo_load_fast_first_source");
+        let app = App::new(root.path.clone());
+        app.execute(Command::CreateWork {
+            goal: "Repository speed check".to_string(),
+            intent_id: "blank".to_string(),
+        })
+        .expect("work should be created");
+
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            load_repo_context_sources(&app, "repository-speed-check", sender);
+        });
+
+        let first = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("loader should send a fast first source");
+
+        assert!(matches!(first, RepoLoadMessage::Workspaces(Ok(_))));
+    }
+
+    #[test]
+    fn repo_load_sends_candidate_paths_before_attached_repositories() {
+        let root = temp_root("repo_load_candidate_paths_before_attached");
+        let app = App::new(root.path.clone());
+        app.execute(Command::CreateWork {
+            goal: "Repository speed check".to_string(),
+            intent_id: "blank".to_string(),
+        })
+        .expect("work should be created");
+        let workspace = root.path.join("repos");
+        std::fs::create_dir_all(workspace.join("local-tool"))
+            .expect("candidate folder should be created");
+        app.execute(Command::AddRepositoryWorkspaces {
+            paths: vec![workspace],
+        })
+        .expect("workspace should be configured");
+
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            load_repo_context_sources(&app, "repository-speed-check", sender);
+        });
+
+        let first = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("loader should send workspaces first");
+        let second = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("loader should send candidate paths second");
+
+        assert!(matches!(first, RepoLoadMessage::Workspaces(Ok(_))));
+        assert!(matches!(second, RepoLoadMessage::CandidatePaths(Ok(_))));
+    }
+
+    #[test]
     fn repo_load_title_removes_sources_as_they_finish() {
         let mut state = TuiState::new(work_list());
         let work = work_list().works[0].clone();
@@ -351,18 +508,72 @@ mod tests {
             }])),
         );
         assert!(repo_loading_message(&state).contains("local, GitHub"));
-        assert!(!repo_loading_message(&state).contains("workspaces"));
+        assert!(state.is_title_activity_active());
+
+        let candidate_path = std::path::PathBuf::from("/tmp/repos/local-tool");
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::CandidatePaths(Ok(vec![crate::domain::RepositoryCandidatePath {
+                path: candidate_path.clone(),
+                cached: None,
+            }])),
+        );
+        assert_eq!(state.repo.pending_candidate_paths.len(), 1);
 
         apply_repo_load_message(
             &mut state,
-            RepoLoadMessage::Candidates(Ok(vec![crate::domain::RepositoryCandidate {
-                name_with_owner: "openai/local-tool".to_string(),
-                branch: "main".to_string(),
-                path: "/tmp/repos/local-tool".into(),
-                url: "https://github.com/openai/local-tool".to_string(),
+            RepoLoadMessage::CandidateInspection {
+                path: candidate_path.clone(),
+                result: Ok(crate::domain::RepositoryCandidateInspection {
+                    path: candidate_path,
+                    candidate: Some(crate::domain::RepositoryCandidate {
+                        name_with_owner: "openai/local-tool".to_string(),
+                        branch: "main".to_string(),
+                        path: "/tmp/repos/local-tool".into(),
+                        url: "https://github.com/openai/local-tool".to_string(),
+                    }),
+                    cached: false,
+                }),
+            },
+        );
+        assert_eq!(state.repo.candidates.len(), 1);
+        apply_repo_load_message(&mut state, RepoLoadMessage::CandidateInspectionsFinished);
+        assert_eq!(repo_loading_message(&state), "Loading: GitHub");
+        assert!(state.is_title_activity_active());
+    }
+
+    #[test]
+    fn repo_load_keeps_failed_candidate_path_as_warning_row() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+        let path = std::path::PathBuf::from("/tmp/repos/broken");
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::CandidatePaths(Ok(vec![crate::domain::RepositoryCandidatePath {
+                path: path.clone(),
+                cached: None,
             }])),
         );
-        assert_eq!(repo_loading_message(&state), "Loading: GitHub");
+
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::CandidateInspection {
+                path: path.clone(),
+                result: Err(crate::shared::error::WorkonError::RepositoryContext {
+                    message: "git failed".to_string(),
+                }),
+            },
+        );
+
+        assert!(state.repo.failed_candidate_paths.contains(&path));
+        assert!(state.repo.catalog_rows().iter().any(|row| matches!(
+            row,
+            crate::interfaces::tui::repo_state::RepoCatalogRow::PendingLocal {
+                path: row_path,
+                failed: true
+            } if row_path == &path
+        )));
     }
 
     #[test]
@@ -381,6 +592,34 @@ mod tests {
         apply_repo_load_message(&mut state, RepoLoadMessage::Workspaces(Ok(Vec::new())));
 
         assert_eq!(repo_loading_message(&state), "Loading: GitHub");
+        assert!(state.is_title_activity_active());
+    }
+
+    #[test]
+    fn repo_load_keeps_ready_state_when_github_catalog_fails_late() {
+        let mut state = TuiState::new(work_list());
+        let work = work_list().works[0].clone();
+        state.enter_repo_loading(work.slug.clone(), work.title.clone());
+
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Attached(Ok(RepoAttachedData {
+                work,
+                attached: attached_repositories(),
+            })),
+        );
+        apply_repo_load_message(&mut state, RepoLoadMessage::Workspaces(Ok(Vec::new())));
+        apply_repo_load_message(
+            &mut state,
+            RepoLoadMessage::Catalog(Err(crate::shared::error::WorkonError::RepositoryContext {
+                message: "gh timed out".to_string(),
+            })),
+        );
+        assert!(state.is_title_activity_active());
+
+        apply_repo_load_message(&mut state, RepoLoadMessage::Finished);
+
+        assert!(matches!(state.repo.status, RepoStatus::Ready));
     }
 
     fn work_list() -> WorkList {
@@ -410,5 +649,23 @@ mod tests {
             panic!("expected repo loading status");
         };
         message
+    }
+
+    struct TempRoot {
+        path: std::path::PathBuf,
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn temp_root(name: &str) -> TempRoot {
+        let mut path = std::env::temp_dir();
+        path.push(format!("workon-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("temp root should be created");
+        TempRoot { path }
     }
 }

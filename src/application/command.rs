@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use crate::domain::{
     ArchivedWork, CreatedWork, IntentList, IntentProfileChange, OpenedWork,
-    RepositoryCandidateList, RepositoryCatalog, RepositoryContextChange, RepositoryWorkspaceList,
-    WorkIntentSwitch, WorkList, WorkRepositoryList,
+    RepositoryCandidateInspection, RepositoryCandidateList, RepositoryCandidatePathList,
+    RepositoryCatalog, RepositoryContextChange, RepositoryWorkspaceList, WorkIntentSwitch,
+    WorkList, WorkRepositoryList,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +33,9 @@ pub enum Command {
     ListRepositoryCandidates {
         query: String,
     },
+    ListRepositoryCandidatePaths {
+        query: String,
+    },
     ListRepositoryWorkspaces,
     ListWorkRepositories {
         query: String,
@@ -47,6 +51,10 @@ pub enum Command {
     LinkWorkRepositories {
         query: String,
         paths: Vec<PathBuf>,
+    },
+    InspectRepositoryCandidate {
+        path: PathBuf,
+        refresh: bool,
     },
     RemoveRepositoryWorkspace {
         path: PathBuf,
@@ -71,7 +79,9 @@ pub enum CommandOutput {
     IntentList(IntentList),
     IntentShown(IntentProfileChange),
     RepositoryCatalog(RepositoryCatalog),
+    RepositoryCandidateInspection(RepositoryCandidateInspection),
     RepositoryCandidates(RepositoryCandidateList),
+    RepositoryCandidatePaths(RepositoryCandidatePathList),
     RepositoryWorkspaces(RepositoryWorkspaceList),
     ShellInstalled {
         label: String,

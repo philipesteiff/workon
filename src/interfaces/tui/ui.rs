@@ -1508,6 +1508,28 @@ mod tests {
     }
 
     #[test]
+    fn renders_repo_context_pending_local_repository_candidates() {
+        let mut state = TuiState::new(work_list());
+        state.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            Vec::new(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+        state.update_repo_candidate_paths_from_load(vec![crate::domain::RepositoryCandidatePath {
+            path: PathBuf::from("/tmp/repos/pending-tool"),
+            cached: None,
+        }]);
+
+        let content = render_content(&state, 120, 36);
+
+        assert!(content.contains("pending-tool"));
+        assert!(content.contains("reading"));
+    }
+
+    #[test]
     fn renders_repo_context_rows_as_compact_columns_with_selected_detail() {
         let home = PathBuf::from(std::env::var("HOME").expect("HOME should be set for tests"));
         let local_path = home.join("Projects/client/local-tool");

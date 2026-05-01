@@ -112,6 +112,16 @@ impl WorktreeInspector for GitWorktree<'_> {
         self.candidate_at(path)
     }
 
+    fn discover_candidate_paths(&self, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        for root in roots {
+            discover_candidate_paths(root, 0, &mut paths)?;
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
     fn discover(&self, roots: &[PathBuf]) -> Result<Vec<RepositoryCandidate>> {
         let mut candidates = Vec::new();
         for root in roots {
@@ -125,6 +135,34 @@ impl WorktreeInspector for GitWorktree<'_> {
         candidates.dedup_by(|left, right| left.path == right.path);
         Ok(candidates)
     }
+}
+
+fn discover_candidate_paths(path: &Path, depth: usize, paths: &mut Vec<PathBuf>) -> Result<()> {
+    const MAX_DEPTH: usize = 4;
+    if depth > MAX_DEPTH || !path.exists() || ignored_discovery_path(path) {
+        return Ok(());
+    }
+
+    if !path.is_dir() {
+        return Ok(());
+    }
+
+    if has_git_metadata(path) {
+        paths.push(path.to_path_buf());
+    }
+
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let child = entry.path();
+        if child.is_dir() {
+            discover_candidate_paths(&child, depth + 1, paths)?;
+        }
+    }
+    Ok(())
+}
+
+fn has_git_metadata(path: &Path) -> bool {
+    path.join(".git").exists()
 }
 
 fn discover_root(

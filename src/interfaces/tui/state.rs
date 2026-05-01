@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::{
     AttachedRepository, AvailableRepository, IntentCatalog, RepositoryCandidate,
-    RepositoryWorkspace, WorkList, WorkSummary,
+    RepositoryCandidateInspection, RepositoryCandidatePath, RepositoryWorkspace, WorkList,
+    WorkSummary,
 };
 
 use super::repo_state::{RepoOperation, RepoPickerState};
@@ -368,6 +369,24 @@ impl TuiState {
         candidates: Vec<RepositoryCandidate>,
     ) {
         self.repo.update_candidates_from_load(candidates);
+    }
+
+    pub(super) fn update_repo_candidate_paths_from_load(
+        &mut self,
+        paths: Vec<RepositoryCandidatePath>,
+    ) {
+        self.repo.update_candidate_paths_from_load(paths);
+    }
+
+    pub(super) fn update_repo_candidate_inspection_from_load(
+        &mut self,
+        inspection: RepositoryCandidateInspection,
+    ) {
+        self.repo.update_candidate_inspection_from_load(inspection);
+    }
+
+    pub(super) fn mark_repo_candidate_inspection_failed(&mut self, path: PathBuf) {
+        self.repo.mark_candidate_inspection_failed(path);
     }
 
     pub(super) fn start_repo_loading(&mut self, message: impl Into<String>) {

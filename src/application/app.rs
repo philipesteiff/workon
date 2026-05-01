@@ -56,6 +56,9 @@ impl App {
             Command::ListRepositoryCandidates { query } => {
                 repository_context::discover(&self.store, &query)
             }
+            Command::ListRepositoryCandidatePaths { query } => {
+                repository_context::candidate_paths(&self.store, &query)
+            }
             Command::ListRepositoryWorkspaces => repository_context::list_workspaces(&self.store),
             Command::ListWorkRepositories { query } => {
                 repository_context::list_attached(&self.store, &query)
@@ -69,6 +72,9 @@ impl App {
             Command::LinkWorkRepositories { query, paths } => {
                 let intents = self.intent_catalog()?;
                 repository_context::link(&self.store, &intents, &query, &paths)
+            }
+            Command::InspectRepositoryCandidate { path, refresh } => {
+                repository_context::inspect_candidate(&self.store, &path, refresh)
             }
             Command::RemoveRepositoryWorkspace { path } => {
                 repository_context::remove_workspace(&self.store, &path)

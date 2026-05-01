@@ -292,6 +292,10 @@ mod tests {
             }))
         }
 
+        fn discover_candidate_paths(&self, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+            Ok(roots.to_vec())
+        }
+
         fn discover(&self, _roots: &[PathBuf]) -> Result<Vec<RepositoryCandidate>> {
             Ok(Vec::new())
         }

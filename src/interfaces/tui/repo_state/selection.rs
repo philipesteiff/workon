@@ -17,6 +17,7 @@ impl RepoPickerState {
                         self.toggle_repository_selection(&repository.name_with_owner)
                     }
                     RepoCatalogRow::Local(candidate) => self.toggle_candidate_selection(&candidate),
+                    RepoCatalogRow::PendingLocal { .. } => {}
                     RepoCatalogRow::Attached(repository) => {
                         self.toggle_repository_selection(&repository.name_with_owner)
                     }

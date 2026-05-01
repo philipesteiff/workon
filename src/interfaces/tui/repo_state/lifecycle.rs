@@ -1,5 +1,8 @@
+use std::path::PathBuf;
+
 use crate::domain::{
-    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryWorkspace,
+    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryCandidateInspection,
+    RepositoryCandidatePath, RepositoryWorkspace,
 };
 
 use super::status::operation_verb;
@@ -26,6 +29,8 @@ impl RepoPickerState {
         self.work_title = work_title;
         self.available = available;
         self.candidates = candidates;
+        self.pending_candidate_paths.clear();
+        self.failed_candidate_paths.clear();
         self.attached = attached;
         self.workspaces = workspaces;
         self.reset_inputs_and_pending_changes();
@@ -43,6 +48,8 @@ impl RepoPickerState {
         self.work_title = work_title;
         self.available.clear();
         self.candidates.clear();
+        self.pending_candidate_paths.clear();
+        self.failed_candidate_paths.clear();
         self.attached = attached;
         self.workspaces.clear();
         self.selected_workspace = 0;
@@ -126,7 +133,50 @@ impl RepoPickerState {
         candidates: Vec<RepositoryCandidate>,
     ) {
         self.candidates = candidates;
+        self.pending_candidate_paths.clear();
+        self.failed_candidate_paths.clear();
         self.pending_link.clear();
+        self.clamp_selection();
+    }
+
+    pub(in crate::interfaces::tui) fn update_candidate_paths_from_load(
+        &mut self,
+        paths: Vec<RepositoryCandidatePath>,
+    ) {
+        for cached in paths.iter().filter_map(|path| path.cached.clone()) {
+            self.upsert_candidate(cached);
+        }
+        self.pending_candidate_paths = paths
+            .into_iter()
+            .filter(|path| path.cached.is_none())
+            .filter(|path| {
+                !self
+                    .candidates
+                    .iter()
+                    .any(|candidate| candidate.path == path.path)
+            })
+            .collect();
+        self.failed_candidate_paths.clear();
+        self.clamp_selection();
+    }
+
+    pub(in crate::interfaces::tui) fn update_candidate_inspection_from_load(
+        &mut self,
+        inspection: RepositoryCandidateInspection,
+    ) {
+        self.pending_candidate_paths
+            .retain(|path| path.path != inspection.path);
+        self.failed_candidate_paths.remove(&inspection.path);
+        self.candidates
+            .retain(|candidate| candidate.path != inspection.path);
+        if let Some(candidate) = inspection.candidate {
+            self.upsert_candidate(candidate);
+        }
+        self.clamp_selection();
+    }
+
+    pub(in crate::interfaces::tui) fn mark_candidate_inspection_failed(&mut self, path: PathBuf) {
+        self.failed_candidate_paths.insert(path);
         self.clamp_selection();
     }
 
@@ -196,5 +246,16 @@ impl RepoPickerState {
         self.workspace_input.clear();
         self.filter.clear();
         self.clear_pending_changes();
+    }
+
+    fn upsert_candidate(&mut self, candidate: RepositoryCandidate) {
+        self.candidates
+            .retain(|existing| existing.path != candidate.path);
+        self.candidates.push(candidate);
+        self.candidates.sort_by(|left, right| {
+            left.name_with_owner
+                .cmp(&right.name_with_owner)
+                .then(left.path.cmp(&right.path))
+        });
     }
 }

@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::domain::{AttachedRepository, AvailableRepository, RepositoryCandidate};
 
@@ -9,6 +9,7 @@ use super::RepoPickerState;
 pub(in crate::interfaces::tui) enum RepoCatalogRow {
     GitHub(AvailableRepository),
     Local(RepositoryCandidate),
+    PendingLocal { path: PathBuf, failed: bool },
     Attached(AttachedRepository),
 }
 
@@ -17,6 +18,7 @@ impl RepoCatalogRow {
         match self {
             Self::GitHub(repository) => &repository.name_with_owner,
             Self::Local(candidate) => &candidate.name_with_owner,
+            Self::PendingLocal { path, .. } => path.to_str().unwrap_or("local repository"),
             Self::Attached(repository) => &repository.name_with_owner,
         }
     }
@@ -26,6 +28,13 @@ impl RepoCatalogRow {
             Self::GitHub(repository) => format!("github default {}", repository.default_branch),
             Self::Local(candidate) => {
                 format!("local {} {}", candidate.branch, candidate.path.display())
+            }
+            Self::PendingLocal { path, failed } => {
+                if *failed {
+                    format!("local warning {}", path.display())
+                } else {
+                    format!("local inspecting {}", path.display())
+                }
             }
             Self::Attached(repository) => format!("attached {}", repository.branch),
         }
@@ -55,6 +64,15 @@ impl RepoPickerState {
             .iter()
             .map(|repository| repository.name_with_owner.clone())
             .collect::<BTreeSet<_>>();
+        let pending_rows = self
+            .pending_candidate_paths
+            .iter()
+            .filter(|candidate| path_matches(&candidate.path, &query))
+            .map(|candidate| RepoCatalogRow::PendingLocal {
+                path: candidate.path.clone(),
+                failed: self.failed_candidate_paths.contains(&candidate.path),
+            })
+            .collect::<Vec<_>>();
 
         let mut rows = self
             .available
@@ -73,6 +91,7 @@ impl RepoPickerState {
                     })
                     .map(|repository| RepoCatalogRow::Attached(repository.clone())),
             )
+            .chain(pending_rows)
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| {
             let left_rank = catalog_row_rank(left, &attached_names);
@@ -107,8 +126,10 @@ fn catalog_row_rank(row: &RepoCatalogRow, attached_names: &BTreeSet<String>) -> 
         return 0;
     }
     match row {
+        RepoCatalogRow::PendingLocal { failed, .. } if *failed => 1,
         RepoCatalogRow::Local(_) => 1,
-        RepoCatalogRow::GitHub(_) | RepoCatalogRow::Attached(_) => 2,
+        RepoCatalogRow::PendingLocal { .. } => 2,
+        RepoCatalogRow::GitHub(_) | RepoCatalogRow::Attached(_) => 3,
     }
 }
 
@@ -125,6 +146,15 @@ fn candidate_matches(candidate: &RepositoryCandidate, query: &str) -> bool {
         || candidate.branch.to_ascii_lowercase().contains(query)
         || candidate
             .path
+            .display()
+            .to_string()
+            .to_ascii_lowercase()
+            .contains(query)
+}
+
+fn path_matches(path: &Path, query: &str) -> bool {
+    query.is_empty()
+        || path
             .display()
             .to_string()
             .to_ascii_lowercase()

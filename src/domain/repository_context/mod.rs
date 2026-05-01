@@ -29,12 +29,32 @@ pub struct RepositoryWorkspaceList {
     pub workspaces: Vec<RepositoryWorkspace>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositoryCandidate {
     pub name_with_owner: String,
     pub branch: String,
     pub path: PathBuf,
     pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepositoryCandidatePath {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub cached: Option<RepositoryCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryCandidatePathList {
+    pub work: WorkSummary,
+    pub paths: Vec<RepositoryCandidatePath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryCandidateInspection {
+    pub path: PathBuf,
+    pub candidate: Option<RepositoryCandidate>,
+    pub cached: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

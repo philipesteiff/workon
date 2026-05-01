@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::domain::{
-    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryWorkspace,
+    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryCandidatePath,
+    RepositoryWorkspace,
 };
 
 use super::state::TraceEvent;
@@ -28,6 +29,8 @@ pub(super) struct RepoPickerState {
     pub(super) work_title: String,
     pub(super) available: Vec<AvailableRepository>,
     pub(super) candidates: Vec<RepositoryCandidate>,
+    pub(super) pending_candidate_paths: Vec<RepositoryCandidatePath>,
+    pub(super) failed_candidate_paths: BTreeSet<PathBuf>,
     pub(super) attached: Vec<AttachedRepository>,
     pub(super) workspaces: Vec<RepositoryWorkspace>,
     pub(super) selected_workspace: usize,
@@ -58,6 +61,8 @@ impl Default for RepoPickerState {
             work_title: String::new(),
             available: Vec::new(),
             candidates: Vec::new(),
+            pending_candidate_paths: Vec::new(),
+            failed_candidate_paths: BTreeSet::new(),
             attached: Vec::new(),
             workspaces: Vec::new(),
             selected_workspace: 0,

@@ -46,6 +46,23 @@ pub(crate) fn render_output(
                 )?;
             }
         }
+        CommandOutput::RepositoryCandidateInspection(inspection) => {
+            writeln!(
+                writer,
+                "repository candidate: {}",
+                inspection.path.display()
+            )?;
+            match &inspection.candidate {
+                Some(candidate) => writeln!(
+                    writer,
+                    "{}  {}  {}",
+                    candidate.name_with_owner,
+                    candidate.branch,
+                    candidate.path.display()
+                )?,
+                None => writeln!(writer, "No repository candidate found.")?,
+            }
+        }
         CommandOutput::RepositoryCandidates(candidates) => {
             writeln!(
                 writer,
@@ -66,6 +83,21 @@ pub(crate) fn render_output(
                         candidate.branch,
                         candidate.path.display()
                     )?;
+                }
+            }
+        }
+        CommandOutput::RepositoryCandidatePaths(paths) => {
+            writeln!(
+                writer,
+                "repository candidate paths for work: {}",
+                paths.work.title
+            )?;
+            if paths.paths.is_empty() {
+                writeln!(writer, "No repository candidate paths found.")?;
+            } else {
+                for path in &paths.paths {
+                    let cache_label = if path.cached.is_some() { " cached" } else { "" };
+                    writeln!(writer, "{}{}", path.path.display(), cache_label)?;
                 }
             }
         }
@@ -328,6 +360,8 @@ Usage:
                              list attached repositories
   wo repos discover <work-query>
                              discover repo candidates from configured workspaces
+  wo repos candidate-paths <work-query>
+                             list candidate folders without Git inspection
   wo repos add [--workspace <path>] <work> <owner/repo>...
                              create GitHub worktrees from a configured workspace
   wo repos link <work> <path>...
@@ -406,6 +440,9 @@ Usage:
 
   wo repos discover <work-query>
       Discover Git working trees under configured repo workspaces.
+
+  wo repos candidate-paths <work-query>
+      List candidate folders from configured repo workspaces without running Git inspection.
 
   wo repos add [--workspace <path>] <work-query> <owner/repo>...
       Create one or more GitHub worktrees in a configured repo workspace,

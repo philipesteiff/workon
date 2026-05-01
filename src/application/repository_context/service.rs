@@ -12,7 +12,7 @@ use crate::infrastructure::agent_files::RepoContextFileWriter;
 use crate::infrastructure::git_worktree::{RepositoryLinker, WorktreeInspector, WorktreeManager};
 use crate::infrastructure::github::GithubClient;
 use crate::infrastructure::storage::{
-    RepoMetadataStore, RepoWorkspaceStore, RepositoryCache, WorkStore,
+    JsonRepositoryCandidateCache, RepoMetadataStore, RepoWorkspaceStore, RepositoryCache, WorkStore,
 };
 use crate::shared::error::{Result, WorkonError};
 
@@ -105,6 +105,25 @@ impl<'a> RepositoryContextService<'a> {
         query: &str,
     ) -> Result<CommandOutput> {
         workspace::discover(store, workspaces, inspector, query)
+    }
+
+    pub(super) fn candidate_paths(
+        store: &WorkStore,
+        workspaces: &dyn RepoWorkspaceStore,
+        inspector: &dyn WorktreeInspector,
+        cache: &JsonRepositoryCandidateCache,
+        query: &str,
+    ) -> Result<CommandOutput> {
+        workspace::candidate_paths(store, workspaces, inspector, cache, query)
+    }
+
+    pub(super) fn inspect_candidate(
+        inspector: &dyn WorktreeInspector,
+        cache: &JsonRepositoryCandidateCache,
+        path: &Path,
+        refresh: bool,
+    ) -> Result<CommandOutput> {
+        workspace::inspect_candidate(inspector, cache, path, refresh)
     }
 
     pub(super) fn add(

@@ -12,7 +12,8 @@ use crate::infrastructure::git_worktree::{GitWorktree, SymlinkRepositoryLinker};
 use crate::infrastructure::github::GhCli;
 use crate::infrastructure::process::StdProcessRunner;
 use crate::infrastructure::storage::{
-    BareRepositoryCache, JsonRepoMetadataStore, JsonRepoWorkspaceStore, WorkStore,
+    BareRepositoryCache, JsonRepoMetadataStore, JsonRepoWorkspaceStore,
+    JsonRepositoryCandidateCache, WorkStore,
 };
 use crate::shared::error::Result;
 use std::path::{Path, PathBuf};
@@ -53,6 +54,25 @@ pub(crate) fn discover(store: &WorkStore, query: &str) -> Result<CommandOutput> 
     let inspector = GitWorktree::new(&runner);
     let workspaces = JsonRepoWorkspaceStore::new(store.root());
     RepositoryContextService::discover(store, &workspaces, &inspector, query)
+}
+
+pub(crate) fn candidate_paths(store: &WorkStore, query: &str) -> Result<CommandOutput> {
+    let runner = StdProcessRunner;
+    let inspector = GitWorktree::new(&runner);
+    let workspaces = JsonRepoWorkspaceStore::new(store.root());
+    let cache = JsonRepositoryCandidateCache::new(store.root());
+    RepositoryContextService::candidate_paths(store, &workspaces, &inspector, &cache, query)
+}
+
+pub(crate) fn inspect_candidate(
+    store: &WorkStore,
+    path: &Path,
+    refresh: bool,
+) -> Result<CommandOutput> {
+    let runner = StdProcessRunner;
+    let inspector = GitWorktree::new(&runner);
+    let cache = JsonRepositoryCandidateCache::new(store.root());
+    RepositoryContextService::inspect_candidate(&inspector, &cache, path, refresh)
 }
 
 pub(crate) fn add(

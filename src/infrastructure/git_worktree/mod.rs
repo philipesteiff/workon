@@ -27,6 +27,7 @@ pub(crate) trait WorktreeInspector {
         metadata: &[RepositoryAttachment],
     ) -> Result<Vec<AttachedRepository>>;
     fn inspect_candidate(&self, path: &Path) -> Result<Option<RepositoryCandidate>>;
+    fn discover_candidate_paths(&self, roots: &[PathBuf]) -> Result<Vec<PathBuf>>;
     fn discover(&self, roots: &[PathBuf]) -> Result<Vec<RepositoryCandidate>>;
 }
 

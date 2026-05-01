@@ -345,6 +345,19 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
                 machine,
             ))
         }
+        Some("candidate-paths") => {
+            reject_unknown_leading_option(input_parts.get(2), "repos candidate-paths")?;
+            let query = input_parts[2..].join(" ");
+            if query.trim().is_empty() {
+                return Err(WorkonError::MissingArgument {
+                    message: "repos candidate-paths requires a work query".to_string(),
+                });
+            }
+            Ok(command_request(
+                Command::ListRepositoryCandidatePaths { query },
+                machine,
+            ))
+        }
         Some("link") => {
             reject_unknown_leading_option(input_parts.get(2), "repos link")?;
             let (query, paths) = parse_work_query_and_paths(&input_parts[2..], "repos link")?;
@@ -398,7 +411,9 @@ fn parse_repos_command(input_parts: &[String], machine: bool) -> Result<CliReque
             ))
         }
         _ => Err(WorkonError::MissingArgument {
-            message: "repos requires list, add, link, discover, workspace, or remove".to_string(),
+            message:
+                "repos requires list, add, link, discover, candidate-paths, workspace, or remove"
+                    .to_string(),
         }),
     }
 }

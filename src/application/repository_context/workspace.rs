@@ -1,9 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::application::CommandOutput;
-use crate::domain::{RepositoryCandidateList, RepositoryWorkspace, RepositoryWorkspaceList};
+use crate::domain::{
+    RepositoryCandidateInspection, RepositoryCandidateList, RepositoryCandidatePath,
+    RepositoryCandidatePathList, RepositoryWorkspace, RepositoryWorkspaceList,
+};
 use crate::infrastructure::git_worktree::WorktreeInspector;
-use crate::infrastructure::storage::{RepoMetadataStore, RepoWorkspaceStore, WorkStore};
+use crate::infrastructure::storage::{
+    JsonRepositoryCandidateCache, RepoMetadataStore, RepoWorkspaceStore, WorkStore,
+};
 use crate::shared::error::{Result, WorkonError};
 
 use super::paths::{
@@ -69,6 +74,67 @@ pub(super) fn discover(
         RepositoryCandidateList {
             work: work.into(),
             candidates: inspector.discover(&roots)?,
+        },
+    ))
+}
+
+pub(super) fn candidate_paths(
+    store: &WorkStore,
+    workspaces: &dyn RepoWorkspaceStore,
+    inspector: &dyn WorktreeInspector,
+    cache: &JsonRepositoryCandidateCache,
+    query: &str,
+) -> Result<CommandOutput> {
+    let work = store.open(query)?;
+    let roots = workspaces
+        .read()?
+        .into_iter()
+        .map(|workspace| workspace.path)
+        .collect::<Vec<_>>();
+    let paths = inspector
+        .discover_candidate_paths(&roots)?
+        .into_iter()
+        .map(|path| {
+            let cached = cache.valid_candidate(&path)?;
+            Ok(RepositoryCandidatePath { path, cached })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(CommandOutput::RepositoryCandidatePaths(
+        RepositoryCandidatePathList {
+            work: work.into(),
+            paths,
+        },
+    ))
+}
+
+pub(super) fn inspect_candidate(
+    inspector: &dyn WorktreeInspector,
+    cache: &JsonRepositoryCandidateCache,
+    path: &Path,
+    refresh: bool,
+) -> Result<CommandOutput> {
+    if !refresh {
+        if let Some(candidate) = cache.valid_candidate(path)? {
+            return Ok(CommandOutput::RepositoryCandidateInspection(
+                RepositoryCandidateInspection {
+                    path: path.to_path_buf(),
+                    candidate: Some(candidate),
+                    cached: true,
+                },
+            ));
+        }
+    }
+
+    let candidate = inspector.inspect_candidate(path)?;
+    match &candidate {
+        Some(candidate) => cache.store(candidate)?,
+        None => cache.remove(path)?,
+    }
+    Ok(CommandOutput::RepositoryCandidateInspection(
+        RepositoryCandidateInspection {
+            path: path.to_path_buf(),
+            candidate,
+            cached: false,
         },
     ))
 }

@@ -1,11 +1,13 @@
 mod intent_store;
 mod repository_cache;
+mod repository_candidate_cache;
 mod repository_metadata;
 mod repository_workspace;
 mod work_store;
 
 pub(crate) use intent_store::YamlIntentStore;
 pub(crate) use repository_cache::{BareRepositoryCache, RepositoryCache};
+pub(crate) use repository_candidate_cache::JsonRepositoryCandidateCache;
 pub(crate) use repository_metadata::{JsonRepoMetadataStore, RepoMetadataStore};
 pub(crate) use repository_workspace::{JsonRepoWorkspaceStore, RepoWorkspaceStore};
 pub use work_store::WorkStore;
