@@ -45,7 +45,38 @@ fn create_work_writes_agent_files_and_metadata() {
     let claude =
         fs::read_to_string(created.path.join("CLAUDE.md")).expect("CLAUDE.md should be readable");
     assert!(claude.contains("AGENTS.md is the source"));
-    assert!(claude.contains("This file is a projection for CLAUDE"));
+    assert_eq!(claude, agents);
+}
+
+#[test]
+fn create_work_creates_claude_as_symlink_to_agents() {
+    let root = temp_root("create_work_creates_claude_as_symlink_to_agents");
+    let app = App::new(root.path().to_path_buf());
+
+    let output = app
+        .execute(Command::CreateWork {
+            goal: "Answer billing question".to_string(),
+            intent_id: "investigate".to_string(),
+        })
+        .expect("create work should succeed");
+
+    let CommandOutput::WorkCreated(created) = output else {
+        panic!("expected WorkCreated output");
+    };
+
+    let agents_path = created.path.join("AGENTS.md");
+    let claude_path = created.path.join("CLAUDE.md");
+    let claude_metadata =
+        fs::symlink_metadata(&claude_path).expect("CLAUDE.md metadata should be readable");
+
+    assert!(
+        claude_metadata.file_type().is_symlink(),
+        "CLAUDE.md should be a symlink"
+    );
+    assert_eq!(
+        fs::canonicalize(&claude_path).expect("CLAUDE.md symlink target should resolve"),
+        fs::canonicalize(&agents_path).expect("AGENTS.md should resolve")
+    );
 }
 
 #[test]

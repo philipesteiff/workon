@@ -42,12 +42,10 @@ pub(crate) fn write_agent_files_with_repos_replacing_intent(
     let agents_path = work_path.join("AGENTS.md");
     let claude_path = work_path.join("CLAUDE.md");
     let portable_edits = preserved_agent_edits(&agents_path, "AGENTS.md", previous_intent)?;
-    let claude_edits = preserved_agent_edits(&claude_path, "CLAUDE.md", previous_intent)?;
     let portable = render_portable_instructions(goal, intent, repositories, &portable_edits);
-    let claude = render_claude_instructions(goal, intent, repositories, &claude_edits);
 
-    fs::write(agents_path, portable)?;
-    fs::write(claude_path, claude)?;
+    fs::write(&agents_path, portable)?;
+    replace_with_symlink_to_agents(&claude_path)?;
 
     Ok(())
 }
@@ -75,15 +73,6 @@ fn render_portable_instructions(
     preserved_edits: &PreservedAgentEdits,
 ) -> String {
     render_agent_file("AGENTS", goal, intent, repositories, preserved_edits)
-}
-
-fn render_claude_instructions(
-    goal: &str,
-    intent: &IntentProfile,
-    repositories: &[AttachedRepository],
-    preserved_edits: &PreservedAgentEdits,
-) -> String {
-    render_agent_file("CLAUDE", goal, intent, repositories, preserved_edits)
 }
 
 fn render_agent_file(
@@ -152,6 +141,25 @@ fn render_agent_file_body(
         repo_list(repositories),
         instruction_list(intent, &preserved_edits.instruction_additions)
     )
+}
+
+fn replace_with_symlink_to_agents(claude_path: &Path) -> Result<()> {
+    if fs::symlink_metadata(claude_path).is_ok() {
+        fs::remove_file(claude_path)?;
+    }
+
+    symlink_file("AGENTS.md", claude_path)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn symlink_file<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(original, link)
+}
+
+#[cfg(windows)]
+fn symlink_file<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(original, link)
 }
 
 fn preserved_agent_edits(
