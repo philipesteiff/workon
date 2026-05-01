@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::process::Command as ProcessCommand;
 
 use crate::shared::error::{Result, WorkonError};
@@ -45,7 +46,15 @@ impl ProcessRunner for StdProcessRunner {
     fn run_checked(&self, command: &RepoCommand) -> Result<String> {
         let mut process = ProcessCommand::new(&command.program);
         process.args(&command.args);
-        let output = process.output()?;
+        let output = process.output().map_err(|error| {
+            if error.kind() == ErrorKind::NotFound {
+                WorkonError::RequiredCommandMissing {
+                    program: command.program.clone(),
+                }
+            } else {
+                WorkonError::Io(error)
+            }
+        })?;
         if output.status.success() {
             return Ok(String::from_utf8_lossy(&output.stdout).to_string());
         }
@@ -54,5 +63,22 @@ impl ProcessRunner for StdProcessRunner {
             command: command.display(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProcessRunner, RepoCommand, StdProcessRunner};
+
+    #[test]
+    fn missing_external_tool_reports_actionable_command_name() {
+        let error = StdProcessRunner
+            .run_checked(&RepoCommand::new("workon-definitely-missing-tool"))
+            .expect_err("missing tool should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "required command `workon-definitely-missing-tool` was not found in PATH"
+        );
     }
 }

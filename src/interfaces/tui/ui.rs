@@ -690,7 +690,7 @@ fn render_create(
     state: &TuiState,
     regions: &mut Option<&mut RenderRegions>,
 ) {
-    let popup = centered_rect(78, 56, area);
+    let popup = centered_rect(96, 56, area);
     mark_region(regions, AnimationTarget::Overlay, popup);
     let mut lines = vec![
         section("WORK INTAKE"),
@@ -744,7 +744,7 @@ fn render_archive(
     state: &TuiState,
     regions: &mut Option<&mut RenderRegions>,
 ) {
-    let popup = centered_rect(74, 64, area);
+    let popup = centered_rect(96, 64, area);
     mark_region(regions, AnimationTarget::Overlay, popup);
     let Some(work) = state.selected_work() else {
         return;
@@ -992,6 +992,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -1360,6 +1361,7 @@ mod tests {
         let content = render_content(&state, 120, 36);
 
         assert!(content.contains("review-the-alert-queue-rollout"));
+        assert!(!content.contains("queue rollout."));
     }
 
     #[test]
@@ -1375,6 +1377,7 @@ mod tests {
         assert!(content.contains("Hidden from Active Work."));
         assert!(content.contains("y/enter archive"));
         assert!(content.contains("esc/n cancel"));
+        assert!(!content.contains("queue rollout."));
     }
 
     #[test]
@@ -1896,6 +1899,74 @@ mod tests {
         }
     }
 
+    #[test]
+    fn capture_tui_user_flow_frames() {
+        let captures = tui_user_flow_captures();
+
+        assert!(captures
+            .iter()
+            .any(|(name, content)| *name == "01-work-queue" && content.contains("WORK QUEUE")));
+        assert!(captures
+            .iter()
+            .any(|(name, content)| *name == "02-create-work" && content.contains("CREATE")));
+        assert!(captures
+            .iter()
+            .any(|(name, content)| *name == "03-archive-work" && content.contains("ARCHIVE")));
+        assert!(captures
+            .iter()
+            .any(|(name, content)| *name == "04-intent-context" && content.contains("INTENTS")));
+        assert!(captures.iter().any(|(name, content)| {
+            *name == "05-repository-context" && content.contains("REPOSITORIES")
+        }));
+
+        let Some(capture_dir) = std::env::var_os("WORKON_TUI_CAPTURE_DIR").map(PathBuf::from)
+        else {
+            return;
+        };
+
+        fs::create_dir_all(&capture_dir).expect("capture dir should be created");
+        for (name, content) in captures {
+            fs::write(capture_dir.join(format!("{name}.txt")), content)
+                .expect("capture should write");
+        }
+    }
+
+    fn tui_user_flow_captures() -> Vec<(&'static str, String)> {
+        let queue = TuiState::new(multi_work_list());
+
+        let mut create = TuiState::new(work_list()).with_intents(intent_list());
+        create.mode = TuiMode::Create;
+        create.create_goal = "Investigate payment retry latency".to_string();
+
+        let mut archive = TuiState::new(work_list());
+        archive.mode = TuiMode::Archive;
+
+        let mut intents = TuiState::new(work_list()).with_intents(intent_list());
+        intents.enter_intent_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            "investigate".to_string(),
+        );
+
+        let mut repos = TuiState::new(work_list());
+        repos.enter_repo_context(
+            "billing-retry-audit".to_string(),
+            "Billing retry audit".to_string(),
+            available_repositories(),
+            local_candidates(),
+            attached_repositories(),
+            repo_workspaces(),
+        );
+
+        vec![
+            ("01-work-queue", render_content(&queue, 120, 36)),
+            ("02-create-work", render_content(&create, 120, 36)),
+            ("03-archive-work", render_content(&archive, 120, 36)),
+            ("04-intent-context", render_content(&intents, 120, 36)),
+            ("05-repository-context", render_content(&repos, 120, 36)),
+        ]
+    }
+
     fn work_list() -> WorkList {
         WorkList {
             works: vec![WorkSummary {
@@ -1935,6 +2006,23 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn intent_list() -> Vec<(String, String)> {
+        vec![
+            (
+                "investigate".to_string(),
+                "Answer a technical question with evidence.".to_string(),
+            ),
+            (
+                "review-pr".to_string(),
+                "Review a peer pull request from local context.".to_string(),
+            ),
+            (
+                "brainstorm".to_string(),
+                "Explore an idea without committing to implementation.".to_string(),
+            ),
+        ]
     }
 
     fn available_repositories() -> Vec<AvailableRepository> {

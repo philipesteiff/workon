@@ -11,6 +11,8 @@ mod output;
 use self::args::{parse_args, CliRequest};
 use self::output::{render_output, write_help, write_intent_help, write_repos_help, write_version};
 
+type TuiRunner = fn(&App, PathBuf) -> Result<Option<CommandOutput>>;
+
 pub fn run_cli(args: impl IntoIterator<Item = String>) -> i32 {
     let root = match workon_root() {
         Ok(root) => root,
@@ -71,10 +73,7 @@ fn run(
     };
 
     if should_run_tui(&command, machine, allow_tui) {
-        if let Some(output) = crate::interfaces::tui::run(&app, root.clone())? {
-            render_output(&output, stdout, machine, &root)?;
-        }
-        return Ok(0);
+        return run_tui_or_render_list(&app, &root, stdout, stderr, crate::interfaces::tui::run);
     }
 
     if should_offer_shell_install(&command, machine) {
@@ -83,6 +82,32 @@ fn run(
 
     let output = execute_command(&app, command, stdout, stderr)?;
     render_output(&output, stdout, machine, &root)?;
+    Ok(0)
+}
+
+fn run_tui_or_render_list(
+    app: &App,
+    root: &std::path::Path,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    tui_runner: TuiRunner,
+) -> Result<i32> {
+    match tui_runner(app, root.to_path_buf()) {
+        Ok(Some(output)) => {
+            render_output(&output, stdout, false, root)?;
+        }
+        Ok(None) => {}
+        Err(WorkonError::TuiUnavailable { message }) => {
+            writeln!(
+                stderr,
+                "warning: TUI unavailable ({message}); showing list instead."
+            )?;
+            let output = app.execute(Command::ListWorks)?;
+            render_output(&output, stdout, false, root)?;
+        }
+        Err(error) => return Err(error),
+    }
+
     Ok(0)
 }
 
@@ -211,8 +236,11 @@ fn prompt_for_intent(app: &App, stdout: &mut dyn Write, stderr: &mut dyn Write) 
 
 #[cfg(test)]
 mod tests {
-    use super::shell_install_command_for_prompt;
+    use super::{run_tui_or_render_list, shell_install_command_for_prompt};
     use crate::application::Command;
+    use crate::shared::error::{Result, WorkonError};
+    use crate::{App, CommandOutput};
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -233,5 +261,60 @@ mod tests {
             shell_install_command_for_prompt(None),
             Command::InstallShell
         );
+    }
+
+    #[test]
+    fn tui_startup_unavailable_falls_back_to_cli_list() {
+        let root = temp_root("tui_startup_unavailable_falls_back_to_cli_list");
+        let app = App::new(root.path.clone());
+        app.execute(Command::CreateWork {
+            goal: "Investigate payment retry latency".to_string(),
+            intent_id: "investigate".to_string(),
+        })
+        .expect("work should create");
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+
+        let exit_code = run_tui_or_render_list(
+            &app,
+            &root.path,
+            &mut stdout,
+            &mut stderr,
+            fake_unavailable_tui,
+        )
+        .expect("fallback should render list");
+
+        assert_eq!(exit_code, 0);
+        let stdout = String::from_utf8(stdout).expect("stdout should be utf8");
+        let stderr = String::from_utf8(stderr).expect("stderr should be utf8");
+        assert!(stdout.contains("Investigate payment retry latency"));
+        assert!(stdout.contains("investigate-payment-retry-latency"));
+        assert!(stderr.contains("warning: TUI unavailable"));
+        assert!(stderr.contains("cursor position could not be read"));
+    }
+
+    fn fake_unavailable_tui(_app: &App, _root: PathBuf) -> Result<Option<CommandOutput>> {
+        Err(WorkonError::TuiUnavailable {
+            message: "cursor position could not be read".to_string(),
+        })
+    }
+
+    struct TempRoot {
+        path: PathBuf,
+    }
+
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn temp_root(name: &str) -> TempRoot {
+        let mut path = std::env::temp_dir();
+        path.push(format!("workon-cli-test-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("temp root should be created");
+        TempRoot { path }
     }
 }

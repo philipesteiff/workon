@@ -25,7 +25,13 @@ pub enum WorkonError {
         command: String,
         stderr: String,
     },
+    RequiredCommandMissing {
+        program: String,
+    },
     RepositoryContext {
+        message: String,
+    },
+    TuiUnavailable {
         message: String,
     },
     UnknownIntent {
@@ -71,7 +77,11 @@ impl fmt::Display for WorkonError {
                     )
                 }
             }
+            Self::RequiredCommandMissing { program } => {
+                write!(formatter, "required command `{program}` was not found in PATH")
+            }
             Self::RepositoryContext { message } => write!(formatter, "{message}"),
+            Self::TuiUnavailable { message } => write!(formatter, "TUI unavailable: {message}"),
             Self::UnknownIntent {
                 intent_id,
                 available,

@@ -21,6 +21,9 @@ lint:
 
 verify: fmt-check test lint
 
+flow-audit:
+    bash scripts/user_flow_audit.sh
+
 install-dev-shell:
     #!/usr/bin/env zsh
     export WORKON_DEV_MANIFEST="{{justfile_directory()}}/Cargo.toml"
@@ -46,7 +49,7 @@ smoke:
     real_cargo_home="${CARGO_HOME:-$HOME/.cargo}"
     real_rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
     command_file="$(mktemp /tmp/workon-smoke.XXXXXX)"
-    script="$smoke_home/.workon/shell/zsh/wo-dev.zsh"
+    script="$smoke_home/.workon/shell/wo-dev"
 
     printf '%s\n' \
         "source '$script'" \

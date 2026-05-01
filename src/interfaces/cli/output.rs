@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::application::CommandOutput;
 use crate::domain::{IntentProfileChange, IntentSource, WorkList};
 use crate::shared::error::Result;
+use unicode_width::UnicodeWidthStr;
 
 pub(crate) fn render_output(
     output: &CommandOutput,
@@ -87,7 +88,11 @@ pub(crate) fn render_output(
             writeln!(writer, "{label}: {}", script_path.display())?;
             writeln!(writer, "startup file updated: {}", startup_path.display())?;
             writeln!(writer, "restart your shell or run:")?;
-            writeln!(writer, "  source {}", script_path.display())?;
+            writeln!(
+                writer,
+                "  source {}",
+                shell_quote(&script_path.display().to_string())
+            )?;
         }
         CommandOutput::WorkCreated(work) => {
             writeln!(writer, "work created: {}", work.title)?;
@@ -281,14 +286,18 @@ impl WorkListColumnWidths {
         };
 
         for row in rows {
-            widths.title = widths.title.max(row.title.len());
-            widths.intent_id = widths.intent_id.max(row.intent_id.len());
-            widths.slug = widths.slug.max(row.slug.len());
-            widths.path = widths.path.max(row.path.len());
+            widths.title = widths.title.max(display_columns(&row.title));
+            widths.intent_id = widths.intent_id.max(display_columns(&row.intent_id));
+            widths.slug = widths.slug.max(display_columns(&row.slug));
+            widths.path = widths.path.max(display_columns(&row.path));
         }
 
         widths
     }
+}
+
+fn display_columns(value: &str) -> usize {
+    UnicodeWidthStr::width(value)
 }
 
 fn display_folder(path: &Path, root: &Path) -> String {
@@ -296,6 +305,10 @@ fn display_folder(path: &Path, root: &Path) -> String {
         .unwrap_or(path)
         .display()
         .to_string()
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub(crate) fn write_help(writer: &mut dyn Write) -> Result<()> {
@@ -328,7 +341,7 @@ Usage:
   wo repos                   show GitHub repo context help
   wo \"<goal>\"                create work with blank intent
   wo --intent <id> \"<goal>\"  create work with a selected intent
-  wo install-shell           install folder switching
+  wo install-shell           install folder switching for bash, zsh, or fish
   wo version                 print version
 
 Options:
@@ -464,4 +477,41 @@ fn write_switch_lines(writer: &mut dyn Write, path: &Path, title: &str, root: &P
     writeln!(writer, "__WORKON_ROOT={}", root.display())?;
     writeln!(writer, "__WORKON_TITLE={title}")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WorkListColumnWidths, WorkListRow};
+
+    #[test]
+    fn work_list_widths_count_unicode_characters_not_bytes() {
+        let rows = vec![WorkListRow {
+            title: "Réparer".to_string(),
+            intent_id: "investigate".to_string(),
+            slug: "réparer".to_string(),
+            path: ".workon/work/réparer".to_string(),
+            goal: "Réparer".to_string(),
+        }];
+
+        let widths = WorkListColumnWidths::from_rows(&rows);
+
+        assert_eq!(widths.title, "Réparer".chars().count());
+        assert_eq!(widths.slug, "réparer".chars().count());
+    }
+
+    #[test]
+    fn work_list_widths_count_wide_unicode_display_columns() {
+        let rows = vec![WorkListRow {
+            title: "部署修复".to_string(),
+            intent_id: "investigate".to_string(),
+            slug: "部署修复".to_string(),
+            path: ".workon/work/部署修复".to_string(),
+            goal: "部署修复".to_string(),
+        }];
+
+        let widths = WorkListColumnWidths::from_rows(&rows);
+
+        assert_eq!(widths.title, 8);
+        assert_eq!(widths.slug, 8);
+    }
 }

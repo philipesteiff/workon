@@ -18,6 +18,7 @@ just install-dev-shell
 # restart the shell, or source the script printed by the command
 wo "Trace a failing release check across repos"
 just smoke
+just flow-audit
 ```
 
 Homebrew install:

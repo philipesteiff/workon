@@ -13,8 +13,8 @@ pub fn slugify(value: &str) -> String {
     let mut last_was_dash = false;
 
     for character in value.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
+        if character.is_alphanumeric() {
+            slug.extend(character.to_lowercase());
             last_was_dash = false;
         } else if !last_was_dash && !slug.is_empty() {
             slug.push('-');
@@ -68,9 +68,9 @@ fn strip_user_story_prefix(value: &str) -> Option<&str> {
 
 fn clean_word(word: &str) -> String {
     word.chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(|character| character.to_lowercase())
+        .collect()
 }
 
 fn is_story_filler(word: &str) -> bool {
@@ -99,7 +99,7 @@ fn is_story_filler(word: &str) -> bool {
 fn sentence_case(value: &str) -> String {
     let mut chars = value.chars();
     match chars.next() {
-        Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
         None => String::new(),
     }
 }
@@ -135,5 +135,18 @@ mod tests {
             slugify("Answer: Billing Question!"),
             "answer-billing-question"
         );
+    }
+
+    #[test]
+    fn preserves_unicode_letters_in_titles_and_slugs() {
+        assert_eq!(
+            title_from_goal("I want to réparer déploiement côté client"),
+            "Réparer déploiement côté client"
+        );
+        assert_eq!(
+            slugify("Réparer déploiement côté client"),
+            "réparer-déploiement-côté-client"
+        );
+        assert_eq!(slugify("修复 部署 队列"), "修复-部署-队列");
     }
 }

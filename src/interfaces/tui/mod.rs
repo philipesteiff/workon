@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::application::{App, Command, CommandOutput};
-use crate::shared::error::Result;
+use crate::shared::error::{Result, WorkonError};
 
 use self::animation::{AnimationRuntime, AnimationSnapshot};
 use self::repo_batch::{
@@ -48,7 +48,9 @@ pub(crate) fn run(app: &App, root: PathBuf) -> Result<Option<CommandOutput>> {
         .with_root(root)
         .with_current_directory(std::env::current_dir().ok().as_deref());
     state.push_trace(TraceKind::Run, "list loaded");
-    let mut terminal = TerminalSession::enter()?;
+    let mut terminal = TerminalSession::enter().map_err(|error| WorkonError::TuiUnavailable {
+        message: error.to_string(),
+    })?;
     run_loop(app, terminal.terminal_mut(), &mut state)
 }
 
