@@ -51,13 +51,10 @@ impl fmt::Display for WorkonError {
                     "work query `{query}` matched multiple works.\nUse a slug:\n{options}"
                 )
             }
-            Self::EmptyGoal => write!(
-                formatter,
-                "work goal cannot be empty.\nUse: wo --intent <intent-id> \"<goal>\""
-            ),
+            Self::EmptyGoal => write!(formatter, "work goal cannot be empty.\nUse: wo \"<goal>\""),
             Self::IntentRequired { available } => write!(
                 formatter,
-                "intent required for new work.\nUse: wo --intent <intent-id> \"<goal>\"\nAvailable: {}",
+                "intent required for new work.\nUse: wo \"<goal>\" or wo --intent <intent-id> \"<goal>\"\nAvailable: {}",
                 available.join(", ")
             ),
             Self::IntentContext { message } => write!(formatter, "{message}"),
@@ -80,12 +77,12 @@ impl fmt::Display for WorkonError {
                 available,
             } => write!(
                 formatter,
-                "unknown intent `{intent_id}`.\nAvailable: {}\nUse: wo --intent <intent-id> \"<goal>\"",
+                "unknown intent `{intent_id}`.\nAvailable: {}\nUse: wo --intent <intent-id> \"<goal>\" or omit --intent for blank",
                 available.join(", ")
             ),
             Self::WorkNotFound { query } => write!(
                 formatter,
-                "work not found: `{query}`.\nRun `wo list` or create it with `wo --intent <intent-id> \"{query}\"`."
+                "work not found: `{query}`.\nRun `wo list` or create it with `wo \"{query}\"`."
             ),
         }
     }

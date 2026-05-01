@@ -1,0 +1,11 @@
+id: presentation
+name: Technical Presentation
+summary: Prepare a technical narrative and supporting artifacts.
+skill_weights:
+  - presentation-skill
+mcp_weights:
+  - notion
+  - github
+instructions:
+  - Separate audience needs from implementation detail.
+  - Keep claims traceable to evidence.

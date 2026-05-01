@@ -13,11 +13,7 @@ pub(crate) fn execute(
     match store.open(input) {
         Ok(work) => Ok(CommandOutput::WorkOpened(work)),
         Err(WorkonError::WorkNotFound { .. }) => {
-            let Some(intent_id) = intent_id else {
-                return Err(WorkonError::IntentRequired {
-                    available: intents.available_ids(),
-                });
-            };
+            let intent_id = intent_id.unwrap_or(IntentCatalog::BLANK_INTENT_ID);
             create::execute(store, intents, input, intent_id)
         }
         Err(error) => Err(error),

@@ -4,7 +4,7 @@ mod infrastructure;
 mod interfaces;
 mod shared;
 
-pub use application::{App, Command, CommandOutput, IntentProfileInput, IntentProfilePatch};
+pub use application::{App, Command, CommandOutput};
 pub use domain::{
     AmbiguousWorkMatch, ArchivedWork, AttachedRepository, AvailableRepository, CreatedWork,
     IntentList, IntentProfile, IntentProfileChange, IntentSource, IntentSummary, OpenedWork,

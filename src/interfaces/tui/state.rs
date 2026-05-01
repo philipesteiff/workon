@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::{
-    AttachedRepository, AvailableRepository, RepositoryCandidate, RepositoryWorkspace, WorkList,
-    WorkSummary,
+    AttachedRepository, AvailableRepository, IntentCatalog, RepositoryCandidate,
+    RepositoryWorkspace, WorkList, WorkSummary,
 };
 
 use super::repo_state::{RepoOperation, RepoPickerState};
@@ -137,7 +137,7 @@ impl TuiState {
 
     pub(super) fn with_intents(mut self, intents: Vec<(String, String)>) -> Self {
         self.intents = intents;
-        self.create_intent = 0;
+        self.reset_create_intent();
         self
     }
 
@@ -277,9 +277,22 @@ impl TuiState {
         self.restore_queue_mode();
     }
 
+    pub(super) fn enter_create_mode(&mut self) {
+        self.mode = TuiMode::Create;
+        self.reset_create_intent();
+    }
+
     pub(super) fn reset_create_form(&mut self) {
         self.create_goal.clear();
-        self.create_intent = 0;
+        self.reset_create_intent();
+    }
+
+    fn reset_create_intent(&mut self) {
+        self.create_intent = self
+            .intents
+            .iter()
+            .position(|(id, _)| id == IntentCatalog::BLANK_INTENT_ID)
+            .unwrap_or(0);
     }
 
     pub(super) fn clear_filter_context(&mut self) {

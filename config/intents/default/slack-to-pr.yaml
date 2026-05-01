@@ -1,0 +1,12 @@
+id: slack-to-pr
+name: Slack to Jira to PR
+summary: Turn discussion into tracked implementation work.
+skill_weights:
+  - implementation-skill
+mcp_weights:
+  - slack
+  - jira
+  - github
+instructions:
+  - Preserve the original request and decisions.
+  - Keep work, branch, and PR context aligned.

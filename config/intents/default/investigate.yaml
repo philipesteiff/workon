@@ -1,0 +1,15 @@
+id: investigate
+name: Investigate
+summary: Answer a technical question with evidence across repos and sources.
+skill_weights:
+  - evidence-skill
+mcp_weights:
+  - slack
+  - notion
+  - jira
+instructions:
+  - Investigate before answering.
+  - Prefer evidence over guesses.
+  - Cite files, commits, docs, tickets, or messages when available.
+  - Keep caveats visible.
+  - Write a concise answer the manager can use.

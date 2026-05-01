@@ -15,7 +15,7 @@ pub struct IntentProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntentSource {
-    BuiltIn,
+    Default,
     Custom,
 }
 

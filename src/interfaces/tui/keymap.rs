@@ -3,6 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use super::keys::{is_plain_character, is_shortcut_character};
 use super::repo_state::RepoPickerAction;
 use super::state::{Toast, TraceKind, TuiAction, TuiMode, TuiState};
+use crate::domain::IntentCatalog;
 
 impl TuiState {
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> TuiAction {
@@ -113,7 +114,7 @@ impl TuiState {
                 TuiAction::None
             }
             KeyCode::Char('n') if is_plain_character(key) => {
-                self.mode = TuiMode::Create;
+                self.enter_create_mode();
                 self.push_trace(TraceKind::Run, "work init ready");
                 TuiAction::None
             }
@@ -328,7 +329,7 @@ impl TuiState {
         self.intents
             .get(self.create_intent)
             .map(|(id, _)| id.as_str())
-            .unwrap_or("investigate")
+            .unwrap_or(IntentCatalog::BLANK_INTENT_ID)
     }
 }
 

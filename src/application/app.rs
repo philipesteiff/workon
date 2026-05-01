@@ -3,20 +3,20 @@ use std::path::PathBuf;
 use crate::application::command::{Command, CommandOutput};
 use crate::application::{intent, repository_context, shell, work};
 use crate::domain::IntentCatalog;
-use crate::infrastructure::storage::{JsonIntentStore, WorkStore};
+use crate::infrastructure::storage::{WorkStore, YamlIntentStore};
 use crate::shared::error::Result;
 
 #[derive(Debug, Clone)]
 pub struct App {
     store: WorkStore,
-    intent_store: JsonIntentStore,
+    intent_store: YamlIntentStore,
 }
 
 impl App {
     pub fn new(root: PathBuf) -> Self {
         Self {
             store: WorkStore::new(root.clone()),
-            intent_store: JsonIntentStore::new(&root),
+            intent_store: YamlIntentStore::new(&root),
         }
     }
 
@@ -39,36 +39,10 @@ impl App {
             Command::AddRepositoryWorkspaces { paths } => {
                 repository_context::add_workspaces(&self.store, &paths)
             }
-            Command::ArchiveIntent { intent_id } => {
-                let intents = self.intent_catalog()?;
-                intent::archive(&self.intent_store, &intents, &intent_id)
-            }
             Command::ArchiveWork { query } => work::archive::execute(&self.store, &query),
-            Command::CreateIntent { input } => {
-                let intents = self.intent_catalog()?;
-                intent::create(&self.intent_store, &intents, input)
-            }
             Command::CreateWork { goal, intent_id } => {
                 let intents = self.intent_catalog()?;
                 work::create::execute(&self.store, &intents, &goal, &intent_id)
-            }
-            Command::DuplicateIntent {
-                source_intent_id,
-                new_intent_id,
-                name,
-            } => {
-                let intents = self.intent_catalog()?;
-                intent::duplicate(
-                    &self.intent_store,
-                    &intents,
-                    &source_intent_id,
-                    &new_intent_id,
-                    name,
-                )
-            }
-            Command::EditIntent { intent_id, patch } => {
-                let intents = self.intent_catalog()?;
-                intent::edit(&self.intent_store, &intents, &intent_id, patch)
             }
             Command::InstallDevShell { manifest_path } => {
                 shell::install::install_dev_shell(manifest_path)
@@ -120,7 +94,7 @@ impl App {
 
     pub fn available_intents(&self) -> Vec<(String, String)> {
         self.intent_catalog()
-            .unwrap_or_else(|_| IntentCatalog::default_catalog())
+            .unwrap_or_else(|_| IntentCatalog::empty())
             .profiles()
             .iter()
             .map(|intent| (intent.id.clone(), intent.summary.clone()))
@@ -128,8 +102,9 @@ impl App {
     }
 
     fn intent_catalog(&self) -> Result<IntentCatalog> {
-        Ok(IntentCatalog::with_custom(
-            self.intent_store.active_profiles()?,
+        Ok(IntentCatalog::with_profiles(
+            self.intent_store.default_profiles()?,
+            self.intent_store.custom_profiles()?,
         ))
     }
 }

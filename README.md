@@ -16,7 +16,7 @@ Common development commands:
 just verify
 just install-dev-shell
 # restart the shell, or source the script printed by the command
-wo --intent investigate "Trace a failing release check across repos"
+wo "Trace a failing release check across repos"
 just smoke
 ```
 
@@ -51,7 +51,7 @@ Work can be switched, changed, and archived.
 **Intent**  
 A dynamic instruction profile for a kind of Work: investigate, review, address comments, design, brainstorm etc.
 
-Intent adds weight to generated agent instructions. It tells the agent which skills, MCPs, sources, and output style to prefer. Weight means preference, not enforcement. Intent can change as the work changes.
+Intent adds weight to generated agent instructions. It tells the agent which skills, MCPs, sources, and output style to prefer. Weight means preference, not enforcement. Intent can change as the work changes. Work can also use the default `blank` intent when no weighting is wanted.
 
 **Skills and MCPs**  
 Engineers configure skills and MCPs globally. Each Work can emphasize a subset through its current intent. The engineer can add, remove, or change that weight at any time.
@@ -101,7 +101,7 @@ enter    switch the highlighted Work to the selected intent
 esc      return to the Work queue
 ```
 
-The intent view lists built-in and custom reusable intent profiles. Switching updates the Work metadata and rewrites `AGENTS.md` and `CLAUDE.md`.
+The intent view lists default and custom reusable intent profiles. Switching updates the Work metadata and rewrites `AGENTS.md` and `CLAUDE.md`.
 
 ### `wo list`
 
@@ -127,7 +127,7 @@ Local development equivalent:
 just install-dev-shell
 ```
 
-### `wo "<intent text>"`
+### `wo "<goal>"`
 
 Create a Work from natural language.
 
@@ -136,7 +136,7 @@ wo "Trace a failing release check across repos"
 wo --intent investigate "Trace a failing release check across repos"
 ```
 
-If the text does not match existing Work, Workon starts creation. In a terminal it asks for intent; in scripts use `--intent`.
+If the text does not match existing Work, Workon starts creation with the `blank` intent. Use `--intent` when you want a default or custom intent profile.
 
 Workon creates a Work folder, writes agent files, and switches the current shell there.
 
@@ -169,13 +169,50 @@ Define and switch reusable Work intentions.
 wo intent list
 wo intent show investigate
 wo intent switch billing review-pr
-wo intent duplicate investigate debug-production --name "Debug Production"
-wo intent new debug-production --name "Debug Production" --summary "Diagnose production behavior from evidence."
-wo intent edit debug-production --instruction "Reproduce before changing code."
-wo intent archive debug-production
 ```
 
-Built-in intents are read-only. Custom intents are global reusable profiles. Switching a Work intent updates `workon.meta` and rewrites agent files.
+Intent profiles are YAML files. Workon reads default and custom intents with the same schema:
+
+- default intents: `$WORKON_ROOT/.workon/intents/default/<id>.yaml`
+- custom intents: `$WORKON_ROOT/.workon/intents/custom/<id>.yaml`
+
+Default intents are shipped with Workon and seeded into `default/` the first time the intent catalog loads, such as when you run `wo intent list`. Edit those seeded files to change how the default intents behave. Add new reusable intents by creating one YAML file per intent in `custom/`.
+
+The `id` field is the profile identity and should match the file name. Use a unique custom `id`; to change a default intent, edit its file in `default/` instead of creating a custom file with the same `id`.
+
+Existing custom intents from the older `.workon/intents/custom.json` format are migrated into `custom/<id>.yaml` the next time Workon loads the intent catalog.
+
+```yaml
+id: debug-production
+name: Debug Production
+summary: Diagnose production behavior from evidence.
+skill_weights:
+  - systematic-debugging
+mcp_weights:
+  - github
+instructions:
+  - Reproduce before changing code.
+  - |
+    Keep rollback risk visible.
+    Include the rollback owner when known.
+```
+
+To edit a default intent:
+
+```sh
+wo intent list
+$EDITOR "$WORKON_ROOT/.workon/intents/default/investigate.yaml"
+```
+
+To add a custom intent:
+
+```sh
+mkdir -p "$WORKON_ROOT/.workon/intents/custom"
+$EDITOR "$WORKON_ROOT/.workon/intents/custom/debug-production.yaml"
+wo intent show debug-production
+```
+
+Switching a Work intent updates `workon.meta` and rewrites agent files.
 
 ### `wo repos`
 

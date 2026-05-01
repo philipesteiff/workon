@@ -1,0 +1,11 @@
+id: address-pr-comments
+name: Address PR Comments
+summary: Resolve and discuss comments on owned pull requests.
+skill_weights:
+  - review-response-skill
+mcp_weights:
+  - github
+  - git
+instructions:
+  - Separate accepted changes from discussion points.
+  - Preserve reviewer context.

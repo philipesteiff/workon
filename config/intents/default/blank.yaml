@@ -1,0 +1,6 @@
+id: blank
+name: Blank
+summary: No intent-specific preferences.
+skill_weights: []
+mcp_weights: []
+instructions: []

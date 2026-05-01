@@ -1091,6 +1091,43 @@ fn create_intent_navigation_accepts_horizontal_keys() {
     assert_eq!(state.create_intent, 1);
 }
 
+#[test]
+fn create_defaults_to_blank_when_intent_list_is_empty() {
+    let mut state = TuiState::new(work_list());
+    state.mode = TuiMode::Create;
+    state.create_goal = "Capture release checklist".to_string();
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::Create {
+            goal: "Capture release checklist".to_string(),
+            intent_id: "blank".to_string(),
+        }
+    );
+}
+
+#[test]
+fn create_defaults_to_blank_when_intent_list_contains_seeded_defaults() {
+    let mut state = TuiState::new(work_list()).with_intents(vec![
+        (
+            "address-pr-comments".to_string(),
+            "Address PR Comments".to_string(),
+        ),
+        ("blank".to_string(), "Blank".to_string()),
+        ("investigate".to_string(), "Investigate".to_string()),
+    ]);
+    state.mode = TuiMode::Create;
+    state.create_goal = "Capture release checklist".to_string();
+
+    assert_eq!(
+        state.handle_key(key(KeyCode::Enter)),
+        TuiAction::Create {
+            goal: "Capture release checklist".to_string(),
+            intent_id: "blank".to_string(),
+        }
+    );
+}
+
 fn work_list() -> WorkList {
     WorkList {
         works: vec![

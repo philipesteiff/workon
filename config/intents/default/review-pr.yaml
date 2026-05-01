@@ -1,0 +1,11 @@
+id: review-pr
+name: Review Peer PR
+summary: Review a peer pull request from local context.
+skill_weights:
+  - review-skill
+mcp_weights:
+  - github
+  - git
+instructions:
+  - Prioritize correctness, regressions, and missing tests.
+  - Keep review comments specific and actionable.

@@ -2,9 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use workon::{
-    App, Command, CommandOutput, IntentProfileInput, IntentProfilePatch, IntentSource, WorkonError,
-};
+use workon::{App, Command, CommandOutput, IntentSource, WorkonError};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -48,6 +46,34 @@ fn create_work_writes_agent_files_and_metadata() {
         fs::read_to_string(created.path.join("CLAUDE.md")).expect("CLAUDE.md should be readable");
     assert!(claude.contains("AGENTS.md is the source"));
     assert!(claude.contains("This file is a projection for CLAUDE"));
+}
+
+#[test]
+fn open_or_create_without_intent_creates_blank_work() {
+    let root = temp_root("open_or_create_without_intent_creates_blank_work");
+    let app = App::new(root.path().to_path_buf());
+
+    let CommandOutput::WorkCreated(created) = app
+        .execute(Command::OpenOrCreate {
+            input: "Capture release checklist".to_string(),
+            intent_id: None,
+        })
+        .expect("omitted intent should create blank work")
+    else {
+        panic!("expected WorkCreated output");
+    };
+
+    assert_eq!(created.intent_id, "blank");
+
+    let meta = fs::read_to_string(created.path.join("workon.meta")).expect("metadata should exist");
+    assert!(meta.contains("intent_id=blank"));
+
+    let agents =
+        fs::read_to_string(created.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    assert!(agents.contains("Blank (blank)"));
+    assert!(agents.contains("## Preferred Skills\n\n- none"));
+    assert!(agents.contains("## Preferred MCPs\n\n- none"));
+    assert!(agents.contains("## Instructions\n\n- none"));
 }
 
 #[test]
@@ -208,122 +234,127 @@ fn unknown_intent_returns_typed_error() {
 }
 
 #[test]
-fn custom_intents_are_created_edited_duplicated_listed_and_archived() {
-    let root = temp_root("intent_catalog_lifecycle");
+fn default_intents_are_seeded_to_editable_config_file() {
+    let root = temp_root("default_intents_are_seeded_to_editable_config_file");
     let app = App::new(root.path().to_path_buf());
 
-    let CommandOutput::IntentCreated(created) = app
-        .execute(Command::CreateIntent {
-            input: IntentProfileInput {
-                id: "debug-production".to_string(),
-                name: "Debug Production".to_string(),
-                summary: "Diagnose production behavior from evidence.".to_string(),
-                skill_weights: vec!["debugging".to_string()],
-                mcp_weights: vec!["github".to_string(), "logs".to_string()],
-                instructions: vec!["Reproduce before changing code.".to_string()],
-            },
-        })
-        .expect("custom intent should create")
-    else {
-        panic!("expected IntentCreated output");
-    };
-    assert_eq!(created.intent.id, "debug-production");
-    assert_eq!(created.source, IntentSource::Custom);
+    app.execute(Command::ListIntents)
+        .expect("default intents should list");
 
-    let CommandOutput::IntentUpdated(updated) = app
-        .execute(Command::EditIntent {
-            intent_id: "debug-production".to_string(),
-            patch: IntentProfilePatch {
-                name: None,
-                summary: Some("Debug production issues with a tight evidence loop.".to_string()),
-                skill_weights: Some(vec!["systematic-debugging".to_string()]),
-                mcp_weights: None,
-                instructions: Some(vec![
-                    "Reproduce before changing code.".to_string(),
-                    "Keep rollback risk visible.".to_string(),
-                ]),
-            },
-        })
-        .expect("custom intent should edit")
-    else {
-        panic!("expected IntentUpdated output");
-    };
-    assert_eq!(
-        updated.intent.summary,
-        "Debug production issues with a tight evidence loop."
-    );
-    assert_eq!(
-        updated.intent.skill_weights,
-        vec!["systematic-debugging".to_string()]
-    );
+    let default_config = root.path().join(".workon/intents/default/investigate.yaml");
+    assert!(default_config.is_file());
+    assert!(root
+        .path()
+        .join(".workon/intents/default/blank.yaml")
+        .is_file());
+    let content = fs::read_to_string(default_config).expect("default intent config should read");
+    assert!(content.contains("id: investigate"));
+    assert!(content.contains("Investigate before answering."));
+}
 
-    app.execute(Command::DuplicateIntent {
-        source_intent_id: "debug-production".to_string(),
-        new_intent_id: "debug-api".to_string(),
-        name: Some("Debug API".to_string()),
-    })
-    .expect("custom intent should duplicate");
+#[test]
+fn edited_default_intent_config_changes_generated_agent_files() {
+    let root = temp_root("edited_default_intent_config_changes_generated_agent_files");
+    write_default_intents_config(root.path());
+    let app = App::new(root.path().to_path_buf());
+
+    let CommandOutput::WorkCreated(created) = app
+        .execute(Command::CreateWork {
+            goal: "Investigate local default config".to_string(),
+            intent_id: "investigate".to_string(),
+        })
+        .expect("edited default intent should create work")
+    else {
+        panic!("expected WorkCreated output");
+    };
+
+    let agents =
+        fs::read_to_string(created.path.join("AGENTS.md")).expect("AGENTS.md should be readable");
+    assert!(agents.contains("Local Investigate (investigate)"));
+    assert!(agents.contains("Use the local default intent config."));
+    assert!(!agents.contains("Investigate before answering."));
+}
+
+#[test]
+fn custom_intents_are_loaded_from_config_file() {
+    let root = temp_root("intent_catalog_from_config");
+    write_custom_intents_config(root.path());
+    let app = App::new(root.path().to_path_buf());
 
     let CommandOutput::IntentList(list) = app
         .execute(Command::ListIntents)
-        .expect("intents should list")
+        .expect("configured intents should list")
     else {
         panic!("expected IntentList output");
     };
     assert!(list
         .intents
         .iter()
-        .any(|intent| intent.id == "investigate" && intent.source == IntentSource::BuiltIn));
+        .any(|intent| intent.id == "investigate" && intent.source == IntentSource::Default));
     assert!(list
         .intents
         .iter()
         .any(|intent| intent.id == "debug-production" && intent.source == IntentSource::Custom));
-    assert!(list
-        .intents
-        .iter()
-        .any(|intent| intent.id == "debug-api" && intent.name == "Debug API"));
 
-    app.execute(Command::ArchiveIntent {
-        intent_id: "debug-production".to_string(),
-    })
-    .expect("custom intent should archive");
+    let CommandOutput::IntentShown(shown) = app
+        .execute(Command::ShowIntent {
+            intent_id: "debug-production".to_string(),
+        })
+        .expect("configured intent should show")
+    else {
+        panic!("expected IntentShown output");
+    };
+    assert_eq!(shown.source, IntentSource::Custom);
+    assert_eq!(shown.intent.name, "Debug Production");
+    assert_eq!(
+        shown.intent.instructions,
+        vec![
+            "Reproduce before changing code.".to_string(),
+            "Keep rollback risk visible.\nInclude rollback owner when known.".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn legacy_custom_intents_json_is_migrated_to_yaml_files() {
+    let root = temp_root("legacy_custom_intents_json_is_migrated_to_yaml_files");
+    write_legacy_custom_intents_json(root.path());
+    let app = App::new(root.path().to_path_buf());
 
     let CommandOutput::IntentList(list) = app
         .execute(Command::ListIntents)
-        .expect("intents should list after archive")
+        .expect("legacy custom intents should migrate")
     else {
         panic!("expected IntentList output");
     };
-    assert!(!list
+
+    assert!(list
         .intents
         .iter()
-        .any(|intent| intent.id == "debug-production"));
-    assert!(list.intents.iter().any(|intent| intent.id == "debug-api"));
+        .any(|intent| intent.id == "legacy-debug" && intent.source == IntentSource::Custom));
+
+    let migrated = root.path().join(".workon/intents/custom/legacy-debug.yaml");
+    assert!(migrated.is_file());
+    let content = fs::read_to_string(migrated).expect("migrated intent should be readable");
+    assert!(content.contains("id: legacy-debug"));
+    assert!(!root
+        .path()
+        .join(".workon/intents/custom/archived-legacy.yaml")
+        .exists());
 }
 
 #[test]
 fn switching_work_intent_updates_metadata_and_agent_files() {
     let root = temp_root("intent_switch");
+    write_custom_intents_config(root.path());
     let app = App::new(root.path().to_path_buf());
-
-    app.execute(Command::CreateIntent {
-        input: IntentProfileInput {
-            id: "shape-context".to_string(),
-            name: "Shape Context".to_string(),
-            summary: "Shape reusable context before implementation.".to_string(),
-            skill_weights: vec!["brainstorming".to_string()],
-            mcp_weights: Vec::new(),
-            instructions: vec!["Clarify purpose before changing code.".to_string()],
-        },
-    })
-    .expect("custom intent should create");
 
     let work = create_investigate(&app, "Define intent workflow");
 
     let CommandOutput::WorkIntentSwitched(switched) = app
         .execute(Command::SwitchWorkIntent {
             query: work.slug.clone(),
-            intent_id: "shape-context".to_string(),
+            intent_id: "debug-production".to_string(),
         })
         .expect("work intent should switch")
     else {
@@ -331,36 +362,25 @@ fn switching_work_intent_updates_metadata_and_agent_files() {
     };
 
     assert_eq!(switched.previous_intent_id, "investigate");
-    assert_eq!(switched.work.intent_id, "shape-context");
-    assert_eq!(switched.intent.id, "shape-context");
+    assert_eq!(switched.work.intent_id, "debug-production");
+    assert_eq!(switched.intent.id, "debug-production");
 
     let meta =
         fs::read_to_string(switched.work.path.join("workon.meta")).expect("metadata should exist");
-    assert!(meta.contains("intent_id=shape-context"));
+    assert!(meta.contains("intent_id=debug-production"));
 
     let agents =
         fs::read_to_string(switched.work.path.join("AGENTS.md")).expect("agent file should exist");
     assert!(agents.contains("Current Intent"));
-    assert!(agents.contains("Shape Context"));
-    assert!(agents.contains("Clarify purpose before changing code."));
+    assert!(agents.contains("Debug Production"));
+    assert!(agents.contains("Keep rollback risk visible.\n  Include rollback owner when known."));
 }
 
 #[test]
 fn switching_work_intent_preserves_user_instructions_inside_context_block() {
     let root = temp_root("intent_switch_preserves_user_instructions");
+    write_custom_intents_config(root.path());
     let app = App::new(root.path().to_path_buf());
-
-    app.execute(Command::CreateIntent {
-        input: IntentProfileInput {
-            id: "shape-context".to_string(),
-            name: "Shape Context".to_string(),
-            summary: "Shape reusable context before implementation.".to_string(),
-            skill_weights: vec!["brainstorming".to_string()],
-            mcp_weights: Vec::new(),
-            instructions: vec!["Clarify purpose before changing code.".to_string()],
-        },
-    })
-    .expect("custom intent should create");
 
     let work = create_investigate(&app, "Preserve hand-written agent instructions");
     let agents_path = work.path.join("AGENTS.md");
@@ -1025,6 +1045,97 @@ fn create_investigate(app: &App, goal: &str) -> workon::CreatedWork {
         panic!("expected WorkCreated output");
     };
     work
+}
+
+fn write_default_intents_config(root: &Path) {
+    let path = root.join(".workon/intents/default/investigate.yaml");
+    fs::create_dir_all(path.parent().expect("config parent should exist"))
+        .expect("config parent should be created");
+    fs::write(
+        path,
+        r#"id: investigate
+name: Local Investigate
+summary: Local edited investigate behavior.
+skill_weights:
+  - local-evidence
+mcp_weights: []
+instructions:
+  - Use the local default intent config.
+"#,
+    )
+    .expect("default intents config should write");
+}
+
+fn write_custom_intents_config(root: &Path) {
+    let custom_dir = root.join(".workon/intents/custom");
+    fs::create_dir_all(&custom_dir).expect("custom intent dir should be created");
+    let path = custom_dir.join("debug-production.yaml");
+    fs::write(
+        path,
+        r#"id: debug-production
+name: Debug Production
+summary: Diagnose production behavior from evidence.
+skill_weights:
+  - systematic-debugging
+mcp_weights:
+  - github
+  - logs
+instructions:
+  - Reproduce before changing code.
+  - |
+    Keep rollback risk visible.
+    Include rollback owner when known.
+"#,
+    )
+    .expect("debug production config should write");
+
+    let path = custom_dir.join("shape-context.yaml");
+    fs::write(
+        path,
+        r#"id: shape-context
+name: Shape Context
+summary: Shape reusable context before implementation.
+skill_weights:
+  - brainstorming
+mcp_weights: []
+instructions:
+  - Clarify purpose before changing code.
+"#,
+    )
+    .expect("shape context config should write");
+}
+
+fn write_legacy_custom_intents_json(root: &Path) {
+    let path = root.join(".workon/intents/custom.json");
+    fs::create_dir_all(path.parent().expect("legacy config parent should exist"))
+        .expect("legacy config parent should be created");
+    fs::write(
+        path,
+        r#"{
+  "intents": [
+    {
+      "id": "legacy-debug",
+      "name": "Legacy Debug",
+      "summary": "Loaded from the previous JSON custom intent store.",
+      "skill_weights": ["systematic-debugging"],
+      "mcp_weights": ["github"],
+      "instructions": ["Preserve existing custom intent behavior."],
+      "archived": false
+    },
+    {
+      "id": "archived-legacy",
+      "name": "Archived Legacy",
+      "summary": "Should stay archived after migration.",
+      "skill_weights": [],
+      "mcp_weights": [],
+      "instructions": [],
+      "archived": true
+    }
+  ]
+}
+"#,
+    )
+    .expect("legacy custom intents JSON should write");
 }
 
 fn append_instruction_before_context_end(path: &Path, content: &str) {

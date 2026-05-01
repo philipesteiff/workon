@@ -7,4 +7,4 @@ mod app;
 mod command;
 
 pub use app::App;
-pub use command::{Command, CommandOutput, IntentProfileInput, IntentProfilePatch};
+pub use command::{Command, CommandOutput};

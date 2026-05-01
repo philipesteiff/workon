@@ -1,0 +1,12 @@
+id: design-to-prs
+name: Design Doc to PRs
+summary: Move from design context into reviewable implementation slices.
+skill_weights:
+  - design-skill
+  - implementation-skill
+mcp_weights:
+  - notion
+  - github
+instructions:
+  - Keep design decisions attached to implementation work.
+  - Prefer reviewable PR slices.

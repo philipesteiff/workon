@@ -20,18 +20,6 @@ pub(crate) fn render_output(
             writeln!(writer, "to: {}", work.archive_path.display())?;
             writeln!(writer, "next: wo list")?;
         }
-        CommandOutput::IntentArchived(change) => {
-            writeln!(writer, "intent archived: {}", change.intent.id)?;
-            writeln!(writer, "next: wo intent list")?;
-        }
-        CommandOutput::IntentCreated(change) => {
-            writeln!(writer, "intent created: {}", change.intent.id)?;
-            render_intent_profile(writer, change)?;
-        }
-        CommandOutput::IntentDuplicated(change) => {
-            writeln!(writer, "intent duplicated: {}", change.intent.id)?;
-            render_intent_profile(writer, change)?;
-        }
         CommandOutput::IntentList(list) => {
             writeln!(writer, "intents:")?;
             for intent in &list.intents {
@@ -46,10 +34,6 @@ pub(crate) fn render_output(
             }
         }
         CommandOutput::IntentShown(change) => {
-            render_intent_profile(writer, change)?;
-        }
-        CommandOutput::IntentUpdated(change) => {
-            writeln!(writer, "intent updated: {}", change.intent.id)?;
             render_intent_profile(writer, change)?;
         }
         CommandOutput::RepositoryCatalog(catalog) => {
@@ -206,7 +190,7 @@ fn render_intent_profile(writer: &mut dyn Write, change: &IntentProfileChange) -
 
 fn source_label(source: IntentSource) -> &'static str {
     match source {
-        IntentSource::BuiltIn => "built-in",
+        IntentSource::Default => "default",
         IntentSource::Custom => "custom",
     }
 }
@@ -222,7 +206,7 @@ fn list_label(values: &[String]) -> String {
 fn render_work_list(list: &WorkList, writer: &mut dyn Write, root: &Path) -> Result<()> {
     if list.works.is_empty() {
         writeln!(writer, "No active work.")?;
-        writeln!(writer, "Next: wo --intent <intent-id> \"<goal>\"")?;
+        writeln!(writer, "Next: wo \"<goal>\"")?;
         writeln!(writer, "Try:  wo --help")?;
         return Ok(());
     }
@@ -326,9 +310,6 @@ Usage:
   wo intent list             list reusable intent profiles
   wo intent switch <work> <intent>
                              switch current intent for matching Work
-  wo intent new <id> --name <name> --summary <summary>
-                             create a reusable custom intent
-  wo intent edit <id>        update a custom intent
   wo intent                  show intent workflow help
   wo repos list <work-query>
                              list attached repositories
@@ -345,18 +326,21 @@ Usage:
   wo repos remove [--force] <work> <owner/repo>...
                              remove attached repo links
   wo repos                   show GitHub repo context help
-  wo --intent <id> \"<goal>\"  create work
+  wo \"<goal>\"                create work with blank intent
+  wo --intent <id> \"<goal>\"  create work with a selected intent
   wo install-shell           install folder switching
   wo version                 print version
 
 Options:
-  -i, --intent <id>          intent for new work
+  -i, --intent <id>          intent for new work; defaults to blank
   --machine                  emit shell switch signals
   -h, --help                 show this help
   -V, --version              print version
 
 Env:
   WORKON_ROOT=/path          override the default ~/.workon root
+  default intents            $WORKON_ROOT/.workon/intents/default/<id>.yaml
+  custom intents             $WORKON_ROOT/.workon/intents/custom/<id>.yaml
 ",
     )?;
     Ok(())
@@ -373,7 +357,7 @@ pub(crate) fn write_intent_help(writer: &mut dyn Write) -> Result<()> {
 
 Usage:
   wo intent list
-      List built-in and custom intent profiles.
+      List default and custom intent profiles.
 
   wo intent show <intent-id>
       Show one intent profile.
@@ -381,27 +365,15 @@ Usage:
   wo intent switch <work-query> <intent-id>
       Set the current intent for the matching Work and rewrite agent files.
 
-  wo intent new <intent-id> --name <name> --summary <summary>
-      Create a custom reusable intent.
+Intent config:
+  $WORKON_ROOT/.workon/intents/default/<id>.yaml
+      Edit seeded default intent files.
 
-  wo intent edit <intent-id> [--name <name>] [--summary <summary>]
-      Edit a custom intent. Built-in intents are read-only.
+  $WORKON_ROOT/.workon/intents/custom/<id>.yaml
+      Add one YAML file per custom intent.
 
-  wo intent duplicate <source-intent-id> <new-intent-id> [--name <name>]
-      Copy a built-in or custom intent into an editable custom intent.
-
-  wo intent archive <intent-id>
-      Hide a custom intent from the active catalog. Built-ins cannot be archived.
-
-List fields:
-  --skill <skill>            Add one preferred skill. Repeat as needed.
-  --mcp <mcp>                Add one preferred MCP. Repeat as needed.
-  --instruction <text>       Add one instruction. Repeat as needed.
-
-Edit clearing:
-  --clear-skills
-  --clear-mcps
-  --clear-instructions
+  Default and custom files use the same YAML schema. Run `wo intent list`
+  to seed defaults, then edit default files or add custom files.
 
 TUI:
   wo

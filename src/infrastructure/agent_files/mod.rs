@@ -296,7 +296,7 @@ fn bullet_list(items: &[String]) -> String {
     } else {
         items
             .iter()
-            .map(|item| format!("- {item}"))
+            .map(|item| format!("- {}", item.replace('\n', "\n  ")))
             .collect::<Vec<_>>()
             .join("\n")
     }

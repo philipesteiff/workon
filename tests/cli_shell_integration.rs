@@ -130,7 +130,15 @@ fn help_prints_command_summary() {
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
 
     assert!(stdout.contains("wo - start, open, and archive work folders"));
-    assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work"));
+    assert!(stdout.contains("wo \"<goal>\"                create work with blank intent"));
+    assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work with a selected intent"));
+    assert!(stdout
+        .contains("default intents            $WORKON_ROOT/.workon/intents/default/<id>.yaml"));
+    assert!(
+        stdout.contains("custom intents             $WORKON_ROOT/.workon/intents/custom/<id>.yaml")
+    );
+    assert!(!stdout.contains("wo intent new"));
+    assert!(!stdout.contains("wo intent edit"));
     assert!(stdout.contains("wo repos add [--workspace <path>] <work> <owner/repo>..."));
     assert!(stdout.contains("create GitHub worktrees from a configured workspace"));
     assert!(!stdout.contains("wo ctx"));
@@ -205,7 +213,7 @@ fn empty_list_prints_next_step() {
 
     let expected = "\
 No active work.
-Next: wo --intent <intent-id> \"<goal>\"
+Next: wo \"<goal>\"
 Try:  wo --help
 ";
 
@@ -213,21 +221,80 @@ Try:  wo --help
 }
 
 #[test]
-fn cli_errors_are_actionable() {
-    let root = temp_root("cli_errors_are_actionable");
+fn create_without_intent_uses_blank_intent() {
+    let root = temp_root("create_without_intent_uses_blank_intent");
 
-    let missing_intent = Command::new(env!("CARGO_BIN_EXE_wo"))
+    let output = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
         .env("WORKON_ROOT", root.path())
         .args(["Answer billing question"])
         .output()
         .expect("wo should run");
 
-    assert!(!missing_intent.status.success());
-    let stderr = String::from_utf8(missing_intent.stderr).expect("stderr should be utf8");
-    assert!(stderr.contains("intent required for new work"));
-    assert!(stderr.contains("Use: wo --intent <intent-id> \"<goal>\""));
-    assert!(stderr.contains("Available: investigate"));
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("work created: Answer billing question"));
+    assert!(stdout.contains("intent: blank"));
+
+    let agents_path = root
+        .path()
+        .join(".workon/work/answer-billing-question/AGENTS.md");
+    let agents = fs::read_to_string(agents_path).expect("AGENTS.md should exist");
+    assert!(agents.contains("Blank (blank)"));
+    assert!(agents.contains("## Instructions\n\n- none"));
+}
+
+#[test]
+fn custom_intents_load_from_config_file() {
+    let root = temp_root("custom_intents_load_from_config_file");
+    write_custom_intents_config(root.path());
+
+    let list = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["intent", "list"])
+        .output()
+        .expect("wo should run");
+
+    assert!(list.status.success());
+    let stdout = String::from_utf8(list.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains(
+        "debug-production  custom  Debug Production  Diagnose production behavior from evidence."
+    ));
+
+    let create = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args(["--intent", "debug-production", "Debug production checkout"])
+        .output()
+        .expect("wo should run");
+
+    assert!(
+        create.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&create.stdout),
+        String::from_utf8_lossy(&create.stderr)
+    );
+    let stdout = String::from_utf8(create.stdout).expect("stdout should be utf8");
+    assert!(stdout.contains("intent: debug-production"));
+
+    let agents = fs::read_to_string(
+        root.path()
+            .join(".workon/work/debug-production-checkout/AGENTS.md"),
+    )
+    .expect("AGENTS.md should exist");
+    assert!(agents.contains("Debug Production (debug-production)"));
+    assert!(agents.contains("Keep rollback risk visible."));
+}
+
+#[test]
+fn cli_errors_are_actionable() {
+    let root = temp_root("cli_errors_are_actionable");
 
     let unknown_intent = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
@@ -239,7 +306,9 @@ fn cli_errors_are_actionable() {
     assert!(!unknown_intent.status.success());
     let stderr = String::from_utf8(unknown_intent.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("unknown intent `missing`"));
-    assert!(stderr.contains("Available: investigate"));
+    assert!(stderr.contains("Available:"));
+    assert!(stderr.contains("blank"));
+    assert!(stderr.contains("investigate"));
 
     let not_found = Command::new(env!("CARGO_BIN_EXE_wo"))
         .current_dir(root.path())
@@ -641,6 +710,28 @@ fn create_work(root: &Path, goal: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn write_custom_intents_config(root: &Path) {
+    let path = root.join(".workon/intents/custom/debug-production.yaml");
+    fs::create_dir_all(path.parent().expect("config parent should exist"))
+        .expect("config parent should be created");
+    fs::write(
+        path,
+        r#"id: debug-production
+name: Debug Production
+summary: Diagnose production behavior from evidence.
+skill_weights:
+  - systematic-debugging
+mcp_weights:
+  - github
+  - logs
+instructions:
+  - Reproduce before changing code.
+  - Keep rollback risk visible.
+"#,
+    )
+    .expect("custom intents config should write");
 }
 
 struct TempRoot {
