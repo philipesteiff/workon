@@ -85,7 +85,7 @@ pub(crate) fn add(
     let runner = StdProcessRunner;
     let github = GhCli::new(&runner);
     let cache = BareRepositoryCache::new(store.root(), &github);
-    let worktrees = GitWorktree::new(&runner);
+    let worktrees = GitWorktree::from_env(&runner)?;
     let metadata = JsonRepoMetadataStore;
     let workspaces = JsonRepoWorkspaceStore::new(store.root());
     let linker = SymlinkRepositoryLinker;

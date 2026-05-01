@@ -1110,6 +1110,143 @@ fn add_work_repositories_uses_gh_and_git_worktree_then_updates_context_files() {
 }
 
 #[test]
+fn add_work_repositories_uses_worktree_create_command_override() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("add_work_repositories_uses_worktree_create_command_override");
+    let fake_bin = fake_repo_tools(root.path());
+    write_fake_worktrunk(fake_bin.path(), fake_worktrunk_script());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let previous_override = std::env::var_os("WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+    std::env::set_var(
+        "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+        "worktrunk create --repo {repo} --path {target_path} --branch {branch}",
+    );
+
+    let app = App::new(root.path().to_path_buf());
+    let repo_workspace = configure_repo_workspace(&app, root.path());
+    let work = create_investigate(&app, "Override repository worktree command");
+
+    let CommandOutput::WorkRepositoriesAdded(change) = app
+        .execute(Command::AddWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+            workspace: None,
+        })
+        .expect("repo add should succeed")
+    else {
+        panic!("expected WorkRepositoriesAdded output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+    restore_env(
+        "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+        previous_override,
+    );
+
+    assert_eq!(change.repositories.len(), 1);
+    assert!(repo_workspace
+        .join("override-repository-worktree-command/workon")
+        .is_dir());
+
+    let log = fs::read_to_string(root.path().join("tool.log")).expect("tool log should exist");
+    assert!(log.contains("worktrunk create --repo openai/workon --path"));
+    assert!(log.contains("--branch workon/override-repository-worktree-command"));
+    assert!(!log.contains("worktree add"));
+}
+
+#[test]
+fn add_work_repositories_rejects_override_that_does_not_create_valid_worktree() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("add_work_repositories_rejects_invalid_override_output");
+    let fake_bin = fake_repo_tools(root.path());
+    write_fake_worktrunk(fake_bin.path(), fake_noop_worktrunk_script());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let previous_override = std::env::var_os("WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+    std::env::set_var(
+        "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+        "worktrunk create --repo {repo} --path {target_path} --branch {branch}",
+    );
+
+    let app = App::new(root.path().to_path_buf());
+    configure_repo_workspace(&app, root.path());
+    let work = create_investigate(&app, "Reject invalid override worktree");
+
+    let error = app
+        .execute(Command::AddWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+            workspace: None,
+        })
+        .expect_err("repo add should reject invalid override output");
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+    restore_env(
+        "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+        previous_override,
+    );
+
+    assert!(
+        error.to_string().contains("did not create a git worktree"),
+        "{error}"
+    );
+    assert!(
+        !work.path.join("workon.repos.json").exists(),
+        "metadata should not be written when override output is invalid"
+    );
+}
+
+#[test]
+fn add_work_repositories_preserves_override_failure_stderr() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("add_work_repositories_preserves_override_failure_stderr");
+    let fake_bin = fake_repo_tools(root.path());
+    write_fake_worktrunk(fake_bin.path(), fake_failing_worktrunk_script());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let previous_override = std::env::var_os("WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND");
+    std::env::set_var("WORKON_FAKE_LOG", root.path().join("tool.log"));
+    std::env::set_var(
+        "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+        "worktrunk create --repo {repo} --path {target_path} --branch {branch}",
+    );
+
+    let app = App::new(root.path().to_path_buf());
+    configure_repo_workspace(&app, root.path());
+    let work = create_investigate(&app, "Preserve override stderr");
+
+    let error = app
+        .execute(Command::AddWorkRepositories {
+            query: work.slug.clone(),
+            repositories: vec!["openai/workon".to_string()],
+            workspace: None,
+        })
+        .expect_err("repo add should report override failure");
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+    restore_env(
+        "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+        previous_override,
+    );
+
+    let message = error.to_string();
+    assert!(
+        message.contains("worktrunk refused to create worktree"),
+        "{message}"
+    );
+    assert!(
+        message.contains("repository context command failed: worktrunk create"),
+        "{message}"
+    );
+}
+
+#[test]
 fn list_work_repositories_reconstructs_live_branch_from_repo_folder() {
     let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
     let root = temp_root("list_work_repositories_reconstructs_live_branch");
@@ -1680,6 +1817,20 @@ fn fake_repo_tools(root: &Path) -> TempRoot {
     fake_bin
 }
 
+fn write_fake_worktrunk(fake_bin: &Path, script: &str) {
+    fs::write(fake_bin.join("worktrunk"), script).expect("fake worktrunk should be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = fake_bin.join("worktrunk");
+        let mut permissions = fs::metadata(&path)
+            .expect("fake worktrunk metadata should read")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("fake worktrunk should be executable");
+    }
+}
+
 fn fake_gh_script() -> &'static str {
     r#"#!/bin/sh
 printf 'gh %s\n' "$*" >> "$WORKON_FAKE_LOG"
@@ -1697,6 +1848,46 @@ if [ "$1" = "repo" ] && [ "$2" = "list" ]; then
   exit 0
 fi
 exit 2
+"#
+}
+
+fn fake_worktrunk_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'worktrunk %s\n' "$*" >> "$WORKON_FAKE_LOG"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --path)
+      target="$2"
+      shift 2
+      ;;
+    --branch)
+      branch="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$target"
+printf '%s\n' "$branch" > "$target/.workon-current-branch"
+printf 'https://github.com/openai/workon.git\n' > "$target/.workon-origin-url"
+exit 0
+"#
+}
+
+fn fake_noop_worktrunk_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'worktrunk %s\n' "$*" >> "$WORKON_FAKE_LOG"
+exit 0
+"#
+}
+
+fn fake_failing_worktrunk_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'worktrunk %s\n' "$*" >> "$WORKON_FAKE_LOG"
+printf 'worktrunk refused to create worktree\n' >&2
+exit 12
 "#
 }
 

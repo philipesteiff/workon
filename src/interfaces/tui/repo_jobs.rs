@@ -241,6 +241,29 @@ mod tests {
     }
 
     #[test]
+    fn batch_add_step_uses_shared_add_work_repositories_command() {
+        let mut batch = RepoBatch::new(RepoChangeRequest {
+            work_slug: "billing".to_string(),
+            add: vec!["openai/api".to_string()],
+            link: Vec::new(),
+            remove: Vec::new(),
+            force_remove: false,
+            workspace: Some("/tmp/repos".into()),
+        });
+
+        let step = batch.next_step().expect("add step");
+
+        assert_eq!(
+            step.command,
+            crate::application::Command::AddWorkRepositories {
+                query: "billing".to_string(),
+                repositories: vec!["openai/api".to_string()],
+                workspace: Some("/tmp/repos".into()),
+            }
+        );
+    }
+
+    #[test]
     fn batch_records_failure_and_cancelled_skip_count_without_terminal() {
         let mut batch = RepoBatch::new(request());
         let first = batch.next_step().expect("first step");

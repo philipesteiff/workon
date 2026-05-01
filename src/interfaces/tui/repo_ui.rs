@@ -100,7 +100,7 @@ fn repo_catalog_context_line(repo: &RepoPickerState, rows_empty: bool) -> Line<'
             status_badge("REQUIRED", theme::style_status_warn()),
             Span::raw(" "),
             Span::styled(
-                "Add a repo workspace path before creating GitHub worktrees.",
+                "Add a repo workspace path before creating remote repo worktrees.",
                 theme::style_command(),
             ),
         ]);
@@ -135,10 +135,10 @@ fn repo_catalog_context_line(repo: &RepoPickerState, rows_empty: bool) -> Line<'
 
     match repo.selected_workspace_path() {
         Some(path) => Line::from(format!(
-            "GitHub worktrees in {}; local links in place.",
+            "Remote repo worktrees in {}; local links in place.",
             compact_path(&path)
         )),
-        None => Line::from("Select GitHub repos for worktrees or local repos to link.".dim()),
+        None => Line::from("Select remote repos for worktrees or local repos to link.".dim()),
     }
 }
 

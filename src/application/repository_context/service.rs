@@ -150,12 +150,8 @@ impl<'a> RepositoryContextService<'a> {
             let target_path =
                 workspace_worktree_path(&workspace.path, &work.slug, &available.name_with_owner)?;
 
-            self.worktrees.switch(
-                &cache_path,
-                &target_path,
-                &branch,
-                &available.default_branch,
-            )?;
+            self.worktrees
+                .switch(&available, &cache_path, &target_path, &branch)?;
             let alias = repository_alias(&available.name_with_owner)?;
             let link_path =
                 self.linker

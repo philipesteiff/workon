@@ -813,6 +813,75 @@ fn repos_add_list_and_remove_use_real_wo_binary_with_fake_tools() {
 }
 
 #[test]
+fn repos_add_uses_worktree_create_command_override_with_real_wo_binary() {
+    let root = temp_root("repos_add_uses_worktree_create_command_override_with_real_wo_binary");
+    let fake_bin = fake_repo_tools();
+    write_fake_worktrunk(fake_bin.path(), fake_worktrunk_script());
+    let fake_path = path_with_prepended(fake_bin.path());
+    let log_path = root.path().join("tool.log");
+    let workspace_path = root.path().join("repo-workspace");
+    fs::write(&log_path, "").expect("tool log should initialize");
+    create_work(root.path(), "Repository override cli smoke");
+
+    let workspace = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .args([
+            "repos",
+            "workspace",
+            "add",
+            workspace_path.to_str().expect("workspace path utf8"),
+        ])
+        .output()
+        .expect("wo repos workspace add should run");
+    assert!(
+        workspace.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&workspace.stdout),
+        String::from_utf8_lossy(&workspace.stderr)
+    );
+
+    let add = Command::new(env!("CARGO_BIN_EXE_wo"))
+        .current_dir(root.path())
+        .env("WORKON_ROOT", root.path())
+        .env("PATH", &fake_path)
+        .env("WORKON_FAKE_LOG", &log_path)
+        .env(
+            "WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND",
+            "worktrunk create --repo {repo} --path {target_path} --branch {branch}",
+        )
+        .args([
+            "repos",
+            "add",
+            "--workspace",
+            workspace_path.to_str().expect("workspace path utf8"),
+            "repository",
+            "override",
+            "cli",
+            "smoke",
+            "--",
+            "openai/workon",
+        ])
+        .output()
+        .expect("wo repos add should run");
+
+    assert!(
+        add.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&add.stdout),
+        String::from_utf8_lossy(&add.stderr)
+    );
+    let add_stdout = String::from_utf8(add.stdout).expect("stdout should be utf8");
+    assert!(add_stdout.contains("repositories added: Repository override cli smoke"));
+    assert!(add_stdout.contains("openai/workon"));
+
+    let log = fs::read_to_string(log_path).expect("tool log should exist");
+    assert!(log.contains("worktrunk create --repo openai/workon --path"));
+    assert!(log.contains("--branch workon/repository-override-cli-smoke"));
+    assert!(!log.contains("worktree add"));
+}
+
+#[test]
 fn repos_candidate_paths_use_real_wo_binary_without_slow_git_or_gh() {
     let root = temp_root("repos_candidate_paths_use_real_wo_binary_without_slow_git_or_gh");
     let fake_bin = fake_slow_repo_tools();
@@ -1619,6 +1688,20 @@ fn fake_gh_auth_failure_tools() -> TempRoot {
     fake_bin
 }
 
+fn write_fake_worktrunk(fake_bin: &Path, script: &str) {
+    fs::write(fake_bin.join("worktrunk"), script).expect("fake worktrunk should be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = fake_bin.join("worktrunk");
+        let mut permissions = fs::metadata(&path)
+            .expect("fake worktrunk metadata should read")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("fake worktrunk should be executable");
+    }
+}
+
 fn path_with_prepended(path: &Path) -> std::ffi::OsString {
     let mut paths = vec![path.to_path_buf()];
     if let Some(previous) = std::env::var_os("PATH") {
@@ -1649,6 +1732,31 @@ printf 'gh %s\n' "$*" >&2
 printf 'The token in default is invalid.\n' >&2
 printf 'To re-authenticate, run: gh auth login -h github.com\n' >&2
 exit 4
+"#
+}
+
+fn fake_worktrunk_script() -> &'static str {
+    r#"#!/bin/sh
+printf 'worktrunk %s\n' "$*" >> "$WORKON_FAKE_LOG"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --path)
+      target="$2"
+      shift 2
+      ;;
+    --branch)
+      branch="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+mkdir -p "$target"
+printf '%s\n' "$branch" > "$target/.workon-current-branch"
+printf 'https://github.com/openai/workon.git\n' > "$target/.workon-origin-url"
+exit 0
 "#
 }
 

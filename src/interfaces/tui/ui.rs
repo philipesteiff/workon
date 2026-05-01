@@ -1428,7 +1428,7 @@ mod tests {
         assert!(!attached.contains("REPO WORKSPACES"));
         assert!(!attached.contains("No repositories selected for this Work."));
         assert!(attached.contains("openai/workon"));
-        assert!(attached.contains("GitHub worktrees in /tmp/repos; local links in place."));
+        assert!(attached.contains("Remote repo worktrees in /tmp/repos; local links in place."));
         assert!(attached.contains("/tmp/repos/billing-retry-audit/workon"));
         assert!(!attached.contains("type filters repos"));
         assert!(!attached.contains("github default"));
@@ -1461,7 +1461,9 @@ mod tests {
         assert!(!content.contains("REPO WORKSPACES"));
         assert!(!content.contains("REPO WORKSPACE SETUP"));
         assert!(content.contains("REQUIRED"));
-        assert!(content.contains("Add a repo workspace path before creating GitHub worktrees."));
+        assert!(
+            content.contains("Add a repo workspace path before creating remote repo worktrees.")
+        );
         assert!(content.contains("<type folder path>"));
         assert!(!content.contains("SELECTED FOR WORK"));
         assert!(!content.contains("wo repos workspace add"));
@@ -1611,7 +1613,9 @@ mod tests {
 
         let content = render_content(&state, 160, 36);
 
-        assert!(content.contains("GitHub worktrees in /tmp/client-repos; local links in place."));
+        assert!(
+            content.contains("Remote repo worktrees in /tmp/client-repos; local links in place.")
+        );
         assert!(content.contains("/tmp/client-repos/billing-retry-audit/workon"));
         assert!(content.contains("ADD PATH"));
         assert!(content.contains("CONFIGURED PATHS"));

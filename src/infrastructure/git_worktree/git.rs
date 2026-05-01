@@ -1,18 +1,41 @@
 use std::fs;
 use std::path::Path;
 
+use crate::domain::AvailableRepository;
 use crate::infrastructure::process::{ProcessRunner, RepoCommand};
 use crate::shared::error::{Result, WorkonError};
 
-use super::WorktreeManager;
+use super::{RepositoryWorktreeCreateCommand, WorktreeManager};
 
 pub(crate) struct GitWorktree<'a> {
     runner: &'a dyn ProcessRunner,
+    create_command: Option<RepositoryWorktreeCreateCommand>,
 }
 
 impl<'a> GitWorktree<'a> {
     pub(crate) fn new(runner: &'a dyn ProcessRunner) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            create_command: None,
+        }
+    }
+
+    pub(crate) fn from_env(runner: &'a dyn ProcessRunner) -> Result<Self> {
+        Ok(Self {
+            runner,
+            create_command: RepositoryWorktreeCreateCommand::from_env()?,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_create_command(
+        runner: &'a dyn ProcessRunner,
+        create_command: RepositoryWorktreeCreateCommand,
+    ) -> Self {
+        Self {
+            runner,
+            create_command: Some(create_command),
+        }
     }
 
     fn run_git(&self, repository_path: &Path, args: &[&str]) -> Result<String> {
@@ -32,6 +55,60 @@ impl<'a> GitWorktree<'a> {
 
         self.run_git(cache_path, &["branch", branch, default_branch])?;
         Ok(())
+    }
+
+    fn add_worktree(
+        &self,
+        repository: &AvailableRepository,
+        cache_path: &Path,
+        worktree_path: &Path,
+        branch: &str,
+    ) -> Result<()> {
+        if let Some(command) = &self.create_command {
+            return command.run(self.runner, repository, worktree_path, branch);
+        }
+
+        self.run_git(
+            cache_path,
+            &[
+                "worktree",
+                "add",
+                &worktree_path.display().to_string(),
+                branch,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn verify_created_worktree(&self, worktree_path: &Path, branch: &str) -> Result<()> {
+        if !worktree_path.exists() {
+            return Err(WorkonError::RepositoryContext {
+                message: format!(
+                    "repository worktree create command did not create a git worktree at {}",
+                    worktree_path.display()
+                ),
+            });
+        }
+
+        let current_branch =
+            self.current_branch(worktree_path)
+                .map_err(|error| WorkonError::RepositoryContext {
+                    message: format!(
+                        "repository worktree create command did not create a git worktree at {} ({error})",
+                        worktree_path.display()
+                    ),
+                })?;
+
+        if current_branch == branch {
+            return Ok(());
+        }
+
+        Err(WorkonError::RepositoryContext {
+            message: format!(
+                "repository worktree create command created `{}` on branch `{current_branch}`, expected `{branch}`",
+                worktree_path.display()
+            ),
+        })
     }
 
     pub(super) fn current_branch(&self, worktree_path: &Path) -> Result<String> {
@@ -94,10 +171,10 @@ impl<'a> GitWorktree<'a> {
 impl WorktreeManager for GitWorktree<'_> {
     fn switch(
         &self,
+        repository: &AvailableRepository,
         cache_path: &Path,
         worktree_path: &Path,
         branch: &str,
-        default_branch: &str,
     ) -> Result<()> {
         fs::create_dir_all(worktree_path.parent().ok_or_else(|| {
             WorkonError::RepositoryContext {
@@ -109,16 +186,9 @@ impl WorktreeManager for GitWorktree<'_> {
             return Ok(());
         }
 
-        self.ensure_branch(cache_path, branch, default_branch)?;
-        self.run_git(
-            cache_path,
-            &[
-                "worktree",
-                "add",
-                &worktree_path.display().to_string(),
-                branch,
-            ],
-        )?;
+        self.ensure_branch(cache_path, branch, &repository.default_branch)?;
+        self.add_worktree(repository, cache_path, worktree_path, branch)?;
+        self.verify_created_worktree(worktree_path, branch)?;
         Ok(())
     }
 }

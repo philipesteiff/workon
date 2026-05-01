@@ -22,6 +22,11 @@ impl RepoCommand {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn program(&self) -> &str {
+        &self.program
+    }
+
     fn display(&self) -> String {
         std::iter::once(self.program.as_str())
             .chain(self.args.iter().map(String::as_str))

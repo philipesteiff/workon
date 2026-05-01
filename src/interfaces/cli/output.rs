@@ -386,6 +386,9 @@ Options:
 
 Env:
   WORKON_ROOT=/path          override the default ~/.workon root
+  WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND
+                             override repo creation, e.g.
+                             worktrunk create --repo {repo} --path {target_path} --branch {branch}
   default intents            $WORKON_ROOT/.workon/intents/default/<id>.yaml
   custom intents             $WORKON_ROOT/.workon/intents/custom/<id>.yaml
 ",
@@ -471,6 +474,11 @@ TUI:
 
 Requires:
   gh auth login
+
+Env:
+  WORKON_REPOSITORY_WORKTREE_CREATE_COMMAND
+      Optional command template for replacing Workon's built-in git worktree add.
+      Example: worktrunk create --repo {repo} --path {target_path} --branch {branch}
 ",
     )?;
     Ok(())

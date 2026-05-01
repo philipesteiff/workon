@@ -215,10 +215,10 @@ mod tests {
     impl WorktreeManager for FakeWorktrees {
         fn switch(
             &self,
+            _repository: &crate::domain::AvailableRepository,
             _cache_path: &Path,
             worktree_path: &Path,
             _branch: &str,
-            _default_branch: &str,
         ) -> Result<()> {
             std::fs::create_dir_all(worktree_path)?;
             self.switches.borrow_mut().push(worktree_path.to_path_buf());
