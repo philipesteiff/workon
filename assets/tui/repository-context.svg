@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1062" height="696" viewBox="0 0 1062 696" role="img" aria-label="Repository context TUI">
+  <title>Repository context TUI</title>
+  <rect width="100%" height="100%" rx="8" fill="#130f09"/>
+  <rect x="1" y="1" width="1060" height="694" rx="7" fill="none" stroke="#5b4323"/>
+  <text xml:space="preserve" font-family="SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace" font-size="14" line-height="18" fill="#e8b15a">
+    <tspan x="24" y="38">                                                                                                                        </tspan>
+    <tspan x="24" y="56">                                                                                                                        </tspan>
+    <tspan x="24" y="74">                                                                                                                        </tspan>
+    <tspan x="24" y="92">                                                                                                                        </tspan>
+    <tspan x="24" y="110"> ┌ WORKON // CONTROL // REPO ─────────────────────────────────────────────────────────────────────────────────────────┐ </tspan>
+    <tspan x="24" y="128"> │┌ REPOSITORIES 4 FOCUS─────────────────────────────────────────────────────────────────┐┌ ADD PATH  ───────────────┐│ </tspan>
+    <tspan x="24" y="146"> ││GitHub worktrees in /tmp/repos; local links in place.                                 ││one or more paths,        ││ </tspan>
+    <tspan x="24" y="164"> ││       REPOSITORY                                              SOURCE   BRANCH        ││comma-separated           ││ </tspan>
+    <tspan x="24" y="182"> ││&gt;&gt; [x] openai/workon                                           github   trunk         ││                          ││ </tspan>
+    <tspan x="24" y="200"> ││       worktree /tmp/repos/billing-retry-audit/workon | base /tmp/repos               ││paths &lt;type folder path&gt;  ││ </tspan>
+    <tspan x="24" y="218"> ││   [ ] openai/local-tool                                       local    feature/workon││                          ││ </tspan>
+    <tspan x="24" y="236"> ││   [ ] openai/api                                              github   main          │└──────────────────────────┘│ </tspan>
+    <tspan x="24" y="254"> ││   [ ] openai/api-docs                                         github   main          │┌ CONFIGURED PATHS 1 ──────┐│ </tspan>
+    <tspan x="24" y="272"> ││                                                                                      ││   [x] /tmp/repos         ││ </tspan>
+    <tspan x="24" y="290"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="308"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="326"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="344"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="362"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="380"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="398"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="416"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="434"> ││:: OPERATION LOG                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="452"> ││No repository operations yet.                                                         ││                          ││ </tspan>
+    <tspan x="24" y="470"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="488"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="506"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="524"> ││                                                                                      ││                          ││ </tspan>
+    <tspan x="24" y="542"> │└──────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────┘│ </tspan>
+    <tspan x="24" y="560"> │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ </tspan>
+    <tspan x="24" y="578"> │ OPERATOR COMMAND  REPOS   tab panel  type find  space select  ! force  enter apply  esc back                       │ </tspan>
+    <tspan x="24" y="596"> └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ </tspan>
+    <tspan x="24" y="614">                                                                                                                        </tspan>
+    <tspan x="24" y="632">                                                                                                                        </tspan>
+    <tspan x="24" y="650">                                                                                                                        </tspan>
+    <tspan x="24" y="668">                                                                                                                        </tspan>
+  </text>
+</svg>
