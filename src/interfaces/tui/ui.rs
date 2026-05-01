@@ -1461,7 +1461,7 @@ mod tests {
         assert!(!content.contains("REPO WORKSPACES"));
         assert!(!content.contains("REPO WORKSPACE SETUP"));
         assert!(content.contains("REQUIRED"));
-        assert!(content.contains("Add a repo workspace path before creating GitHub repos."));
+        assert!(content.contains("Add a repo workspace path before creating GitHub worktrees."));
         assert!(content.contains("<type folder path>"));
         assert!(!content.contains("SELECTED FOR WORK"));
         assert!(!content.contains("wo repos workspace add"));

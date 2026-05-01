@@ -631,6 +631,8 @@ fn repository_candidate_inspection_uses_light_cache() {
     })
     .expect("workspace should be configured");
     fs::create_dir_all(candidate_path.join(".git")).expect("git metadata should exist");
+    fs::write(candidate_path.join(".git/HEAD"), "ref: refs/heads/main\n")
+        .expect("git head should exist");
     fs::write(candidate_path.join(".workon-current-branch"), "main\n")
         .expect("fake branch should exist");
     fs::write(
@@ -669,9 +671,6 @@ fn repository_candidate_inspection_uses_light_cache() {
         panic!("expected RepositoryCandidateInspection output");
     };
 
-    restore_env("PATH", previous_path);
-    restore_env("WORKON_FAKE_LOG", previous_log);
-
     assert!(second.cached);
     assert_eq!(
         second
@@ -695,10 +694,36 @@ fn repository_candidate_inspection_uses_light_cache() {
                 .as_ref()
                 .is_some_and(|candidate| candidate.name_with_owner == "openai/api")
     }));
-    let log = fs::read_to_string(log_path).expect("tool log should read");
+    let log = fs::read_to_string(&log_path).expect("tool log should read");
     assert!(
         log.trim().is_empty(),
         "cached inspection should not run git, log was:\n{log}"
+    );
+
+    fs::write(
+        candidate_path.join(".git/HEAD"),
+        "ref: refs/heads/feature\n",
+    )
+    .expect("git head should change");
+    fs::write(&log_path, "").expect("tool log should reset");
+    let CommandOutput::RepositoryCandidateInspection(third) = app
+        .execute(Command::InspectRepositoryCandidate {
+            path: candidate_path.clone(),
+            refresh: false,
+        })
+        .expect("changed git metadata should refresh")
+    else {
+        panic!("expected RepositoryCandidateInspection output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert!(!third.cached);
+    let log = fs::read_to_string(log_path).expect("tool log should read");
+    assert!(
+        !log.trim().is_empty(),
+        "changed git metadata should run git inspection"
     );
 }
 
@@ -727,6 +752,89 @@ fn repository_candidate_paths_ignore_invalid_light_cache() {
 
     let api_path = fs::canonicalize(repo_workspace.join("api")).expect("api path should exist");
     assert!(paths.paths.iter().any(|path| path.path == api_path));
+}
+
+#[test]
+fn repository_candidate_cache_tracks_gitfile_head_changes() {
+    let _guard = ENV_LOCK.lock().expect("env lock should not be poisoned");
+    let root = temp_root("repository_candidate_cache_tracks_gitfile_head_changes");
+    let fake_bin = fake_repo_tools(root.path());
+    let previous_path = prepend_path(fake_bin.path());
+    let previous_log = std::env::var_os("WORKON_FAKE_LOG");
+    let log_path = root.path().join("tool.log");
+    std::env::set_var("WORKON_FAKE_LOG", &log_path);
+    let app = App::new(root.path().to_path_buf());
+    let candidate_path = root.path().join("repo-workspace/api");
+    let git_dir = root.path().join("git-metadata/api");
+    fs::create_dir_all(&candidate_path).expect("candidate dir should exist");
+    fs::create_dir_all(&git_dir).expect("gitdir should exist");
+    fs::write(
+        candidate_path.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    )
+    .expect("gitfile should exist");
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("git head should exist");
+    fs::write(candidate_path.join(".workon-current-branch"), "main\n")
+        .expect("fake branch should exist");
+    fs::write(
+        candidate_path.join(".workon-origin-url"),
+        "https://github.com/openai/api.git\n",
+    )
+    .expect("fake origin should exist");
+
+    let CommandOutput::RepositoryCandidateInspection(first) = app
+        .execute(Command::InspectRepositoryCandidate {
+            path: candidate_path.clone(),
+            refresh: false,
+        })
+        .expect("candidate should inspect")
+    else {
+        panic!("expected RepositoryCandidateInspection output");
+    };
+    assert!(!first.cached);
+
+    fs::write(&log_path, "").expect("tool log should reset");
+    let CommandOutput::RepositoryCandidateInspection(second) = app
+        .execute(Command::InspectRepositoryCandidate {
+            path: candidate_path.clone(),
+            refresh: false,
+        })
+        .expect("cached candidate should inspect")
+    else {
+        panic!("expected RepositoryCandidateInspection output");
+    };
+    assert!(second.cached);
+    assert!(
+        fs::read_to_string(&log_path)
+            .expect("tool log should read")
+            .trim()
+            .is_empty(),
+        "unchanged gitfile metadata should use cache"
+    );
+
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/feature\n").expect("git head should change");
+    fs::write(&log_path, "").expect("tool log should reset");
+    let CommandOutput::RepositoryCandidateInspection(third) = app
+        .execute(Command::InspectRepositoryCandidate {
+            path: candidate_path,
+            refresh: false,
+        })
+        .expect("changed gitfile metadata should refresh")
+    else {
+        panic!("expected RepositoryCandidateInspection output");
+    };
+
+    restore_env("PATH", previous_path);
+    restore_env("WORKON_FAKE_LOG", previous_log);
+
+    assert!(!third.cached);
+    assert!(
+        !fs::read_to_string(log_path)
+            .expect("tool log should read")
+            .trim()
+            .is_empty(),
+        "changed gitfile metadata should run git inspection"
+    );
 }
 
 #[test]

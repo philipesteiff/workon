@@ -82,7 +82,7 @@ fn repo_activity_message(
     repository: &str,
 ) -> String {
     match action {
-        RepoOperation::Add => format!("{current}/{total} Cloning {repository}"),
+        RepoOperation::Add => format!("{current}/{total} Creating worktree {repository}"),
         RepoOperation::Link => format!("{current}/{total} Linking {repository}"),
         RepoOperation::Remove => format!("{current}/{total} Removing {repository}"),
         RepoOperation::Refresh => format!("{current}/{total} Refreshing {repository}"),

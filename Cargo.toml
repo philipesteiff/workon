@@ -16,6 +16,6 @@ crossterm = "0.29"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde_yml = "0.0.12"
 tachyonfx = { version = "0.25", default-features = false, features = ["std", "std-duration"] }
 unicode-width = "0.2"

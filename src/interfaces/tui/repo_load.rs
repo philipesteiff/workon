@@ -250,14 +250,13 @@ fn load_repo_context_sources(app: &App, work_slug: &str, sender: Sender<RepoLoad
         return;
     }
 
+    let _ = sender.send(RepoLoadMessage::Catalog(load_repo_catalog(app)));
     for worker in candidate_workers {
         let _ = worker.join();
     }
     if !workspaces.is_empty() {
         let _ = sender.send(RepoLoadMessage::CandidateInspectionsFinished);
     }
-
-    let _ = sender.send(RepoLoadMessage::Catalog(load_repo_catalog(app)));
     let _ = sender.send(RepoLoadMessage::Finished);
 }
 
@@ -460,7 +459,7 @@ mod tests {
         })
         .expect("work should be created");
         let workspace = root.path.join("repos");
-        std::fs::create_dir_all(workspace.join("local-tool"))
+        std::fs::create_dir_all(workspace.join("local-tool/.git"))
             .expect("candidate folder should be created");
         app.execute(Command::AddRepositoryWorkspaces {
             paths: vec![workspace],

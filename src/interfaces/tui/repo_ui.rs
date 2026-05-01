@@ -100,7 +100,7 @@ fn repo_catalog_context_line(repo: &RepoPickerState, rows_empty: bool) -> Line<'
             status_badge("REQUIRED", theme::style_status_warn()),
             Span::raw(" "),
             Span::styled(
-                "Add a repo workspace path before creating GitHub repos.",
+                "Add a repo workspace path before creating GitHub worktrees.",
                 theme::style_command(),
             ),
         ]);

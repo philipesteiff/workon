@@ -173,14 +173,14 @@ fn is_yaml_file(path: &Path) -> bool {
 
 fn read_profile(path: PathBuf) -> Result<IntentProfile> {
     let content = std::fs::read_to_string(&path)?;
-    let profile = serde_yaml::from_str(&content).map_err(|error| WorkonError::IntentContext {
+    let profile = serde_yml::from_str(&content).map_err(|error| WorkonError::IntentContext {
         message: format!("invalid intent file at {}: {error}", path.display()),
     })?;
     normalize_profile(profile)
 }
 
 fn write_profile(path: PathBuf, profile: &IntentProfile) -> Result<()> {
-    let content = serde_yaml::to_string(profile).map_err(|error| WorkonError::IntentContext {
+    let content = serde_yml::to_string(profile).map_err(|error| WorkonError::IntentContext {
         message: format!("could not write intent file at {}: {error}", path.display()),
     })?;
     std::fs::write(path, content)?;
