@@ -335,7 +335,7 @@ Usage:
   wo repos discover <work-query>
                              discover repo candidates from configured workspaces
   wo repos add [--workspace <path>] <work> <owner/repo>...
-                             create/link GitHub repos from a configured workspace
+                             create GitHub worktrees from a configured workspace
   wo repos link <work> <path>...
                              link existing repo worktrees or checkouts
   wo repos workspace add <path>...
@@ -423,7 +423,7 @@ Usage:
       Discover Git working trees under configured repo workspaces.
 
   wo repos add [--workspace <path>] <work-query> <owner/repo>...
-      Create one or more GitHub repositories in a configured repo workspace,
+      Create one or more GitHub worktrees in a configured repo workspace,
       then expose them under <work>/repos/ with symlinks.
 
   wo repos link <work-query> <path>...
@@ -445,7 +445,7 @@ Usage:
 TUI:
   wo
       Highlight a Work, press /r, select GitHub or local repositories, tab to
-      choose the creation path when multiple workspaces exist, then press enter.
+      choose the worktree path when multiple workspaces exist, then press enter.
 
 Requires:
   gh auth login

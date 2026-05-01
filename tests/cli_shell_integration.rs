@@ -132,7 +132,7 @@ fn help_prints_command_summary() {
     assert!(stdout.contains("wo - start, open, and archive work folders"));
     assert!(stdout.contains("wo --intent <id> \"<goal>\"  create work"));
     assert!(stdout.contains("wo repos add [--workspace <path>] <work> <owner/repo>..."));
-    assert!(stdout.contains("create/link GitHub repos from a configured workspace"));
+    assert!(stdout.contains("create GitHub worktrees from a configured workspace"));
     assert!(!stdout.contains("wo ctx"));
     assert!(stdout.contains("WORKON_ROOT=/path"));
 }
@@ -178,6 +178,9 @@ fn repos_help_prints_usage() {
         assert!(stdout.contains("wo repos - link repositories"));
         assert!(stdout.contains("wo repos list <work-query>"));
         assert!(stdout.contains("wo repos add [--workspace <path>] <work-query> <owner/repo>..."));
+        assert!(
+            stdout.contains("Create one or more GitHub worktrees in a configured repo workspace")
+        );
         assert!(stdout.contains("wo repos workspace add <path>..."));
         assert!(stdout.contains("wo repos remove [--force] <work-query> <owner/repo>..."));
         assert!(stdout.contains("Highlight a Work, press /r"));

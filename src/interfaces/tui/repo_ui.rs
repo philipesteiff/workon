@@ -77,6 +77,7 @@ fn render_repo_catalog_panel(frame: &mut Frame<'_>, area: Rect, repo: &RepoPicke
                     row,
                     catalog_area.width,
                     workspace.as_deref(),
+                    &repo.work_slug,
                 ));
             }
         }
@@ -134,10 +135,10 @@ fn repo_catalog_context_line(repo: &RepoPickerState, rows_empty: bool) -> Line<'
 
     match repo.selected_workspace_path() {
         Some(path) => Line::from(format!(
-            "GitHub create in {}; local link in place.",
+            "GitHub worktrees in {}; local links in place.",
             compact_path(&path)
         )),
-        None => Line::from("Select GitHub repos to create or local repos to link.".dim()),
+        None => Line::from("Select GitHub repos for worktrees or local repos to link.".dim()),
     }
 }
 

@@ -27,9 +27,19 @@ pub(in crate::interfaces::tui::repo_state) fn operation_verb(
     action: RepoOperation,
 ) -> &'static str {
     match action {
-        RepoOperation::Add => "clone",
+        RepoOperation::Add => "worktree",
         RepoOperation::Link => "link",
         RepoOperation::Remove => "remove",
         RepoOperation::Refresh => "refresh",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{operation_verb, RepoOperation};
+
+    #[test]
+    fn add_operation_reports_worktree_creation() {
+        assert_eq!(operation_verb(RepoOperation::Add), "worktree");
     }
 }

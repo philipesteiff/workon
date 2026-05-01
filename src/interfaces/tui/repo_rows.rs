@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use ratatui::prelude::{Line, Span};
 use ratatui::style::Style;
 
+use crate::domain::repository_context::paths::workspace_worktree_path;
+
 use super::repo_state::{RepoCatalogRow, RepoPane, RepoPickerState};
 use super::theme;
 
@@ -98,26 +100,16 @@ pub(super) fn catalog_row_detail(
     row: &RepoCatalogRow,
     width: u16,
     workspace: Option<&Path>,
+    work_slug: &str,
 ) -> Line<'static> {
     let detail = match row {
         RepoCatalogRow::GitHub(repository) => DetailFields {
-            key: "create",
+            key: "worktree",
             value: workspace
-                .map(compact_path)
+                .map(|path| github_worktree_path(path, work_slug, &repository.name_with_owner))
                 .unwrap_or_else(|| "workspace not set".to_string()),
-            secondary_key: "work",
-            secondary_value: workspace.map(|path| {
-                row_path(
-                    &path.join(
-                        repository
-                            .name_with_owner
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or("repo"),
-                    ),
-                    workspace,
-                )
-            }),
+            secondary_key: "base",
+            secondary_value: workspace.map(compact_path),
         },
         RepoCatalogRow::Local(candidate) => DetailFields {
             key: "path",
@@ -169,6 +161,12 @@ pub(super) fn catalog_row_detail(
         )),
     }
     Line::from(spans)
+}
+
+fn github_worktree_path(workspace: &Path, work_slug: &str, name_with_owner: &str) -> String {
+    workspace_worktree_path(workspace, work_slug, name_with_owner)
+        .map(|path| compact_path(&path))
+        .unwrap_or_else(|_| compact_path(workspace))
 }
 
 pub(super) fn compact_path(path: &Path) -> String {
